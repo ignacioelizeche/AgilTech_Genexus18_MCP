@@ -176,6 +176,14 @@ namespace GxMcp.Worker.Services
 
                 if (part == null) return "{\"error\": \"Part not found: " + partName + "\"}";
 
+                // Semantic Diffing: Check if code actually changed
+                string currentFullCode = GetPartSourceText(target, partName);
+                if (string.Equals(currentFullCode, newCode, StringComparison.Ordinal))
+                {
+                    Logger.Info($"[WriteService] Code for {target} ({partName}) is identical. Skipping save and re-indexing.");
+                    return "{\"status\": \"Success\", \"object\": \"" + target + "\", \"note\": \"No changes detected\"}";
+                }
+
                 // Variable definitions for property setting
                 var props = part.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
                 string[] targetProps = { "Source", "Documentation", "Content", "EditableContent", "Text", "Template" };

@@ -306,6 +306,15 @@ namespace GxMcp.Gateway
                         },
                         required = new[] { "name" }
                     }
+                },
+
+                new {
+                    name = "genexus_bulk_index",
+                    description = "Performs a full KB metadata indexing for fast discovery.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { }
+                    }
                 }
             };
         }
@@ -321,6 +330,12 @@ namespace GxMcp.Gateway
 
             switch (toolName)
             {
+                case "genexus_bulk_index":
+                    return new {
+                        module = "genexus",
+                        action = "BulkIndex"
+                    };
+
                 case "genexus_build":
                     return new {
                         module = "Build",

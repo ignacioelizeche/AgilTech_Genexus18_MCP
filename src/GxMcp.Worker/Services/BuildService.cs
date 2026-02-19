@@ -10,6 +10,7 @@ namespace GxMcp.Worker.Services
     {
         private string _msbuildPath;
         private string _gxDir;
+        private KbService _kbService;
 
         public BuildService()
         {
@@ -44,8 +45,49 @@ namespace GxMcp.Worker.Services
             Console.Error.WriteLine($"[BuildService] Using MSBuild: {_msbuildPath}");
         }
 
+        public void SetKbService(KbService kbService)
+        {
+            _kbService = kbService;
+        }
+
+        private string ExecuteNativeBuildAll()
+        {
+            try {
+                Logger.Info("[BuildService] Attempting Native SDK BuildAll...");
+                var kb = _kbService.GetKB();
+                
+                string asmPath = Path.Combine(_gxDir, "Genexus.MSBuild.Tasks.dll");
+                var asm = System.Reflection.Assembly.LoadFrom(asmPath);
+                var buildAllType = asm.GetType("Genexus.MsBuild.Tasks.BuildAll");
+                var task = Activator.CreateInstance(buildAllType);
+
+                // Set properties via reflection
+                buildAllType.GetProperty("KB")?.SetValue(task, kb, null);
+                buildAllType.GetProperty("ForceRebuild")?.SetValue(task, false, null);
+                buildAllType.GetProperty("CompileMains")?.SetValue(task, true, null);
+
+                // Execute the task
+                var executeMethod = buildAllType.GetMethod("Execute");
+                Stopwatch sw = Stopwatch.StartNew();
+                bool success = (bool)executeMethod.Invoke(task, null);
+                sw.Stop();
+
+                return "{\"status\": \"" + (success ? "Success" : "Failure") + "\"," +
+                       "\"duration\": \"" + sw.Elapsed.ToString(@"hh\:mm\:ss") + "\"," +
+                       "\"mode\": \"NativeSDK\"}";
+            } catch (Exception ex) {
+                Logger.Error($"[BuildService] Native BuildAll Failed: {ex.Message}");
+                return "{\"error\": \"Native Build Failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + ". Falling back to MSBuild next time.\"}";
+            }
+        }
+
         public string Execute(string action, string target)
         {
+            if (action == "Build" && target == "All")
+            {
+                return ExecuteNativeBuildAll();
+            }
+
             // Porting logic from gx_ops.ps1
             string targetsFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "standard_build.targets");
             // We need to ensure standard_build.targets exists or create it. 

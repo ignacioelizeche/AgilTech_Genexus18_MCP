@@ -67,7 +67,8 @@ namespace GxMcp.Worker
             // But let's see if this one hangs.
 
             // 2. Initialize Services
-            var dispatcher = new Services.CommandDispatcher();
+            var dispatcher = Services.CommandDispatcher.Instance;
+            dispatcher.PreWarm();
             
             Console.Error.WriteLine("[Worker] Started. Waiting for commands...");
 
@@ -76,7 +77,7 @@ namespace GxMcp.Worker
             {
                 try 
                 {
-                    Console.Error.WriteLine($"[Worker] Received: {line}");
+                    // Console.Error.WriteLine($"[Worker] Received: {line}"); // Debug only, too noisy
                     
                     // Dispatch
                     string result = dispatcher.Dispatch(line);
@@ -90,7 +91,7 @@ namespace GxMcp.Worker
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"[Worker Error] {ex.Message}");
+                    Console.Error.WriteLine($"[Worker Loop Error] {ex.Message}");
                 }
             }
         }

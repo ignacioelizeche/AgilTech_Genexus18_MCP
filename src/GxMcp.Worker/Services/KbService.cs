@@ -87,25 +87,29 @@ namespace GxMcp.Worker.Services
             try {
                 var kb = GetKB();
                 var index = new Models.SearchIndex();
+                var concurrentDict = new System.Collections.Concurrent.ConcurrentDictionary<string, Models.SearchIndex.IndexEntry>(StringComparer.OrdinalIgnoreCase);
 
-                int count = 0;
-                foreach (KBObject kbo in kb.DesignModel.Objects) {
+                var objects = kb.DesignModel.Objects.Cast<KBObject>().ToList();
+                System.Threading.Tasks.Parallel.ForEach(objects, kbo => {
                     try {
-                        if (kbo == null) continue;
+                        if (kbo == null) return;
                         string n = kbo.Name;
                         string t = GetPrefix(kbo);
                         string k = t + ":" + n;
-                        index.Objects[k] = new Models.SearchIndex.IndexEntry {
+                        
+                        var entry = new Models.SearchIndex.IndexEntry {
                             Name = k, Type = t, Description = kbo.Description,
                             Tags = new List<string>{t}, Keywords = new List<string>{t, n},
                             Calls = new List<string>(), CalledBy = new List<string>()
                         };
-                        count++;
-                    } catch { continue; }
-                }
+                        concurrentDict[k] = entry;
+                    } catch { }
+                });
+
+                index.Objects = concurrentDict.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
                 index.LastUpdated = DateTime.Now;
                 _indexCacheService.UpdateIndex(index);
-                return "{\"status\":\"Success\", \"indexed\":" + count + "}";
+                return "{\"status\":\"Success\", \"indexed\":" + index.Objects.Count + "}";
             } catch (Exception ex) { return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; }
         }
 

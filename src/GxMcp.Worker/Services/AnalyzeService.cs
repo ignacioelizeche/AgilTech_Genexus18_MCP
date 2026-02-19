@@ -20,6 +20,24 @@ namespace GxMcp.Worker.Services
         private readonly ObjectService _objectService;
         private readonly IndexCacheService _indexCacheService;
 
+        private static readonly Regex CommentBlockRegex = new Regex(@"(?s)/\*.*?\*/", RegexOptions.Compiled);
+        private static readonly Regex InlineCommentRegex = new Regex(@"//.*", RegexOptions.Compiled);
+        private static readonly Regex CallRegex = new Regex(@"(?i)(?:call|u\s*|udp)\s*\(\s*'?([\w:]+)'?|([\w]+)\s*\.\s*call\s*\(", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex ForEachRegex = new Regex(@"(?i)(?:for each|new|delete)\s+([\w]+)", RegexOptions.Compiled);
+        private static readonly Regex CommitInLoopRegex = new Regex(@"\bFor\s+each\b.*?Commit\b.*?EndFor\b", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+        private static readonly Regex DynamicCallRegex = new Regex(@"\bCall\s*\(\s*&", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex FullScanRegex = new Regex(@"\bFor\s+each\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex WhereClauseRegex = new Regex(@"\bwhere\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        
+        private static readonly Dictionary<string, Regex> TagPatterns = new Dictionary<string, Regex>
+        {
+            {"Integration", new Regex(@"(?i)(httpclient|rest|json|tostring|fromjson|soap|location)", RegexOptions.Compiled)},
+            {"Reporting", new Regex(@"(?i)(print|output_file|pdf|report)", RegexOptions.Compiled)},
+            {"Heavy-Batch", new Regex(@"(?i)(for each|commit|rollback|submit)", RegexOptions.Compiled)},
+            {"Security", new Regex(@"(?i)(gam|permission|encrypt|decrypt|login)", RegexOptions.Compiled)},
+            {"Interface", new Regex(@"(?i)(webpanel|form\.|control\.|event\s+'|onclick)", RegexOptions.Compiled)}
+        };
+
         public AnalyzeService(ObjectService objectService, IndexCacheService indexCacheService)
         {
             _objectService = objectService;
@@ -55,6 +73,9 @@ namespace GxMcp.Worker.Services
 
                 if (result.Insights.Count > 0)
                     jsonParts.Add($"\"insights\":[" + string.Join(",", result.Insights.Select(i => "{\"level\":\"" + i.Level + "\",\"message\":\"" + CommandDispatcher.EscapeJsonString(i.Message) + "\"}")) + "]");
+
+                if (result.Messages.Count > 0)
+                    jsonParts.Add($"\"messages\":[" + string.Join(",", result.Messages.Select(m => "\"" + CommandDispatcher.EscapeJsonString(m) + "\"")) + "]");
 
                 jsonParts.Add($"\"complexity\":{result.Complexity}");
                 jsonParts.Add($"\"codeLength\":{result.CodeLength}");
@@ -206,6 +227,20 @@ namespace GxMcp.Worker.Services
 
                 // 3. Quality Analysis (Linter)
                 var insights = AnalyzeQuality(clean, obj);
+                
+                var messages = new List<string>();
+                if (obj != null)
+                {
+                    try {
+                        var getMessagesMethod = obj.GetType().GetMethod("GetMessages", new Type[0]);
+                        var sdkMessages = getMessagesMethod?.Invoke(obj, null) as IEnumerable;
+                        if (sdkMessages != null) {
+                            foreach (object msg in sdkMessages) {
+                                messages.Add(msg.ToString());
+                            }
+                        }
+                    } catch {}
+                }
 
                 // 4. Update Index
                 Console.Error.WriteLine($"[AnalyzeService] Updating Index...");
@@ -220,6 +255,7 @@ namespace GxMcp.Worker.Services
                     Rules = rules,
                     Domain = domain,
                     Insights = insights,
+                    Messages = messages,
                     Complexity = complexity,
                     CodeLength = fullCode.Length
                 };
@@ -233,15 +269,15 @@ namespace GxMcp.Worker.Services
 
         private string StripComments(string code)
         {
-            string clean = Regex.Replace(code, @"(?s)/\*.*?\*/", "");
-            clean = Regex.Replace(clean, @"//.*", "");
+            string clean = CommentBlockRegex.Replace(code, "");
+            clean = InlineCommentRegex.Replace(clean, "");
             return clean;
         }
 
         private List<string> GetCalls(string cleanCode)
         {
             var calls = new List<string>();
-            var callMatches = Regex.Matches(cleanCode, @"(?i)(?:call|u\s*|udp)\s*\(\s*'?([\w:]+)'?|([\w]+)\s*\.\s*call\s*\(", RegexOptions.IgnoreCase);
+            var callMatches = CallRegex.Matches(cleanCode);
             foreach (Match m in callMatches)
             {
                 string refName = m.Groups[1].Value;
@@ -279,7 +315,7 @@ namespace GxMcp.Worker.Services
             {
                 if (string.IsNullOrEmpty(xml)) return tables;
                 string clean = StripComments(xml);
-                tables.AddRange(Regex.Matches(clean, @"(?i)(?:for each|new|delete)\s+([\w]+)")
+                tables.AddRange(ForEachRegex.Matches(clean)
                     .Cast<Match>().Select(m => m.Groups[1].Value)
                     .Where(t => t.ToLower() != "where" && t.ToLower() != "order" && t.ToLower() != "definedby")
                     .Distinct());
@@ -312,13 +348,13 @@ namespace GxMcp.Worker.Services
         {
             var insights = new List<AnalysisInsight>();
 
-            if (Regex.IsMatch(clean, @"\bFor\s+each\b.*?Commit\b.*?EndFor\b", RegexOptions.IgnoreCase | RegexOptions.Singleline))
+            if (CommitInLoopRegex.IsMatch(clean))
                 insights.Add(new AnalysisInsight { Level = "Critical", Message = "COMMIT command detected inside a LOOP. This causing performance issues." });
 
-            if (Regex.IsMatch(clean, @"\bCall\s*\(\s*&", RegexOptions.IgnoreCase))
+            if (DynamicCallRegex.IsMatch(clean))
                 insights.Add(new AnalysisInsight { Level = "Warning", Message = "Dynamic CALL detected. Breaks reference tracking." });
 
-            if (Regex.IsMatch(clean, @"\bFor\s+each\b", RegexOptions.IgnoreCase) && !Regex.IsMatch(clean, @"\bwhere\b", RegexOptions.IgnoreCase))
+            if (FullScanRegex.IsMatch(clean) && !WhereClauseRegex.IsMatch(clean))
                 insights.Add(new AnalysisInsight { Level = "Critical", Message = "Loop without WHERE clause detected. High risk of Full Table Scan." });
 
             if (obj != null)
@@ -331,7 +367,7 @@ namespace GxMcp.Worker.Services
                             string vName = vObj.GetType().GetProperty("Name")?.GetValue(vObj, null) as string;
                             bool vIsStd = (bool)(vObj.GetType().GetProperty("IsStandard")?.GetValue(vObj, null) ?? false);
                             if (vIsStd) continue;
-                            if (!Regex.IsMatch(clean, @"&\b" + Regex.Escape(vName) + @"\b", RegexOptions.IgnoreCase))
+                            if (!Regex.IsMatch(clean, @"&\b" + Regex.Escape(vName) + @"\b", RegexOptions.IgnoreCase | RegexOptions.Compiled))
                                 insights.Add(new AnalysisInsight { Level = "Warning", Message = $"Unused variable: '&{vName}'" });
                         }
                     }
@@ -343,18 +379,10 @@ namespace GxMcp.Worker.Services
         private List<string> GetTags(string target, string code)
         {
             var tags = new List<string>();
-            var rules = new Dictionary<string, string>
-            {
-                {"Integration", @"(?i)(httpclient|rest|json|tostring|fromjson|soap|location)"},
-                {"Reporting", @"(?i)(print|output_file|pdf|report)"},
-                {"Heavy-Batch", @"(?i)(for each|commit|rollback|submit)"},
-                {"Security", @"(?i)(gam|permission|encrypt|decrypt|login)"},
-                {"Interface", @"(?i)(webpanel|form\.|control\.|event\s+'|onclick)"}
-            };
-            foreach (var r in rules) if (Regex.IsMatch(code, r.Value)) tags.Add(r.Key);
-            if (target.StartsWith("Prc")) tags.Add("Logic-Engine");
-            if (target.StartsWith("Trn")) tags.Add("Data-Model");
-            if (target.StartsWith("Wbp")) tags.Add("UI-Component");
+            foreach (var r in TagPatterns) if (r.Value.IsMatch(code)) tags.Add(r.Key);
+            if (target.StartsWith("Prc", StringComparison.OrdinalIgnoreCase)) tags.Add("Logic-Engine");
+            if (target.StartsWith("Trn", StringComparison.OrdinalIgnoreCase)) tags.Add("Data-Model");
+            if (target.StartsWith("Wbp", StringComparison.OrdinalIgnoreCase)) tags.Add("UI-Component");
             return tags.Distinct().ToList();
         }
 
@@ -401,6 +429,7 @@ namespace GxMcp.Worker.Services
                     BusinessDomain = domain,
                     Complexity = complexity,
                     SourceSnippet = code.Length > 200 ? code.Substring(0, 200) : code,
+                    FullSource = code,
                     Keywords = target.Replace(":", " ").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList()
                 };
                 index.Objects[target] = entry;
@@ -430,6 +459,7 @@ namespace GxMcp.Worker.Services
             public List<string> Rules { get; set; }
             public string Domain { get; set; }
             public List<AnalysisInsight> Insights { get; set; }
+            public List<string> Messages { get; set; } = new List<string>();
             public int Complexity { get; set; }
             public int CodeLength { get; set; }
         }

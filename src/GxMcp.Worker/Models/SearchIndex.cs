@@ -28,6 +28,7 @@ namespace GxMcp.Worker.Models
             public string ConceptualSummary { get; set; }
             
             public string SourceSnippet { get; set; }
+            public string FullSource { get; set; }
             public int Complexity { get; set; }
         }
 

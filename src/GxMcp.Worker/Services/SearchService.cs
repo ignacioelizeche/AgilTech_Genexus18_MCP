@@ -39,7 +39,7 @@ namespace GxMcp.Worker.Services
             {
                 var index = _indexCacheService.GetIndex();
                 if (index == null || index.Objects.Count == 0)
-                    return "{\"status\": \"No search index found or empty index. Run genexus_analyze first to populate index.\"}";
+                    return "{\"error\": \"Search index not found or empty. To use discovery tools, you MUST first run 'genexus_bulk_index' to synchronize KB metadata.\"}";
 
                 string[] originalTerms = query.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                 var expandedTerms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

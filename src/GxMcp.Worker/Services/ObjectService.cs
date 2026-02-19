@@ -30,6 +30,7 @@ namespace GxMcp.Worker.Services
         private static readonly Dictionary<string, string> _cache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly List<string> _lru = new List<string>();
         private const int MAX_CACHE_SIZE = 50;
+        private readonly string _diskCacheDir;
 
         // GeneXus Part GUIDs
         private static readonly Dictionary<string, Guid> _partGuids = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
@@ -45,6 +46,8 @@ namespace GxMcp.Worker.Services
         {
             _buildService = buildService;
             _kbService = kbService;
+            _diskCacheDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache", "objects");
+            if (!Directory.Exists(_diskCacheDir)) Directory.CreateDirectory(_diskCacheDir);
         }
 
         public KnowledgeBase GetKB()
@@ -147,11 +150,27 @@ namespace GxMcp.Worker.Services
             Console.Error.WriteLine($"[ObjectService] GetObjectXml: {target}");
             if (string.IsNullOrEmpty(target)) return null;
 
+            // L1 Cache check
             if (_cache.ContainsKey(target))
             {
                 _lru.Remove(target);
                 _lru.Add(target);
                 return _cache[target];
+            }
+
+            // L2 Cache (Disk) check
+            string safeName = target.Replace(":", "_");
+            string cachePath = Path.Combine(_diskCacheDir, safeName + ".xml");
+            if (File.Exists(cachePath))
+            {
+                try {
+                    string cachedXml = File.ReadAllText(cachePath);
+                    if (!string.IsNullOrEmpty(cachedXml))
+                    {
+                        AddToCache(target, cachedXml, false); // Add to L1 without re-saving to disk
+                        return cachedXml;
+                    }
+                } catch { }
             }
 
             EnsureKbOpen();
@@ -289,7 +308,7 @@ namespace GxMcp.Worker.Services
                 string xml = root.ToString();
                 if (!string.IsNullOrEmpty(xml))
                 {
-                    AddToCache(target, xml);
+                    AddToCache(target, xml, true);
                 }
                 return xml;
             }
@@ -506,8 +525,16 @@ namespace GxMcp.Worker.Services
             {
                 _cache.Remove(target);
                 _lru.Remove(target);
-                Console.Error.WriteLine($"[ObjectService] Cache invalidated for: {target}");
             }
+
+            // Invalidate disk cache too
+            string safeName = target.Replace(":", "_");
+            string cachePath = Path.Combine(_diskCacheDir, safeName + ".xml");
+            if (File.Exists(cachePath))
+            {
+                try { File.Delete(cachePath); } catch { }
+            }
+            Console.Error.WriteLine($"[ObjectService] Cache invalidated for: {target} (L1+L2)");
         }
 
         public string ParseGenerusXmlToJson(string xml)
@@ -532,7 +559,7 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private void AddToCache(string key, string value)
+        private void AddToCache(string key, string value, bool saveToDisk = true)
         {
             if (_cache.Count >= MAX_CACHE_SIZE)
             {
@@ -543,6 +570,14 @@ namespace GxMcp.Worker.Services
 
             _cache[key] = value;
             _lru.Add(key);
+
+            if (saveToDisk)
+            {
+                try {
+                    string safeName = key.Replace(":", "_");
+                    File.WriteAllText(Path.Combine(_diskCacheDir, safeName + ".xml"), value);
+                } catch { }
+            }
         }
     }
 }

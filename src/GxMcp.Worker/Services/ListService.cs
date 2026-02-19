@@ -37,69 +37,13 @@ namespace GxMcp.Worker.Services
                 string[] filters = string.IsNullOrEmpty(filter) ? null : filter.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
 
                 var index = _indexCacheService.GetIndex();
-                if (index != null && index.Objects.Count > 0)
+                if (index == null || index.Objects.Count == 0)
                 {
-                    // Use memory cache for fast listing
-                    foreach (var entry in index.Objects.Values)
-                    {
-                        bool matchesFilter = (filters == null);
-                        if (!matchesFilter)
-                        {
-                            foreach (string f in filters)
-                            {
-                                if (entry.Name.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    entry.Type.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    (entry.Description != null && entry.Description.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0))
-                                {
-                                    matchesFilter = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (matchesFilter)
-                        {
-                            objects.Add($"{GetShorthand(entry.Type)}:{(entry.Name.Contains(":") ? entry.Name.Split(':')[1] : entry.Name)}");
-                        }
-                    }
+                    return "{\"error\": \"Search index not found or empty. To use discovery tools, you MUST first run 'genexus_bulk_index' to synchronize KB metadata.\"}";
                 }
 
-                // Fallback to SDK iteration if index is missing or didn't yield results
-                if (objects.Count == 0 && filters != null)
-                {
-                    var kb = EnsureKbOpen();
-                    var designModel = kb.DesignModel;
-                    if (designModel != null)
-                    {
-                        foreach (object o in designModel.Objects)
-                        {
-                            KBObject kbo = o as KBObject;
-                            if (kbo != null)
-                            {
-                                string kbName = kbo.Name;
-                                string typeName = kbo.TypeDescriptor.Name;
-                                string description = kbo.TypeDescriptor.Description;
-
-                                bool matchesFilter = false;
-                                foreach (string f in filters)
-                                {
-                                    if (kbName.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                        typeName.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                        description.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0)
-                                    {
-                                        matchesFilter = true;
-                                        break;
-                                    }
-                                }
-
-                                if (matchesFilter)
-                                {
-                                    objects.Add($"{GetShorthand(kbo.TypeDescriptor.Name)}:{kbo.Name}");
-                                }
-                            }
-                        }
-                    }
-                }
+                // Use memory cache for fast listing - NO SDK FALLBACK for performance consistency
+                foreach (var entry in index.Objects.Values)
 
                 int totalCount = objects.Count;
                 var pagedObjects = objects.Distinct().Skip(offset).Take(limit).ToArray();
