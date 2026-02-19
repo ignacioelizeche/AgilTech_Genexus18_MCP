@@ -58,6 +58,7 @@
       <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Architecture.UI.Framework.dll</HintPath>
       <Private>True</Private>
     </Reference>
+    <Reference Include="Microsoft.CSharp" />
     <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.IO.Compression" />
   </ItemGroup>

@@ -10,6 +10,16 @@ namespace GxMcp.Worker
     {
         static void Main(string[] args)
         {
+            // Redirect Console.Error to a file for better debugging
+            string cacheDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache");
+            if (!Directory.Exists(cacheDir)) Directory.CreateDirectory(cacheDir);
+            
+            // Use FileShare.ReadWrite to allow multiple instances or external readers
+            var logPath = Path.Combine(cacheDir, "analysis_trace.log");
+            var stream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+            var logWriter = new StreamWriter(stream) { AutoFlush = true };
+            Console.SetError(logWriter);
+
             // 1. Initialize Services
             var dispatcher = new Services.CommandDispatcher();
             
@@ -30,6 +40,7 @@ namespace GxMcp.Worker
                     string idJson = id == null ? "null" : $"\"{id}\"";
                     string response = "{\"jsonrpc\": \"2.0\", \"result\": " + result + ", \"id\": " + idJson + "}";
                     Console.WriteLine(response);
+                    Console.Out.Flush();
                 }
                 catch (Exception ex)
                 {

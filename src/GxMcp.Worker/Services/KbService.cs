@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Artech.Architecture.Common.Objects;
 using GxMcp.Worker.Helpers;
 
@@ -185,6 +186,60 @@ namespace GxMcp.Worker.Services
                 Logger.Error($"[KbService] SDK Critical Error: {ex.Message}\n{ex.StackTrace}");
                 throw;
             }
+        }
+
+        public string BulkIndex()
+        {
+            try
+            {
+                var kb = GetKB();
+                string indexPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache", "search_index.json");
+                var index = new Models.SearchIndex();
+                string dir = Path.GetDirectoryName(indexPath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+                int count = 0;
+                var objects = kb.DesignModel.Objects;
+                foreach (KBObject kbo in objects)
+                {
+                    string prefix = GetPrefix(kbo);
+                    string key = string.IsNullOrEmpty(prefix) ? kbo.Name : prefix + ":" + kbo.Name;
+
+                    var entry = new Models.SearchIndex.IndexEntry
+                    {
+                        Name = key,
+                        Type = prefix,
+                        Description = kbo.Description,
+                        Tags = new System.Collections.Generic.List<string> { kbo.GetType().Name },
+                        Keywords = key.Replace(":", " ").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList()
+                    };
+                    
+                    if (kbo is Artech.Genexus.Common.Objects.Procedure) entry.Tags.Add("Logic-Engine");
+
+                    index.Objects[key] = entry;
+                    count++;
+                }
+
+                index.LastUpdated = DateTime.Now;
+                File.WriteAllText(indexPath, index.ToJson());
+
+                return "{\"status\":\"Success\", \"indexed\":" + count + "}";
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        private string GetPrefix(KBObject obj)
+        {
+            if (obj is Artech.Genexus.Common.Objects.Transaction) return "Trn";
+            if (obj is Artech.Genexus.Common.Objects.Procedure) return "Prc";
+            if (obj is Artech.Genexus.Common.Objects.WebPanel) return "Wbp";
+            if (obj is Artech.Genexus.Common.Objects.Attribute) return "Att";
+            if (obj is Artech.Genexus.Common.Objects.Table) return "Tbl";
+            if (obj is Artech.Genexus.Common.Objects.Domain) return "Dom";
+            return obj.GetType().Name;
         }
     }
 }

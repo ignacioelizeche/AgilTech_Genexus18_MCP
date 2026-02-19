@@ -17,11 +17,13 @@ namespace GxMcp.Worker.Services
     {
         private readonly BuildService _buildService;
         private readonly ObjectService _objectService;
+        private readonly AnalyzeService _analyzeService;
 
-        public ForgeService(BuildService buildService, ObjectService objectService)
+        public ForgeService(BuildService buildService, ObjectService objectService, AnalyzeService analyzeService)
         {
             _buildService = buildService;
             _objectService = objectService;
+            _analyzeService = analyzeService;
         }
 
         public string CreateObject(string name, string definitionJson)
@@ -44,6 +46,14 @@ namespace GxMcp.Worker.Services
 
                 // Invalidate Cache to ensure ReadObject sees new parts
                 _objectService.Invalidate(name);
+
+                // Live Indexing: Trigger immediate analysis
+                try {
+                    Logger.Info($"[ForgeService] Triggering Live Indexing for {name}...");
+                    _analyzeService.AnalyzeInternal(name);
+                } catch (Exception ex) {
+                    Logger.Error($"[ForgeService] Live Indexing Failed: {ex.Message}");
+                }
 
                 return _objectService.ReadObject(name);
             }

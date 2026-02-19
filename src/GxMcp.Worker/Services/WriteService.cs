@@ -15,12 +15,14 @@ namespace GxMcp.Worker.Services
         private readonly ObjectService _objectService;
         private readonly BuildService _buildService;
         private readonly KbService _kbService;
+        private readonly AnalyzeService _analyzeService;
 
-        public WriteService(ObjectService objectService, BuildService buildService, KbService kbService)
+        public WriteService(ObjectService objectService, BuildService buildService, KbService kbService, AnalyzeService analyzeService)
         {
             _objectService = objectService;
             _buildService = buildService;
             _kbService = kbService;
+            _analyzeService = analyzeService;
         }
 
         public string WriteObject(string target, string partName, string newCode)
@@ -208,6 +210,14 @@ namespace GxMcp.Worker.Services
 
                 obj.Save();
                 _objectService.Invalidate(target);
+
+                // Live Indexing: Trigger immediate analysis
+                try {
+                    Logger.Info($"[WriteService] Triggering Live Indexing for {target}...");
+                    _analyzeService.AnalyzeInternal(target);
+                } catch (Exception ex) {
+                    Logger.Error($"[WriteService] Live Indexing Failed: {ex.Message}");
+                }
 
                 return "{\"status\": \"Success\", \"object\": \"" + target + "\"}";
             }

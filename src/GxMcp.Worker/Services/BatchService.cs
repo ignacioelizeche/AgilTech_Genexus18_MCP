@@ -11,11 +11,13 @@ namespace GxMcp.Worker.Services
     {
         private readonly ObjectService _objectService;
         private readonly BuildService _buildService;
+        private readonly AnalyzeService _analyzeService;
 
-        public BatchService(ObjectService objectService, BuildService buildService)
+        public BatchService(ObjectService objectService, BuildService buildService, AnalyzeService analyzeService)
         {
             _objectService = objectService;
             _buildService = buildService;
+            _analyzeService = analyzeService;
         }
 
         public string Execute(string target, string action, string payload)
@@ -145,8 +147,20 @@ namespace GxMcp.Worker.Services
             // Invalidate all cache as batch import might touch anything
             _objectService.ClearCache();
 
-            var finalNames = files.Select(f => "\"" + CommandDispatcher.EscapeJsonString(Path.GetFileNameWithoutExtension(f).Replace("_", ":")) + "\"");
-            return "{\"status\": \"Batch committed\", \"objectCount\": " + files.Length + ", \"committedObjects\": [" + string.Join(",", finalNames) + "]}";
+            var finalNames = files.Select(f => Path.GetFileNameWithoutExtension(f).Replace("_", ":")).ToList();
+            
+            // Live Indexing: Trigger analysis for all imported objects
+            foreach (var name in finalNames)
+            {
+                try {
+                    _analyzeService.AnalyzeInternal(name);
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"[BatchService] Live Indexing Failed for {name}: {ex.Message}");
+                }
+            }
+
+            var finalNamesJson = finalNames.Select(n => "\"" + CommandDispatcher.EscapeJsonString(n) + "\"");
+            return "{\"status\": \"Batch committed\", \"objectCount\": " + files.Length + ", \"committedObjects\": [" + string.Join(",", finalNamesJson) + "]}";
         }
     }
 }

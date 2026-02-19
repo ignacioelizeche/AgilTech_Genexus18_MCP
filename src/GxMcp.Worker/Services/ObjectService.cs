@@ -82,8 +82,9 @@ namespace GxMcp.Worker.Services
             return obj != null ? obj.Guid : Guid.Empty;
         }
 
-        private KBObject FindObject(string target)
+        public KBObject FindObject(string target)
         {
+            Console.Error.WriteLine($"[ObjectService] FindObject: {target}");
             var kb = EnsureKbOpen();
             if (kb == null) return null;
 
@@ -104,6 +105,13 @@ namespace GxMcp.Worker.Services
                 else if (prefix == "dom" || prefix == "domain") expectedType = Artech.Genexus.Common.ObjClass.Domain;
             }
 
+            if (expectedType != null)
+            {
+                // Indexed lookup - MUCH FASTER
+                return kb.DesignModel.Objects.Get(expectedType.Value, new QualifiedName(namePart));
+            }
+
+            // Fallback lookup by name only if type is unknown
             var objects = kb.DesignModel.Objects as IEnumerable;
             if (objects == null) return null;
 
@@ -112,10 +120,7 @@ namespace GxMcp.Worker.Services
                 KBObject kbo = o as KBObject;
                 if (kbo != null && string.Equals(kbo.Name, namePart, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (expectedType == null || kbo.Type == expectedType.Value)
-                    {
-                        return kbo;
-                    }
+                    return kbo;
                 }
             }
             return null;
@@ -123,6 +128,7 @@ namespace GxMcp.Worker.Services
 
         public string GetObjectXml(string target)
         {
+            Console.Error.WriteLine($"[ObjectService] GetObjectXml: {target}");
             if (string.IsNullOrEmpty(target)) return null;
 
             if (_cache.ContainsKey(target))

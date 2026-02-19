@@ -24,16 +24,16 @@ namespace GxMcp.Worker.Services
             _buildService = new BuildService();
             _kbService = new KbService(_buildService);
             _objectService = new ObjectService(_buildService, _kbService);
-            _writeService = new WriteService(_objectService, _buildService, _kbService);
-            _listService = new ListService(_buildService, _kbService);
             _analyzeService = new AnalyzeService(_objectService);
-            _forgeService = new ForgeService(_buildService, _objectService);
+            _writeService = new WriteService(_objectService, _buildService, _kbService, _analyzeService);
+            _listService = new ListService(_buildService, _kbService);
+            _forgeService = new ForgeService(_buildService, _objectService, _analyzeService);
             _refactorService = new RefactorService(_objectService, _buildService);
             _doctorService = new DoctorService();
             _searchService = new SearchService();
             _historyService = new HistoryService(_objectService, _writeService);
             _wikiService = new WikiService(_objectService);
-            _batchService = new BatchService(_objectService, _buildService);
+            _batchService = new BatchService(_objectService, _buildService, _analyzeService);
         }
 
         public string Dispatch(string jsonRpc)
@@ -47,6 +47,7 @@ namespace GxMcp.Worker.Services
                 string action = prms?["action"]?.ToString();
                 string target = prms?["target"]?.ToString();
                 string payload = prms?["payload"]?.ToString();
+                string part = prms?["part"]?.ToString();
 
                 Console.Error.WriteLine($"[Worker] Dispatching: {module} / {action} / {target}");
 
@@ -61,7 +62,7 @@ namespace GxMcp.Worker.Services
                         return _objectService.ReadObject(target);
 
                     case "write":
-                        return _writeService.WriteObject(target, action, payload);
+                        return _writeService.WriteObject(target, part ?? action, payload);
 
                     case "listobjects":
                         int limit = prms?["limit"]?.ToObject<int>() ?? 100;
@@ -94,6 +95,7 @@ namespace GxMcp.Worker.Services
 
                     case "genexus":
                         if (action == "Test") return "{\"status\":\"Echo OK\"}";
+                        if (action == "BulkIndex") return _kbService.BulkIndex();
                         break;
                 }
 

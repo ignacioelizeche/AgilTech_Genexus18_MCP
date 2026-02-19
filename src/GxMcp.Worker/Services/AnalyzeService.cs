@@ -1,83 +1,251 @@
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Xml;
+using Artech.Architecture.Common.Objects;
+using Artech.Genexus.Common.Parts;
+using Artech.Genexus.Common.Objects;
+using Artech.Architecture.Common.Collections;
+using GxMcp.Worker.Models;
+using Newtonsoft.Json;
 
 namespace GxMcp.Worker.Services
 {
     public class AnalyzeService
     {
         private readonly ObjectService _objectService;
+        private readonly string _indexPath;
 
         public AnalyzeService(ObjectService objectService)
         {
             _objectService = objectService;
+            _indexPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache", "search_index.json");
+            Console.Error.WriteLine($"[AnalyzeService] Initialized. Index path: {_indexPath}");
         }
 
         public string Analyze(string target)
         {
             try
             {
-                string xmlContent = _objectService.GetObjectXml(target);
-                if (xmlContent == null) return "{\"error\": \"Object not found: " + CommandDispatcher.EscapeJsonString(target) + "\"}";
-
-                var doc = new XmlDocument();
-                doc.LoadXml(xmlContent);
-
-                // Extract all source code from parts
-                string fullCode = "";
-                var partNodes = doc.GetElementsByTagName("Part");
-                foreach (XmlNode pn in partNodes)
-                {
-                    var sourceNode = pn.SelectSingleNode("Source");
-                    if (sourceNode != null)
-                    {
-                        fullCode += sourceNode.InnerText + "\n";
-                    }
-                }
-
-                // Strip comments
-                string clean = Regex.Replace(fullCode, @"(?s)/\*.*?\*/", "");
-                clean = Regex.Replace(clean, @"//.*", "");
-
-                // Extract calls
-                var calls = Regex.Matches(clean, @"(?i)(?:call|udp|submit)\s*\(\s*['""]?([\w\.]+)")
-                    .Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToList();
-
-                // Extract tables
-                var tables = Regex.Matches(clean, @"(?i)(?:for each|new)\s+([\w]+)")
-                    .Cast<Match>().Select(m => m.Groups[1].Value)
-                    .Where(t => t.ToLower() != "where" && t.ToLower() != "order")
-                    .Distinct().ToList();
-
-                // Semantic tags
-                var tags = GetTags(target, fullCode);
-
-                // Quality Check (Linter)
-                var insights = AnalyzeQuality(fullCode);
-
-                // Complexity Score
-                int complexity = CalculateComplexity(fullCode);
+                var result = AnalyzeInternal(target);
+                if (result == null) return "{\"error\": \"Analysis failed for: " + CommandDispatcher.EscapeJsonString(target) + "\"}";
 
                 // Build JSON response
-                string callsJson = "[" + string.Join(",", calls.Select(c => "\"" + CommandDispatcher.EscapeJsonString(c) + "\"")) + "]";
-                string tablesJson = "[" + string.Join(",", tables.Select(t => "\"" + CommandDispatcher.EscapeJsonString(t) + "\"")) + "]";
-                string tagsJson = "[" + string.Join(",", tags.Select(t => "\"" + t + "\"")) + "]";
-                string insightsJson = "[" + string.Join(",", insights.Select(i => "{\"level\":\"" + i.Item1 + "\",\"message\":\"" + CommandDispatcher.EscapeJsonString(i.Item2) + "\"}")) + "]";
+                string callsJson = "[" + string.Join(",", result.Calls.Select(c => "\"" + CommandDispatcher.EscapeJsonString(c) + "\"")) + "]";
+                string tablesJson = "[" + string.Join(",", result.Tables.Select(t => "\"" + CommandDispatcher.EscapeJsonString(t) + "\"")) + "]";
+                string tagsJson = "[" + string.Join(",", result.Tags.Select(t => "\"" + t + "\"")) + "]";
+                string rulesJson = "[" + string.Join(",", result.Rules.Select(r => "\"" + CommandDispatcher.EscapeJsonString(r) + "\"")) + "]";
+                string insightsJson = "[" + string.Join(",", result.Insights.Select(i => "{\"level\":\"" + i.Level + "\",\"message\":\"" + CommandDispatcher.EscapeJsonString(i.Message) + "\"}")) + "]";
 
                 return "{\"name\":\"" + CommandDispatcher.EscapeJsonString(target) + "\","
                      + "\"calls\":" + callsJson + ","
                      + "\"tables\":" + tablesJson + ","
                      + "\"tags\":" + tagsJson + ","
+                     + "\"rules\":" + rulesJson + ","
+                     + "\"domain\":\"" + result.Domain + "\","
                      + "\"insights\":" + insightsJson + ","
-                     + "\"complexity\":" + complexity + ","
-                     + "\"codeLength\":" + fullCode.Length + "}";
+                     + "\"complexity\":" + result.Complexity + ","
+                     + "\"codeLength\":" + result.CodeLength + "}";
             }
             catch (Exception ex)
             {
-                return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                Console.Error.WriteLine($"[AnalyzeService Error] {ex.Message}");
+                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
+        }
+
+        public AnalysisResult AnalyzeInternal(string target)
+        {
+            try
+            {
+                Console.Error.WriteLine($"[AnalyzeService] Starting AnalyzeInternal for {target}");
+                Console.Error.Flush();
+                string xmlContent = null;
+                for (int i = 0; i < 3; i++)
+                {
+                    xmlContent = _objectService.GetObjectXml(target);
+                    if (xmlContent != null) break;
+                    System.Threading.Thread.Sleep(200);
+                    Console.Error.WriteLine($"[AnalyzeService] Retrying GetObjectXml for {target} ({i+1}/3)...");
+                }
+
+                if (xmlContent == null) 
+                {
+                    Console.Error.WriteLine($"[AnalyzeService] Failed to get XML for {target} after retries.");
+                    return null;
+                }
+
+                Console.Error.WriteLine($"[AnalyzeService] Got XML (len={xmlContent.Length}). Parsing...");
+                var doc = new XmlDocument();
+                doc.LoadXml(xmlContent);
+
+                string fullCode = "";
+                var partNodes = doc.GetElementsByTagName("Part");
+                foreach (XmlNode pn in partNodes)
+                {
+                    var sourceNode = pn.SelectSingleNode("Source");
+                    if (sourceNode != null) fullCode += sourceNode.InnerText + "\n";
+                }
+
+                string clean = StripComments(fullCode);
+                
+                // 1. Dependency Analysis (Dual Discovery)
+                Console.Error.WriteLine($"[AnalyzeService] Analyzing Calls...");
+                var calls = GetCalls(clean);
+                Console.Error.WriteLine($"[AnalyzeService] Analyzing Tables...");
+                var tables = GetTables(target, xmlContent); 
+                
+                Console.Error.WriteLine($"[AnalyzeService] Finding Object in SDK...");
+                KBObject obj = _objectService.FindObject(target);
+                if (obj != null)
+                {
+                    // SDK-based Discovery
+                    foreach (var sc in GetCallsFromSdk(obj)) if (!calls.Contains(sc)) calls.Add(sc);
+                    foreach (var st in GetTablesFromSdk(obj)) if (!tables.Contains(st)) tables.Add(st);
+                }
+
+                // 2. Metadata & BI
+                var tags = GetTags(target, fullCode);
+                var rules = GetBusinessRules(clean);
+                var domain = GetBusinessDomain(target, tables);
+                int complexity = CalculateComplexity(fullCode);
+
+                // 3. Quality Analysis (Linter)
+                var insights = AnalyzeQuality(clean, obj);
+
+                // 4. Update Index
+                Console.Error.WriteLine($"[AnalyzeService] Updating Index...");
+                UpdateIndex(target, calls, tables, tags, fullCode, complexity, rules, domain);
+
+                return new AnalysisResult
+                {
+                    Name = target,
+                    Calls = calls,
+                    Tables = tables,
+                    Tags = tags,
+                    Rules = rules,
+                    Domain = domain,
+                    Insights = insights,
+                    Complexity = complexity,
+                    CodeLength = fullCode.Length
+                };
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[AnalyzeService Internal Error] {ex.Message}");
+                return null;
+            }
+        }
+
+        private string StripComments(string code)
+        {
+            string clean = Regex.Replace(code, @"(?s)/\*.*?\*/", "");
+            clean = Regex.Replace(clean, @"//.*", "");
+            return clean;
+        }
+
+        private List<string> GetCalls(string cleanCode)
+        {
+            var calls = new List<string>();
+            var callMatches = Regex.Matches(cleanCode, @"(?i)(?:call|u\s*|udp)\s*\(\s*'?([\w:]+)'?|([\w]+)\s*\.\s*call\s*\(", RegexOptions.IgnoreCase);
+            foreach (Match m in callMatches)
+            {
+                string refName = m.Groups[1].Value;
+                if (string.IsNullOrEmpty(refName)) refName = m.Groups[2].Value;
+                if (!string.IsNullOrEmpty(refName) && !calls.Contains(refName, StringComparer.OrdinalIgnoreCase))
+                    calls.Add(refName.Replace("'", ""));
+            }
+            return calls;
+        }
+
+        private List<string> GetCallsFromSdk(KBObject obj)
+        {
+            var calls = new List<string>();
+            try
+            {
+                var referencesProp = obj.GetType().GetProperty("References");
+                var references = referencesProp?.GetValue(obj, null) as System.Collections.IEnumerable;
+                if (references != null)
+                {
+                    foreach (object refObj in references)
+                    {
+                        var targetNameProp = refObj.GetType().GetProperty("TargetName");
+                        string refName = targetNameProp?.GetValue(refObj, null) as string;
+                        if (!string.IsNullOrEmpty(refName)) calls.Add(refName);
+                    }
+                }
+            } catch {}
+            return calls.Distinct().ToList();
+        }
+
+        private List<string> GetTables(string target, string xml)
+        {
+            var tables = new List<string>();
+            try
+            {
+                if (string.IsNullOrEmpty(xml)) return tables;
+                string clean = StripComments(xml);
+                tables.AddRange(Regex.Matches(clean, @"(?i)(?:for each|new|delete)\s+([\w]+)")
+                    .Cast<Match>().Select(m => m.Groups[1].Value)
+                    .Where(t => t.ToLower() != "where" && t.ToLower() != "order" && t.ToLower() != "definedby")
+                    .Distinct());
+            } catch {}
+            return tables.Distinct().ToList();
+        }
+
+        private List<string> GetTablesFromSdk(KBObject obj)
+        {
+            var tables = new List<string>();
+            try
+            {
+                var referencesProp = obj.GetType().GetProperty("References");
+                var references = referencesProp?.GetValue(obj, null) as System.Collections.IEnumerable;
+                if (references != null)
+                {
+                    foreach (object refObj in references)
+                    {
+                        var targetNameProp = refObj.GetType().GetProperty("TargetName");
+                        string refName = targetNameProp?.GetValue(refObj, null) as string;
+                        if (!string.IsNullOrEmpty(refName) && !refName.Contains(":") && char.IsUpper(refName[0]))
+                            tables.Add(refName);
+                    }
+                }
+            } catch {}
+            return tables.Distinct().ToList();
+        }
+
+        private List<AnalysisInsight> AnalyzeQuality(string clean, KBObject obj)
+        {
+            var insights = new List<AnalysisInsight>();
+
+            if (Regex.IsMatch(clean, @"\bFor\s+each\b.*?Commit\b.*?EndFor\b", RegexOptions.IgnoreCase | RegexOptions.Singleline))
+                insights.Add(new AnalysisInsight { Level = "Critical", Message = "COMMIT command detected inside a LOOP. This causing performance issues." });
+
+            if (Regex.IsMatch(clean, @"\bCall\s*\(\s*&", RegexOptions.IgnoreCase))
+                insights.Add(new AnalysisInsight { Level = "Warning", Message = "Dynamic CALL detected. Breaks reference tracking." });
+
+            if (Regex.IsMatch(clean, @"\bFor\s+each\b", RegexOptions.IgnoreCase) && !Regex.IsMatch(clean, @"\bwhere\b", RegexOptions.IgnoreCase))
+                insights.Add(new AnalysisInsight { Level = "Critical", Message = "Loop without WHERE clause detected. High risk of Full Table Scan." });
+
+            if (obj != null)
+            {
+                try {
+                    var varsPart = obj.Parts.Get<VariablesPart>();
+                    var variables = varsPart?.GetType().GetProperty("Variables")?.GetValue(varsPart, null) as System.Collections.IEnumerable;
+                    if (variables != null) {
+                        foreach (object vObj in variables) {
+                            string vName = vObj.GetType().GetProperty("Name")?.GetValue(vObj, null) as string;
+                            bool vIsStd = (bool)(vObj.GetType().GetProperty("IsStandard")?.GetValue(vObj, null) ?? false);
+                            if (vIsStd) continue;
+                            if (!Regex.IsMatch(clean, @"&\b" + Regex.Escape(vName) + @"\b", RegexOptions.IgnoreCase))
+                                insights.Add(new AnalysisInsight { Level = "Warning", Message = $"Unused variable: '&{vName}'" });
+                        }
+                    }
+                } catch {}
+            }
+            return insights;
         }
 
         private List<string> GetTags(string target, string code)
@@ -86,76 +254,99 @@ namespace GxMcp.Worker.Services
             var rules = new Dictionary<string, string>
             {
                 {"Integration", @"(?i)(httpclient|rest|json|tostring|fromjson|soap|location)"},
-                {"Reporting", @"(?i)(print|output_file|pdf|report|header|footer)"},
-                {"Heavy-Batch", @"(?i)(for each|commit|rollback|submit|blocking)"},
-                {"Security", @"(?i)(gam|permission|encrypt|decrypt|login|authorization)"},
-                {"File-System", @"(?i)(file\.|directory\.|path\.)"},
-                {"Interface", @"(?i)(webpanel|form\.|control\.|event\s+'|onclick)"},
-                {"Data-Logic", @"(?i)(where|order|definedby|new|delete|blocking)"},
-                {"WorkWith", @"(?i)(wwp|WorkWithPlus|Grid|DynamicFilter)"}
+                {"Reporting", @"(?i)(print|output_file|pdf|report)"},
+                {"Heavy-Batch", @"(?i)(for each|commit|rollback|submit)"},
+                {"Security", @"(?i)(gam|permission|encrypt|decrypt|login)"},
+                {"Interface", @"(?i)(webpanel|form\.|control\.|event\s+'|onclick)"}
             };
-
-            foreach (var r in rules)
-            {
-                if (Regex.IsMatch(code, r.Value)) tags.Add(r.Key);
-            }
-
+            foreach (var r in rules) if (Regex.IsMatch(code, r.Value)) tags.Add(r.Key);
             if (target.StartsWith("Prc")) tags.Add("Logic-Engine");
             if (target.StartsWith("Trn")) tags.Add("Data-Model");
             if (target.StartsWith("Wbp")) tags.Add("UI-Component");
-
             return tags.Distinct().ToList();
         }
 
-        private List<Tuple<string, string>> AnalyzeQuality(string code)
+        private List<string> GetBusinessRules(string code)
         {
-            var issues = new List<Tuple<string, string>>();
+            var rules = new List<string>();
+            if (Regex.IsMatch(code, @"(?i)\berror\s*\(")) rules.Add("Validation Rule");
+            if (Regex.IsMatch(code, @"(?i)\bmsg\s*\(")) rules.Add("UI Interaction");
+            if (Regex.IsMatch(code, @"(?i)\bcommit\b")) rules.Add("Data Persistence");
+            if (Regex.IsMatch(code, @"(?i)\.save\s*\(")) rules.Add("Business Object Update");
+            return rules;
+        }
 
-            // Rule 1: Commit inside Loop (Critical)
-            // Using RegexOptions.Singleline to match across newlines
-            if (Regex.IsMatch(code, @"\bFor\s+each.*?\bCommit\b.*?\bEndFor\b", RegexOptions.IgnoreCase | RegexOptions.Singleline))
-            {
-                issues.Add(Tuple.Create("Critical", "COMMIT command detected inside a LOOP. This causes severe performance degradation and database locking issues. Move the Commit outside the loop."));
-            }
-
-            // Rule 2: Sleep/Wait (Warning)
-            if (Regex.IsMatch(code, @"\b(Sleep|Wait)\s*\(", RegexOptions.IgnoreCase))
-            {
-                issues.Add(Tuple.Create("Warning", "Sleep/Wait function detected. This blocks the thread and ruins User Experience. Use a Timer or asynchronous pattern if possible."));
-            }
-
-            // Rule 3: Dynamic Calls (Warning)
-            if (Regex.IsMatch(code, @"\bCall\s*\(\s*&", RegexOptions.IgnoreCase))
-            {
-                issues.Add(Tuple.Create("Warning", "Dynamic CALL detected (calling a variable). This breaks reference tracking and dependency analysis. Avoid if possible."));
-            }
-
-            // Rule 4: New without When Duplicate (Info)
-            // Matches 'New' ... 'EndNew' where 'When duplicate' is NOT inside
-            var newBlocks = Regex.Matches(code, @"\bNew\b.*?\bEndNew\b", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-            foreach (Match match in newBlocks)
-            {
-                if (!Regex.IsMatch(match.Value, @"\bWhen\s+duplicate\b", RegexOptions.IgnoreCase))
-                {
-                    issues.Add(Tuple.Create("Info", "NEW command block found without WHEN DUPLICATE clause. Ensure you are handling unique constraint violations."));
-                }
-            }
-            
-            // Rule 5: Unfiltered Loop (Critical)
-             if (Regex.IsMatch(code, @"\bFor\s+each\b", RegexOptions.IgnoreCase) && !Regex.IsMatch(code, @"\bwhere\b", RegexOptions.IgnoreCase))
-                issues.Add(Tuple.Create("Critical", "Loop without WHERE clause detected. High risk of Full Table Scan."));
-
-            return issues;
+        private string GetBusinessDomain(string target, List<string> tables)
+        {
+            string name = target.Contains(":") ? target.Split(':')[1] : target;
+            if (name.StartsWith("Ptc", StringComparison.OrdinalIgnoreCase) || tables.Any(t => t.StartsWith("Ptc", StringComparison.OrdinalIgnoreCase))) return "Protocolo";
+            if (name.StartsWith("Fin", StringComparison.OrdinalIgnoreCase) || tables.Any(t => t.StartsWith("Fin", StringComparison.OrdinalIgnoreCase))) return "Financeiro";
+            if (name.StartsWith("Acad", StringComparison.OrdinalIgnoreCase) || tables.Any(t => t.StartsWith("Acad", StringComparison.OrdinalIgnoreCase))) return "Acadêmico";
+            if (name.StartsWith("Wrf", StringComparison.OrdinalIgnoreCase) || tables.Any(t => t.StartsWith("Wrf", StringComparison.OrdinalIgnoreCase))) return "Workflow/Fluxo";
+            return "Geral";
         }
 
         private int CalculateComplexity(string code)
         {
             int score = 1;
             score += Regex.Matches(code, @"\bif\b", RegexOptions.IgnoreCase).Count;
-            score += Regex.Matches(code, @"\bdo\s+case\b", RegexOptions.IgnoreCase).Count;
             score += Regex.Matches(code, @"\bfor\s+each\b", RegexOptions.IgnoreCase).Count * 2;
-            score += Regex.Matches(code, @"\bcall\b", RegexOptions.IgnoreCase).Count;
             return score;
+        }
+
+        private void UpdateIndex(string target, List<string> calls, List<string> tables, List<string> tags, string code, int complexity, List<string> rules, string domain)
+        {
+            try {
+                var index = new SearchIndex();
+                if (File.Exists(_indexPath)) index = SearchIndex.FromJson(File.ReadAllText(_indexPath)) ?? new SearchIndex();
+
+                var entry = new SearchIndex.IndexEntry {
+                    Name = target,
+                    Type = target.Contains(":") ? target.Split(':')[0] : "Unknown",
+                    Tags = tags,
+                    Calls = calls,
+                    Tables = tables,
+                    Rules = rules,
+                    BusinessDomain = domain,
+                    Complexity = complexity,
+                    SourceSnippet = code.Length > 200 ? code.Substring(0, 200) : code,
+                    Keywords = target.Replace(":", " ").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList()
+                };
+                index.Objects[target] = entry;
+                index.LastUpdated = DateTime.Now;
+                foreach (var call in calls) {
+                    if (!index.Objects.ContainsKey(call)) index.Objects[call] = new SearchIndex.IndexEntry { Name = call, Type = call.Contains(":") ? call.Split(':')[0] : "Unknown" };
+                    if (index.Objects[call].CalledBy == null) index.Objects[call].CalledBy = new List<string>();
+                    if (!index.Objects[call].CalledBy.Contains(target, StringComparer.OrdinalIgnoreCase)) index.Objects[call].CalledBy.Add(target);
+                }
+                string dir = Path.GetDirectoryName(_indexPath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(_indexPath, index.ToJson());
+                Console.Error.WriteLine($"[AnalyzeService] Index successfully written to: {_indexPath}");
+                Console.Error.Flush();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[AnalyzeService] Index Update Error: {ex.Message}");
+                Console.Error.Flush();
+            }
+        }
+
+        public class AnalysisResult {
+            public string Name { get; set; }
+            public List<string> Calls { get; set; }
+            public List<string> Tables { get; set; }
+            public List<string> Tags { get; set; }
+            public List<string> Rules { get; set; }
+            public string Domain { get; set; }
+            public List<AnalysisInsight> Insights { get; set; }
+            public int Complexity { get; set; }
+            public int CodeLength { get; set; }
+        }
+
+        public class AnalysisInsight {
+            public string Level { get; set; }
+            public string Message { get; set; }
         }
     }
 }
