@@ -11,9 +11,13 @@ using Artech.Architecture.Common.Services;
 using Artech.Architecture.Common;
 using Artech.Architecture.UI.Framework.Services;
 using Artech.Udm.Framework;
+using Artech.Genexus.Common;
+using Artech.Genexus.Common.Objects;
+using Artech.Genexus.Common.Parts;
 using Newtonsoft.Json.Linq;
 using System.Xml;
 using GxMcp.Worker.Helpers;
+using Attribute = Artech.Genexus.Common.Objects.Attribute;
 
 namespace GxMcp.Worker.Services
 {
@@ -417,6 +421,77 @@ namespace GxMcp.Worker.Services
 
                 string sectionContent = partCode.Substring(range.start, range.end - range.start);
                 return "{\"name\":\"" + target + "\", \"part\":\"" + partName + "\", \"section\":\"" + sectionName + "\", \"source\":\"" + CommandDispatcher.EscapeJsonString(sectionContent) + "\"}";
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        public string GetVariables(string target)
+        {
+            try
+            {
+                var obj = FindObject(target);
+                if (obj == null) return "{\"error\":\"Object not found: " + target + "\"}";
+
+                var varsPart = obj.Parts.Get<VariablesPart>();
+                if (varsPart == null) return "{\"name\":\"" + target + "\", \"variables\":[]}";
+
+                var variables = new List<object>();
+                foreach (Variable v in varsPart.Variables)
+                {
+                    var vInfo = new JObject();
+                    vInfo["name"] = v.Name;
+                    vInfo["description"] = v.Description;
+                    vInfo["type"] = v.Type.ToString();
+                    vInfo["length"] = v.Length;
+                    vInfo["decimals"] = v.Decimals;
+                    vInfo["isCollection"] = v.IsCollection;
+                    
+                    if (v.Type == eDBType.GX_SDT)
+                    {
+                        try {
+                            // Use reflection to get TypeName or similar if property not direct
+                            var typeNameProp = v.GetType().GetProperty("TypeName");
+                            vInfo["typeName"] = typeNameProp?.GetValue(v, null)?.ToString() ?? "";
+                        } catch {
+                            vInfo["typeName"] = "Unknown SDT";
+                        }
+                    }
+                    
+                    variables.Add(vInfo);
+                }
+
+                return Newtonsoft.Json.JsonConvert.SerializeObject(new { 
+                    name = target, 
+                    variables = variables 
+                });
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        public string GetAttributeMetadata(string name)
+        {
+            try
+            {
+                var kb = EnsureKbOpen();
+                string namePart = name.Contains(":") ? name.Split(':')[1] : name;
+                var att = Attribute.Get(kb.DesignModel, namePart);
+                if (att == null) return "{\"error\":\"Attribute not found: " + namePart + "\"}";
+
+                var result = new JObject();
+                result["name"] = att.Name;
+                result["description"] = att.Description;
+                result["type"] = att.Type.ToString();
+                result["length"] = att.Length;
+                result["decimals"] = att.Decimals;
+                result["isFormula"] = att.Formula != null;
+                
+                return result.ToString();
             }
             catch (Exception ex)
             {

@@ -270,6 +270,42 @@ namespace GxMcp.Gateway
                         },
                         required = new[] { "name", "section", "code" }
                     }
+                },
+
+                new {
+                    name = "genexus_get_variables",
+                    description = "Returns the list of variables defined in an object with their metadata (type, length, etc.).",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new {
+                            name = new { type = "string", description = "Object name (e.g. 'Prc:MyProc')" }
+                        },
+                        required = new[] { "name" }
+                    }
+                },
+
+                new {
+                    name = "genexus_get_attribute",
+                    description = "Returns metadata for a specific attribute (Type, Length, Table).",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new {
+                            name = new { type = "string", description = "Attribute name" }
+                        },
+                        required = new[] { "name" }
+                    }
+                },
+
+                new {
+                    name = "genexus_get_hierarchy",
+                    description = "Returns the level structure and tables of a Transaction.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new {
+                            name = new { type = "string", description = "Transaction name (e.g. 'Trn:Customer')" }
+                        },
+                        required = new[] { "name" }
+                    }
                 }
             };
         }
@@ -423,6 +459,27 @@ namespace GxMcp.Gateway
                         part = args?["part"]?.ToString() ?? "Source",
                         payload = args?["code"]?.ToString(),
                         section = args?["section"]?.ToString()
+                    };
+
+                case "genexus_get_variables":
+                    return new {
+                        module = "Read",
+                        action = "GetVariables",
+                        target = args?["name"]?.ToString()
+                    };
+
+                case "genexus_get_attribute":
+                    return new {
+                        module = "Read",
+                        action = "GetAttribute",
+                        target = args?["name"]?.ToString()
+                    };
+
+                case "genexus_get_hierarchy":
+                    return new {
+                        module = "Analyze",
+                        action = "GetHierarchy",
+                        target = args?["name"]?.ToString()
                     };
 
                 default:

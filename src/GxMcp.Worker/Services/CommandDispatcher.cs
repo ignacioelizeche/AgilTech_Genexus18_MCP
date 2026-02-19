@@ -72,6 +72,8 @@ namespace GxMcp.Worker.Services
                     case "read":
                         if (string.Equals(action, "ExtractSource", StringComparison.OrdinalIgnoreCase)) return _objectService.ReadObjectSource(target, part);
                         if (string.Equals(action, "ReadSection", StringComparison.OrdinalIgnoreCase)) return _objectService.ReadObjectSection(target, part, payload);
+                        if (string.Equals(action, "GetVariables", StringComparison.OrdinalIgnoreCase)) return _objectService.GetVariables(target);
+                        if (string.Equals(action, "GetAttribute", StringComparison.OrdinalIgnoreCase)) return _objectService.GetAttributeMetadata(target);
                         return _objectService.ReadObject(target);
 
                     case "write":
@@ -88,6 +90,7 @@ namespace GxMcp.Worker.Services
 
                     case "analyze":
                         if (string.Equals(action, "ListSections", StringComparison.OrdinalIgnoreCase)) return _analyzeService.ListSections(target, part);
+                        if (string.Equals(action, "GetHierarchy", StringComparison.OrdinalIgnoreCase)) return _analyzeService.GetTransactionHierarchy(target);
                         return _analyzeService.Analyze(target);
 
                     case "forge":

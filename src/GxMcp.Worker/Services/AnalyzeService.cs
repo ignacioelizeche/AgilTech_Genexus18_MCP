@@ -92,6 +92,60 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        public string GetTransactionHierarchy(string target)
+        {
+            try
+            {
+                var obj = _objectService.FindObject(target);
+                if (obj == null) return "{\"error\":\"Object not found: " + target + "\"}";
+
+                Transaction trn = obj as Transaction;
+                if (trn == null) return "{\"error\":\"Object is not a Transaction: " + target + "\"}";
+
+                var levels = new List<object>();
+                foreach (TransactionLevel level in trn.Structure.Root.Levels)
+                {
+                    levels.Add(ParseLevel(level));
+                }
+
+                return Newtonsoft.Json.JsonConvert.SerializeObject(new { 
+                    name = target, 
+                    rootTable = trn.Structure.Root.AssociatedTable?.Name,
+                    levels = levels 
+                });
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        private object ParseLevel(TransactionLevel level)
+        {
+            var lObj = new JObject();
+            lObj["name"] = level.Name;
+            lObj["table"] = level.AssociatedTable?.Name;
+            
+            var attributes = new List<string>();
+            foreach (TransactionAttribute att in level.Attributes)
+            {
+                attributes.Add(att.Name + (att.IsKey ? " (PK)" : ""));
+            }
+            lObj["attributes"] = new JArray(attributes);
+
+            if (level.Levels.Count > 0)
+            {
+                var subLevels = new List<object>();
+                foreach (TransactionLevel sl in level.Levels)
+                {
+                    subLevels.Add(ParseLevel(sl));
+                }
+                lObj["subLevels"] = new JArray(subLevels);
+            }
+
+            return lObj;
+        }
+
         // Helper methods moved to CodeParser.cs
 
         public AnalysisResult AnalyzeInternal(string target)
