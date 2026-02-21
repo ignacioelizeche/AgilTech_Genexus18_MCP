@@ -215,6 +215,9 @@ namespace GxMcp.Gateway
                                 string workerResultJson = await tcs.Task;
                                 var workerResultObj = JObject.Parse(workerResultJson);
                                 
+                                var finalResult = workerResultObj["result"] ?? workerResultObj["error"];
+                                string resultText = finalResult?.ToString() ?? "{\"error\": \"Worker returned an empty or null result.\"}";
+
                                 var mcpToolResponse = new JObject
                                 {
                                     ["jsonrpc"] = "2.0",
@@ -223,8 +226,9 @@ namespace GxMcp.Gateway
                                     {
                                         content = new[] 
                                         {
-                                            new { type = "text", text = workerResultObj["result"]?.ToString() }
-                                        }
+                                            new { type = "text", text = resultText }
+                                        },
+                                        isError = workerResultObj["error"] != null
                                     })
                                 };
                                 

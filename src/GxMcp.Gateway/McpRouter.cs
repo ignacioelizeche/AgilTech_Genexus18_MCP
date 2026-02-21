@@ -85,6 +85,24 @@ namespace GxMcp.Gateway
                     }
                 },
                 new {
+                    name = "genexus_get_ui_context",
+                    description = "UI Vision: returns control list and layout structure for Web Panels and Transactions.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { name = new { type = "string", description = "Object name (e.g. 'Wp:MyWebPanel')." } },
+                        required = new[] { "name" }
+                    }
+                },
+                new {
+                    name = "genexus_get_data_context",
+                    description = "Holistic Data Vision: returns base table, extended table, and parent/child relationships for an object.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { name = new { type = "string", description = "Object name (e.g. 'Trn:Aluno' or 'Prc:MyProc')." } },
+                        required = new[] { "name" }
+                    }
+                },
+                new {
                     name = "genexus_analyze",
                     description = "Deep static analysis: finds all calls, tables used, and business logic insights.",
                     inputSchema = new {
@@ -106,6 +124,24 @@ namespace GxMcp.Gateway
                     }
                 },
                 new {
+                    name = "genexus_get_variables",
+                    description = "Lists all variables defined in an object, including their types.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { name = new { type = "string", description = "Object name (e.g. 'Prc:MyProc')." } },
+                        required = new[] { "name" }
+                    }
+                },
+                new {
+                    name = "genexus_get_attribute",
+                    description = "Returns metadata for a specific GeneXus attribute (Type, Length, Domain, Table).",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { name = new { type = "string", description = "Attribute name." } },
+                        required = new[] { "name" }
+                    }
+                },
+                new {
                     name = "genexus_get_hierarchy",
                     description = "Retrieves the call tree (who calls this, who is called by this).",
                     inputSchema = new {
@@ -120,6 +156,61 @@ namespace GxMcp.Gateway
                     inputSchema = new {
                         type = "object",
                         properties = new { domain = new { type = "string", description = "Optional domain filter (e.g. Financeiro)" } }
+                    }
+                },
+                new {
+                    name = "genexus_health_report",
+                    description = "Holistic KB health monitoring: dead code, circular dependencies, complexity hotspots.",
+                    inputSchema = new { type = "object", properties = new { } }
+                },
+                new {
+                    name = "genexus_linter",
+                    description = "Analyzes object source code for anti-patterns (commits in loops, unfiltered loops, etc).",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { name = new { type = "string", description = "Object name to lint." } },
+                        required = new[] { "name" }
+                    }
+                },
+                new {
+                    name = "genexus_get_pattern_sample",
+                    description = "Returns a representative object of a given type to serve as a coding style reference.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { type = new { type = "string", description = "Type of object (e.g. Transaction, Procedure)." } },
+                        required = new[] { "type" }
+                    }
+                },
+                new {
+                    name = "genexus_patch_object",
+                    description = "Surgical text editing for large objects. Supports Append, Prepend, Replace, Insert_After.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { 
+                            name = new { type = "string", description = "Object name." },
+                            part = new { type = "string", description = "Part name (Source, Rules, Events)." },
+                            operation = new { type = "string", description = "Operation: Append, Prepend, Replace, Insert_After." },
+                            content = new { type = "string", description = "Text to insert/replace." },
+                            context = new { type = "string", description = "Anchor text for Replace/Insert_After." }
+                        },
+                        required = new[] { "name", "part", "operation", "content" }
+                    }
+                },
+                new {
+                    name = "genexus_doctor",
+                    description = "Calculates the 'Blast Radius' of a change. Returns all transitively affected objects and risk score.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { name = new { type = "string", description = "Object name." } },
+                        required = new[] { "name" }
+                    }
+                },
+                new {
+                    name = "genexus_doctor",
+                    description = "Analyzes build logs to diagnose errors and suggest fixes. Use this when builds fail.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { logPath = new { type = "string", description = "Optional path to MSBuild log file." } }
                     }
                 },
                 new {
@@ -173,12 +264,40 @@ namespace GxMcp.Gateway
                     return new { module = "Write", action = args?["part"]?.ToString() ?? "Source", target = args?["name"]?.ToString(), payload = args?["code"]?.ToString() };
                 case "genexus_analyze":
                     return new { module = "Analyze", action = "Analyze", target = args?["name"]?.ToString() };
+                case "genexus_get_data_context":
+                    return new { module = "Analyze", action = "GetDataContext", target = args?["name"]?.ToString() };
+                case "genexus_get_ui_context":
+                    return new { module = "UI", action = "GetUIContext", target = args?["name"]?.ToString() };
+                case "genexus_get_variables":
+                    return new { module = "Read", action = "GetVariables", target = args?["name"]?.ToString() };
+                case "genexus_get_attribute":
+                    return new { module = "Read", action = "GetAttribute", target = args?["name"]?.ToString() };
                 case "genexus_build":
                     return new { module = "Build", action = args?["action"]?.ToString(), target = args?["target"]?.ToString() };
                 case "genexus_get_hierarchy":
                     return new { module = "Analyze", action = "GetHierarchy", target = args?["name"]?.ToString() };
                 case "genexus_visualize":
                     return new { module = "Visualizer", action = "Generate", target = args?["domain"]?.ToString() };
+                case "genexus_health_report":
+                    return new { module = "Health", action = "GetReport" };
+                case "genexus_linter":
+                    return new { module = "Linter", action = "Analyze", target = args?["name"]?.ToString() };
+                case "genexus_get_pattern_sample":
+                    return new { module = "Pattern", action = "GetSample", target = args?["type"]?.ToString() };
+                case "genexus_patch_object":
+                    return new { 
+                        module = "Patch", 
+                        action = "Apply", 
+                        target = args?["name"]?.ToString(),
+                        part = args?["part"]?.ToString(),
+                        operation = args?["operation"]?.ToString(),
+                        content = args?["content"]?.ToString(),
+                        context = args?["context"]?.ToString()
+                    };
+                case "genexus_impact_analysis":
+                    return new { module = "Analyze", action = "ImpactAnalysis", target = args?["name"]?.ToString() };
+                case "genexus_doctor":
+                    return new { module = "Doctor", action = "Diagnose", target = args?["logPath"]?.ToString() };
                 case "genexus_wiki":
                     return new { module = "Wiki", action = "Generate", target = args?["name"]?.ToString() };
                 case "genexus_history":

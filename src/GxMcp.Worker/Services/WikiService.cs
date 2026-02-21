@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
+using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
 {
@@ -58,6 +59,19 @@ namespace GxMcp.Worker.Services
                 md.AppendLine($"**Generated:** {DateTime.Now:yyyy-MM-dd HH:mm}");
                 md.AppendLine();
 
+                md.AppendLine("## Relationship Diagram");
+                md.AppendLine("```mermaid");
+                md.AppendLine("graph TD");
+                string selfNode = target.Replace(":", "_");
+                md.AppendLine($"  {selfNode}[{target}]");
+                foreach (var c in calls)
+                {
+                    string targetNode = c.Replace(":", "_").Replace(".", "_");
+                    md.AppendLine($"  {selfNode} --> {targetNode}[{c}]");
+                }
+                md.AppendLine("```");
+                md.AppendLine();
+
                 if (calls.Count > 0)
                 {
                     md.AppendLine("## Dependencies");
@@ -92,6 +106,39 @@ namespace GxMcp.Worker.Services
                      + "\"dependencies\": " + depsJson + ","
                      + "\"rules\": " + rulesJson + ","
                      + "\"markdown\": \"" + CommandDispatcher.EscapeJsonString(md.ToString()) + "\"}";
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        public string GenerateBatch(string domainFilter)
+        {
+            try
+            {
+                var index = _objectService.GetIndex();
+                if (index == null) return "{\"error\": \"Search Index not found\"}";
+
+                var objects = index.Objects.Values
+                    .Where(o => string.Equals(o.BusinessDomain, domainFilter, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (objects.Count == 0) return "{\"error\": \"No objects found for domain: " + domainFilter + "\"}";
+
+                var results = new JArray();
+                foreach (var obj in objects)
+                {
+                    string res = Generate(obj.Name);
+                    results.Add(JObject.Parse(res));
+                }
+
+                var finalResult = new JObject();
+                finalResult["domain"] = domainFilter;
+                finalResult["count"] = objects.Count;
+                finalResult["results"] = results;
+
+                return finalResult.ToString();
             }
             catch (Exception ex)
             {

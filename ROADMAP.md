@@ -33,18 +33,18 @@
   - [x] Fix `CommandDispatcher` `part` routing for `WriteService`
   - [x] Add `SourceSnippet` to `SearchService` scoring algorithm
   - [x] End-to-end verification: Forge→Search, Write→Search (all 4 steps passed)
-- [ ] **Frente 6: GeneXus Guard (Proactive Linter)**
-  - [ ] Define anti-pattern catalog (N+1 queries, unused variables, empty catches, etc.)
-  - [ ] Implement rule engine in `AnalyzeService` quality checks
-  - [ ] Add severity levels (Error, Warning, Info)
-  - [ ] Return actionable fix suggestions with line references
-  - [ ] Integrate with `genexus_refactor` for auto-fix capabilities
-- [ ] **Frente 7: Doc Assistant (Auto-Wiki)**
-  - [ ] Design Markdown template for functional documentation
-  - [ ] Extract object metadata (type, description, attributes, dependencies)
-  - [ ] Generate relationship diagrams (Mermaid syntax)
-  - [ ] Include business rules and domain context from `SearchIndex`
-  - [ ] Support batch generation for entire modules/domains
+- [x] **Frente 6: GeneXus Guard (Proactive Linter)**
+  - [x] Define anti-pattern catalog (Commits in loops, unfiltered loops, blocking calls, etc.)
+  - [x] Implement logic in `LinterService.cs`
+  - [x] Add severity levels (Critical, Warning, Info)
+  - [x] Return actionable fix suggestions with code snippets
+  - [x] Exposed via `genexus_linter` tool
+- [x] **Frente 7: Doc Assistant (Auto-Wiki)**
+  - [x] Design Markdown template for functional documentation
+  - [x] Extract object metadata (type, description, dependencies)
+  - [x] Generate relationship diagrams using Mermaid.js syntax
+  - [x] Include business rules (extracted from code comments)
+  - [x] Support batch generation for entire domains/modules (`GenerateBatch`)
 
 - [x] **Frente 14: Hyper-Performance & SDK Native Fusion**
   > Structural optimizations for sub-second response times in high-volume operations.
@@ -53,6 +53,30 @@
   - [x] **Semantic Diffing**: `WriteObject` now skips re-indexing if source content hasn't changed.
   - [x] **Static Regex Compilation**: All analysis patterns (Calls, Tables, Tags) now use `RegexOptions.Compiled`.
   - [x] **Parallel Metadata Indexing**: Accelerated `genexus_bulk_index` using `Parallel.ForEach`.
+
+- [x] **Frente 15: Robustez Estrutural e Automação de Dependências (Lessons from Censo Task)**
+  > Superação dos "pontos cegos" do SDK para garantir autonomia total sem IDE.
+  - [x] **Injeção Dinâmica de Variáveis e Tabelas**: `VariableInjector` e `TableDependencyInjector` automatizam a declaração de variáveis e ancoragem de tabelas no `WriteObject`.
+  - [x] **Diagnósticos de Alta Fidelidade**: Captura de `ErrorCode` e mensagens detalhadas via `SaveOutput` (Adeus "Validation Failed" genérico).
+  - [x] **Estabilização do Worker & Heartbeat**: Thread segura com fila de comandos e resposta a "ping" para watchdog do Gateway.
+  - [x] **Implementação Real de `genexus_get_hierarchy`**: Navegação bi-direcional via grafos de referência nativos do SDK.
+  - [x] **Acesso a Partes Não-Texto**: Suporte para inspeção de variáveis (`GetVariables`) e atributos (`GetAttribute`).
+
+- [ ] **Frente 16: Fast Fail & Instant Feedback**
+  - [ ] Implement `genexus_validate` using SDK's `Validate()` method (in-memory syntax check).
+  - [ ] Expose validation tool to allow pre-save checks.
+
+- [x] **Frente 17: Semantic Query (Search Engine Upgrade)**
+  - [x] Upgrade `SearchService` to support structured prefixes (`type:`, `calls:`, `updates:`).
+  - [x] Implement query parser for combined filters (e.g., `type:Transaction updates:Tbl:Cliente`).
+
+- [ ] **Frente 18: Surgical Patch (Context-Aware Editing)**
+  - [ ] Implement `genexus_patch_object` with operations: `Append`, `Prepend`, `ReplaceBlock`.
+  - [ ] Add regex-based anchor detection for precise code insertion.
+
+- [x] **Frente 19: Pattern Reverse Engineering (Style Transfer)**
+  - [x] Implement `genexus_get_pattern_sample` to find representative objects (best-practices).
+  - [x] Add heuristics to select high-quality examples (low complexity, high reuse).
 
 ---
 
@@ -74,13 +98,13 @@
 
 ## Intelligence & Developer Experience
 
-- [ ] **Frente 10: Impact Radius Analysis**
+- [x] **Frente 10: Impact Radius Analysis**
   > "If I change X, what breaks?" — critical for safe refactoring.
-  - [ ] Implement transitive `CalledBy` graph traversal (N-depth)
-  - [ ] Calculate blast radius score (# of affected objects, weighted by type)
-  - [ ] Identify critical paths (objects with high Authority + deep dependency chains)
+  - [x] Implement transitive `CalledBy` graph traversal (N-depth)
+  - [x] Calculate blast radius score (# of affected objects, weighted by type)
+  - [x] Identify critical paths (objects with high Authority + deep dependency chains)
   - [ ] Generate change risk report before `WriteObject` operations
-  - [ ] Integrate with `genexus_analyze` output as `impactRadius` field
+  - [x] Integrate with `genexus_analyze` output as `impactRadius` field
 - [ ] **Frente 11: Code Generation Templates (Scaffolding)**
   > Automate creation of common patterns: CRUD procedures, BC wrappers, API endpoints.
   - [ ] Design template DSL for common GeneXus patterns
@@ -88,12 +112,12 @@
   - [ ] Generate Transaction + BC Procedure + Validation rules from template
   - [ ] Support custom templates from `.gxmcp/templates/` directory
   - [ ] Auto-wire generated objects with correct domain/naming conventions
-- [ ] **Frente 12: Cross-KB Analytics & Health Dashboard**
+- [x] **Frente 12: Cross-KB Analytics & Health Dashboard**
   > Holistic KB health monitoring: dead code, circular dependencies, complexity hotspots.
-  - [ ] Dead code detector (objects with 0 `CalledBy` that aren't entry points)
-  - [ ] Circular dependency detector (cycle detection in call graph)
-  - [ ] Complexity hotspot map (top-N objects by complexity score)
-  - [ ] Generate JSON health report for external consumption
+  - [x] Dead code detector (objects with 0 `CalledBy` that aren't entry points)
+  - [x] Circular dependency detector (cycle detection in call graph)
+  - [x] Complexity hotspot map (top-N objects by complexity score)
+  - [x] Generate JSON health report for external consumption
   - [ ] Trend tracking: compare index snapshots over time to detect code drift
 - [x] **Frente 13: Zero-IDE Stability & Surgical Editing (The "Fly-by-Wire" Upgrade)**
   > Addresses major blockers for fully autonomous development without the GeneXus IDE.

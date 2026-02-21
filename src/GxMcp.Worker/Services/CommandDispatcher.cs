@@ -17,6 +17,8 @@ namespace GxMcp.Worker.Services
         private readonly WriteService _writeService;
         private readonly ListService _listService;
         private readonly AnalyzeService _analyzeService;
+        private readonly DataInsightService _dataInsightService;
+        private readonly UIService _uiService;
         private readonly BuildService _buildService;
         private readonly RefactorService _refactorService;
         private readonly BatchService _batchService;
@@ -26,16 +28,24 @@ namespace GxMcp.Worker.Services
         private readonly WikiService _wikiService;
         private readonly HistoryService _historyService;
         private readonly VisualizerService _visualizerService;
+        private readonly HealthService _healthService;
+        private readonly LinterService _linterService;
+        private readonly PatternService _patternService;
+        private readonly PatchService _patchService;
 
         private CommandDispatcher()
         {
-            _indexCacheService = new IndexCacheService();
             _buildService = new BuildService();
+            _indexCacheService = new IndexCacheService(_buildService);
             _kbService = new KbService(_buildService, _indexCacheService);
-            _objectService = new ObjectService(_kbService);
+            _objectService = new ObjectService(_kbService, _buildService);
             _writeService = new WriteService(_objectService);
             _listService = new ListService(_kbService);
-            _analyzeService = new AnalyzeService(_kbService, _objectService);
+            _analyzeService = new AnalyzeService(_kbService, _objectService, _indexCacheService);
+            _dataInsightService = new DataInsightService(_kbService, _objectService);
+            _uiService = new UIService(_kbService, _objectService);
+            _objectService.SetDataInsightService(_dataInsightService);
+            _objectService.SetUIService(_uiService);
             _refactorService = new RefactorService(_kbService);
             _batchService = new BatchService(_kbService, _writeService);
             _forgeService = new ForgeService(_kbService, _writeService);
@@ -43,6 +53,10 @@ namespace GxMcp.Worker.Services
             _wikiService = new WikiService(_objectService);
             _historyService = new HistoryService(_objectService, _writeService);
             _visualizerService = new VisualizerService();
+            _healthService = new HealthService();
+            _linterService = new LinterService(_objectService);
+            _patternService = new PatternService(_indexCacheService, _objectService);
+            _patchService = new PatchService(_objectService, _writeService);
         }
 
         public static CommandDispatcher Instance
@@ -92,10 +106,20 @@ namespace GxMcp.Worker.Services
                         return _analyzeService.GetHierarchy(@params["name"]?.ToString());
                     case "genexus_get_variables":
                         return _analyzeService.GetVariables(@params["name"]?.ToString());
+                    case "genexus_get_data_context":
+                        return _dataInsightService.GetDataContext(@params["name"]?.ToString());
+                    case "genexus_get_ui_context":
+                        return _uiService.GetUIContext(@params["name"]?.ToString());
                     case "genexus_wiki":
                         return _wikiService.Generate(@params["name"]?.ToString());
                     case "genexus_visualize":
                         return _visualizerService.GenerateGraph(@params["domain"]?.ToString());
+                    case "genexus_linter":
+                        return _linterService.Lint(@params["name"]?.ToString());
+                    case "genexus_impact_analysis":
+                        return _analyzeService.GetImpactAnalysis(@params["name"]?.ToString());
+                    case "genexus_health_report":
+                        return _healthService.GetHealthReport();
                     case "genexus_history":
                         return _historyService.Execute(@params["name"]?.ToString(), @params["action"]?.ToString());
                 }
@@ -127,15 +151,25 @@ namespace GxMcp.Worker.Services
                         case "Analyze":
                             if (action == "ListSections") return _analyzeService.ListSections(target, @params["part"]?.ToString());
                             if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target);
+                            if (action == "GetDataContext") return _dataInsightService.GetDataContext(target);
+                            if (action == "ImpactAnalysis") return _analyzeService.GetImpactAnalysis(target);
                             return _analyzeService.Analyze(target);
-                        case "Build": return _buildService.Build(action, target);
+                        case "UI":
+                            if (action == "GetUIContext") return _uiService.GetUIContext(target);
+                            return "{\"error\":\"Unknown UI action\"}";
                         case "Doctor": return _buildService.Doctor(target);
                         case "Batch": return _batchService.ProcessBatch(action, target, payload);
                         case "Forge": return _forgeService.CreateObject(target, payload);
                         case "Refactor": return _refactorService.Refactor(target, action);
-                        case "Wiki": return _wikiService.Generate(target);
+                        case "Wiki": 
+                            if (action == "GenerateBatch") return _wikiService.GenerateBatch(target);
+                            return _wikiService.Generate(target);
                         case "History": return _historyService.Execute(target, action);
                         case "Visualizer": return _visualizerService.GenerateGraph(target);
+                        case "Linter": return _linterService.Lint(target);
+                        case "Health": return _healthService.GetHealthReport();
+                        case "Pattern": return _patternService.GetSample(target);
+                        case "Patch": return _patchService.ApplyPatch(target, @params["part"]?.ToString(), @params["operation"]?.ToString(), @params["content"]?.ToString(), @params["context"]?.ToString());
                     }
                 }
 

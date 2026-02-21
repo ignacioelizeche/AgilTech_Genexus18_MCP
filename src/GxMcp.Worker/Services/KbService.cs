@@ -40,6 +40,9 @@ namespace GxMcp.Worker.Services
                     string kbPath = _buildService.GetKBPath();
                     if (kbPath.EndsWith(".gxw", StringComparison.OrdinalIgnoreCase)) kbPath = Path.GetDirectoryName(kbPath);
 
+                    // Initialize the cache path based on the actual KB being opened
+                    _indexCacheService.Initialize(kbPath);
+
                     string oldDir = Directory.GetCurrentDirectory();
                     try {
                         Directory.SetCurrentDirectory(gxPath);
@@ -79,20 +82,42 @@ namespace GxMcp.Worker.Services
             {
                 var kb = GetKB();
                 if (kb == null) return "{\"error\":\"KB not open\"}";
-                Logger.Info("Bulk Indexing...");
+                
+                Logger.Info("Bulk Indexing starting (Parallel)...");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                
                 var index = new SearchIndex { LastUpdated = DateTime.Now };
-                var objects = kb.DesignModel.Objects.GetAll();
-                int total = 0;
-                foreach (var obj in objects)
-                {
-                    index.Objects[$"{obj.TypeDescriptor.Name}:{obj.Name}"] = new SearchIndex.IndexEntry {
-                        Name = obj.Name, Type = obj.TypeDescriptor.Name, Description = obj.Description
+                var concurrentDict = new System.Collections.Concurrent.ConcurrentDictionary<string, SearchIndex.IndexEntry>();
+                
+                var objects = kb.DesignModel.Objects.GetAll().ToList();
+                int total = objects.Count;
+                int processed = 0;
+
+                System.Threading.Tasks.Parallel.ForEach(objects, (obj) => {
+                    var entry = new SearchIndex.IndexEntry {
+                        Name = obj.Name,
+                        Type = obj.TypeDescriptor.Name,
+                        Description = obj.Description
                     };
-                    total++;
-                }
+                    concurrentDict.TryAdd($"{entry.Type}:{entry.Name}", entry);
+                    
+                    var current = System.Threading.Interlocked.Increment(ref processed);
+                    if (current % 1000 == 0) {
+                        Logger.Info($"Progress: {current}/{total} objects indexed...");
+                    }
+                });
+
+                foreach (var kvp in concurrentDict) index.Objects[kvp.Key] = kvp.Value;
+
                 _indexCacheService.UpdateIndex(index);
-                return "{\"status\":\"Success\", \"totalIndexed\":" + total + "}";
-            } catch (Exception ex) { return "{\"error\":\"" + ex.Message + "\"}"; }
+                sw.Stop();
+                
+                Logger.Info($"Bulk Indexing complete. {total} objects in {sw.ElapsedMilliseconds}ms.");
+                return "{\"status\":\"Success\", \"totalIndexed\":" + total + ", \"timeMs\":" + sw.ElapsedMilliseconds + "}";
+            } catch (Exception ex) { 
+                Logger.Error($"BulkIndex Fatal: {ex.Message}");
+                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; 
+            }
         }
     }
 }

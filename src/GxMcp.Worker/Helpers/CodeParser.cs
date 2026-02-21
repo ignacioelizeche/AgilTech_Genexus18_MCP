@@ -21,6 +21,17 @@ namespace GxMcp.Worker.Helpers
             return sections;
         }
 
+        public static HashSet<string> GetVariables(string code)
+        {
+            var variables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var matches = Regex.Matches(code, @"&(\w+)", RegexOptions.Compiled);
+            foreach (Match match in matches)
+            {
+                variables.Add(match.Groups[1].Value);
+            }
+            return variables;
+        }
+
         public static (int start, int end) GetSectionRange(string code, string sectionName)
         {
             string escaped = Regex.Escape(sectionName);
