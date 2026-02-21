@@ -50,10 +50,16 @@ namespace GxMcp.Worker.Services
         {
             switch (code.ToLower())
             {
-                case "spc0096": return "Variable not defined. Use genexus_write_object to add it, or genexus_refactor with CleanVars.";
-                case "spc0055": return "Type mismatch. Check variable type vs attribute type.";
-                case "spc0001": return "Syntax error. Check for unclosed blocks (if/endif, for each/endfor).";
-                case "spc0017": return "Attribute not found. Verify attribute name spelling or create it with genexus_create_object.";
+                case "spc0096": return "Variable not defined. Check variable name spelling or define it in Variables part.";
+                case "spc0055": return "Type mismatch. The variable or attribute type does not match the expected type (e.g., Character vs Numeric).";
+                case "spc0001": return "Syntax error. Check for missing semi-colons ';', unclosed blocks (if/endif), or invalid command structure.";
+                case "spc0017": return "Attribute not found. Verify if the attribute exists in the KB and is active.";
+                case "spc0084": return "Attribute not instantiated. You are using an attribute that is not present in the For Each base table context.";
+                case "spc0038": return "Table not found. The table specified in 'Defined by' or Transaction does not exist.";
+                case "spc0053": return "Rule not satisfied. A call to this object is missing required parameters defined in 'Parm'.";
+                case "spc0082": return "Object not found. You are trying to Call() or reference an object that doesn't exist.";
+                case "spc0075": return "Operand type mismatch. Arithmetic or string operation on incompatible types.";
+                case "rpg0002": return "Report generation error. Check layout and dataset consistency.";
                 default: return "Consult GeneXus Wiki for error code " + code;
             }
         }
@@ -61,10 +67,15 @@ namespace GxMcp.Worker.Services
         {
             switch (code.ToLower())
             {
-                case "spc0001": return "Critical"; // Syntax
-                case "spc0096": return "High";     // Undefined var
-                case "spc0055": return "High";     // Type mismatch
-                case "spc0017": return "High";     // Missing attribute
+                case "spc0001": // Syntax
+                case "spc0038": // Table not found
+                case "spc0082": // Object not found
+                    return "Critical";
+                case "spc0096": // Undefined var
+                case "spc0055": // Type mismatch
+                case "spc0084": // Att not instantiated
+                case "spc0053": // Parm mismatch
+                    return "High";
                 default: return "Medium";
             }
         }

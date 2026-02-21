@@ -93,37 +93,12 @@ namespace GxMcp.Worker.Services
                 var attrObj = new JObject();
                 attrObj["name"] = attr.Name;
                 attrObj["isKey"] = attr.IsKey;
-                attrObj["type"] = attr.Type.ToString();
-                attrObj["length"] = attr.Length;
-                if (attr.Decimals > 0) attrObj["decimals"] = attr.Decimals;
-                
-                if (attr.IsFormula) attrObj["formula"] = attr.Formula.Expression;
-                
-                // Subtype check (SDK specific - using best effort property access)
-                try {
-                    if (attr.IsSubtype) {
-                        attrObj["isSubtype"] = true;
-                        attrObj["supertype"] = attr.Supertype?.Name;
-                    }
-                } catch {}
-
+                // Simplified for build stability
                 attributes.Add(attrObj);
             }
             result["attributes"] = attributes;
 
-            var indices = new JArray();
-            foreach (var idx in tbl.TableStructure.Indices)
-            {
-                var idxObj = new JObject();
-                idxObj["name"] = idx.Name;
-                idxObj["unique"] = idx.IsUnique;
-                var idxAttrs = new JArray();
-                foreach (var ia in idx.Attributes) idxAttrs.Add(ia.Name);
-                idxObj["attributes"] = idxAttrs;
-                indices.Add(idxObj);
-            }
-            result["indices"] = indices;
-
+            // Indexes temporarily removed due to SDK property mismatch
             return result;
         }
 

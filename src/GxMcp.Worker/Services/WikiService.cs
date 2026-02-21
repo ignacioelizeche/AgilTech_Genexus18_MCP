@@ -2,9 +2,10 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
-using System.Xml;
 using Newtonsoft.Json.Linq;
+using Artech.Architecture.Common.Objects;
+using Artech.Genexus.Common.Objects;
+using Artech.Genexus.Common.Parts;
 
 namespace GxMcp.Worker.Services
 {
@@ -21,90 +22,78 @@ namespace GxMcp.Worker.Services
         {
             try
             {
-                string xmlContent = _objectService.GetObjectXml(target);
-                if (xmlContent == null) return "{\"error\": \"Object not found\"}";
-
-                var doc = new XmlDocument();
-                doc.LoadXml(xmlContent);
-
-                var objNode = doc.SelectSingleNode("//Object");
-                string desc = objNode?.SelectSingleNode("Description")?.InnerText ?? "(no description)";
-                string type = objNode?.Attributes?["type"]?.Value ?? "Unknown";
-
-                // Map type GUID to friendly name
-                string typeName = MapType(type);
-
-                // Extract source code
-                string sourceCode = "";
-                var partNodes = doc.GetElementsByTagName("Part");
-                foreach (XmlNode pn in partNodes)
-                {
-                    var src = pn.SelectSingleNode("Source");
-                    if (src != null) sourceCode += src.InnerText + "\n";
-                }
-
-                // Extract comments
-                var comments = Regex.Matches(sourceCode, @"(?s)/\*.*?\*/")
-                    .Cast<Match>().Select(m => m.Value).ToList();
-
-                // Extract calls
-                var calls = Regex.Matches(sourceCode, @"(?i)(?:call|udp|submit)\s*\(\s*['""]?([\w\.]+)")
-                    .Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToList();
+                KBObject obj = _objectService.FindObject(target);
+                if (obj == null) return "{\"error\": \"Object not found\"}";
 
                 // Build markdown
                 var md = new StringBuilder();
-                md.AppendLine($"# {target}");
-                md.AppendLine($"**Type:** {typeName}");
-                md.AppendLine($"**Description:** {desc}");
-                md.AppendLine($"**Generated:** {DateTime.Now:yyyy-MM-dd HH:mm}");
+                md.AppendLine($"# {obj.Name}");
+                md.AppendLine($"**Type:** {obj.TypeDescriptor.Name}");
+                md.AppendLine($"**Description:** {obj.Description}");
+                md.AppendLine($"**Updated:** {obj.LastUpdate:yyyy-MM-dd HH:mm}");
                 md.AppendLine();
 
-                md.AppendLine("## Relationship Diagram");
+                // Mermaid Call Graph
+                md.AppendLine("## Call Graph");
                 md.AppendLine("```mermaid");
                 md.AppendLine("graph TD");
-                string selfNode = target.Replace(":", "_");
-                md.AppendLine($"  {selfNode}[{target}]");
-                foreach (var c in calls)
+                string selfNode = obj.Name.Replace(":", "_");
+                md.AppendLine($"  {selfNode}[{obj.Name}]");
+                
+                var references = new System.Collections.Generic.List<string>();
+                foreach(var refLink in obj.GetReferences())
                 {
-                    string targetNode = c.Replace(":", "_").Replace(".", "_");
-                    md.AppendLine($"  {selfNode} --> {targetNode}[{c}]");
+                    // Filter: Only callable objects (Prc, Trn, WebPanel)
+                    // We need to resolve the target object from the Link
+                    // Note: In SDK, references are links. Getting the target might be expensive if not careful.
+                    // Simplified: We assume we can get the name from the reference or resolve it lightly.
+                    try {
+                        var targetObj = refLink.To != null ? obj.Model.Objects.Get(refLink.To) : null;
+                        if (targetObj != null && (targetObj is Procedure || targetObj is Transaction || targetObj is WebPanel))
+                        {
+                            string targetName = targetObj.Name;
+                            string targetNode = targetName.Replace(":", "_");
+                            md.AppendLine($"  {selfNode} --> {targetNode}[{targetName}]");
+                            references.Add(targetName);
+                        }
+                    } catch {}
                 }
                 md.AppendLine("```");
                 md.AppendLine();
 
-                if (calls.Count > 0)
+                // ER Diagram for Transactions
+                if (obj is Transaction trn)
                 {
-                    md.AppendLine("## Dependencies");
-                    foreach (var c in calls) md.AppendLine($"- {c}");
-                    md.AppendLine();
-                }
-
-                if (comments.Count > 0)
-                {
-                    md.AppendLine("## Business Rules (from comments)");
-                    foreach (var c in comments) md.AppendLine(c);
+                    md.AppendLine("## Entity Relationship");
+                    md.AppendLine("```mermaid");
+                    md.AppendLine("erDiagram");
+                    md.AppendLine($"  {trn.Name} {{");
+                    foreach(var attr in trn.Structure.Root.Attributes)
+                    {
+                        string keyMarker = attr.IsKey ? "PK" : "";
+                        md.AppendLine($"    {attr.Name} {keyMarker}");
+                    }
+                    md.AppendLine("  }");
+                    md.AppendLine("```");
                     md.AppendLine();
                 }
 
                 md.AppendLine("## Source Code");
                 md.AppendLine("```genexus");
-                md.AppendLine(sourceCode.Length > 5000 ? sourceCode.Substring(0, 5000) + "\n// ... (truncated)" : sourceCode);
+                string source = _objectService.GetObjectSource(target) ?? "// No source available";
+                md.AppendLine(source.Length > 5000 ? source.Substring(0, 5000) + "\n// ... (truncated)" : source);
                 md.AppendLine("```");
 
-                // Save to docs folder
+                // Save
                 string docsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "docs");
                 if (!Directory.Exists(docsDir)) Directory.CreateDirectory(docsDir);
-                string safeName = target.Replace(":", "_");
-                string filePath = Path.Combine(docsDir, $"{safeName}.md");
+                string filePath = Path.Combine(docsDir, $"{target.Replace(":", "_")}.md");
                 File.WriteAllText(filePath, md.ToString(), Encoding.UTF8);
 
-                string depsJson = "[" + string.Join(",", calls.Select(c => "\"" + CommandDispatcher.EscapeJsonString(c) + "\"")) + "]";
-                string rulesJson = "[" + string.Join(",", comments.Select(c => "\"" + CommandDispatcher.EscapeJsonString(c) + "\"")) + "]";
+                string depsJson = "[" + string.Join(",", references.Distinct().Select(c => "\"" + CommandDispatcher.EscapeJsonString(c) + "\"")) + "]";
 
                 return "{\"status\": \"Documentation generated\", \"file\": \"" + CommandDispatcher.EscapeJsonString(filePath) + "\","
-                     + "\"type\": \"" + typeName + "\","
                      + "\"dependencies\": " + depsJson + ","
-                     + "\"rules\": " + rulesJson + ","
                      + "\"markdown\": \"" + CommandDispatcher.EscapeJsonString(md.ToString()) + "\"}";
             }
             catch (Exception ex)
