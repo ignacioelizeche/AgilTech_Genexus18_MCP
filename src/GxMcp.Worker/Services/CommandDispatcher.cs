@@ -80,9 +80,9 @@ namespace GxMcp.Worker.Services
                 switch (method)
                 {
                     case "genexus_list_objects":
-                        return _searchService.Search(null, @params["filter"] != null ? @params["filter"].ToString() : null, null, @params["limit"] != null ? (int)@params["limit"] : 100);
                     case "genexus_search":
-                        return _searchService.Search(@params["query"] != null ? @params["query"].ToString() : null, null, null, 50);
+                        string q = @params["query"] != null ? @params["query"].ToString() : (@params["filter"] != null ? @params["filter"].ToString() : null);
+                        return _searchService.Search(q, null, null, @params["limit"] != null ? (int)@params["limit"] : 100);
                     case "genexus_read_object":
                         return _objectService.ReadObject(@params["name"] != null ? @params["name"].ToString() : null);
                     case "genexus_read_source":

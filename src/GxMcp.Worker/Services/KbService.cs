@@ -5,6 +5,8 @@ using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
 using System.Reflection;
 using System.Linq;
+using Artech.Architecture.Common.Objects;
+using Artech.Genexus.Common.Objects;
 
 namespace GxMcp.Worker.Services
 {
@@ -120,6 +122,24 @@ namespace GxMcp.Worker.Services
                     if (obj.Name.Contains("_"))
                     {
                         entry.BusinessDomain = obj.Name.Split('_')[0];
+                    }
+
+                    // ENRICHMENT: Parm and Snippet
+                    if (obj is Procedure || obj is WebPanel)
+                    {
+                        var rules = obj.Parts.Get<global::Artech.Genexus.Common.Parts.RulesPart>();
+                        if (rules != null)
+                        {
+                            var parmMatch = System.Text.RegularExpressions.Regex.Match(rules.Source, @"(?i)\bparm\s*\(.*?\)\s*;", System.Text.RegularExpressions.RegexOptions.Singleline);
+                            if (parmMatch.Success) entry.ParmRule = parmMatch.Value.Trim();
+                        }
+
+                        var source = obj.Parts.Get<global::Artech.Genexus.Common.Parts.SourcePart>();
+                        if (source != null && !string.IsNullOrEmpty(source.Source))
+                        {
+                            var lines = source.Source.Split('\n');
+                            entry.SourceSnippet = string.Join("\n", lines.Take(5)).Trim();
+                        }
                     }
 
                     concurrentDict.TryAdd(string.Format("{0}:{1}", entry.Type, entry.Name), entry);

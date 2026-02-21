@@ -39,6 +39,7 @@ namespace GxMcp.Worker.Models
             public string SourceSnippet { get; set; }
             public string FullSource { get; set; }
             public int Complexity { get; set; }
+            public string ParmRule { get; set; }
         }
 
         public string ToJson() => JsonConvert.SerializeObject(this, Formatting.Indented);

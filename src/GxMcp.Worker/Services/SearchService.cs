@@ -38,7 +38,17 @@ namespace GxMcp.Worker.Services
                 if (index == null || index.Objects.Count == 0)
                     return "{\"error\": \"Search index not found or empty. Please run 'genexus_bulk_index' first.\"}";
 
-                // Parse structured query: type:X calls:Y uses:Z
+                // HEURISTIC: If query looks like "Type:Name", split it
+                if (!string.IsNullOrEmpty(query) && query.Contains(":") && !query.StartsWith("usedby:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parts = query.Split(':');
+                    if (parts.Length == 2)
+                    {
+                        typeFilter = parts[0];
+                        query = parts[1];
+                    }
+                }
+
                 var criteria = ParseQuery(query);
                 if (!string.IsNullOrEmpty(typeFilter)) criteria.TypeFilter = typeFilter;
                 if (!string.IsNullOrEmpty(domainFilter)) criteria.DomainFilter = domainFilter;
@@ -58,24 +68,26 @@ namespace GxMcp.Worker.Services
                         }
                     }
 
-                    // 1. Hard Filters (Must match)
-                    if (!string.IsNullOrEmpty(criteria.TypeFilter) && !IsTypeMatch(entry.Type, criteria.TypeFilter)) continue;
-                    if (!string.IsNullOrEmpty(criteria.DomainFilter) && !string.Equals(entry.BusinessDomain, criteria.DomainFilter, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!string.IsNullOrEmpty(criteria.CallsFilter) && !CheckCalls(entry, criteria.CallsFilter)) continue;
-                    if (!string.IsNullOrEmpty(criteria.CalledByFilter) && !CheckCalledBy(entry, criteria.CalledByFilter)) continue;
-                    if (!string.IsNullOrEmpty(criteria.UsesFilter) && !CheckUses(entry, criteria.UsesFilter)) continue; // Requires 'Uses' in index (TBD)
+                    // 1. Unified Filter: If no specific criteria, match anything
+                    bool matches = true;
+                    if (!string.IsNullOrEmpty(criteria.TypeFilter) && !IsTypeMatch(entry.Type, criteria.TypeFilter)) matches = false;
+                    if (matches && !string.IsNullOrEmpty(criteria.DomainFilter) && !string.Equals(entry.BusinessDomain, criteria.DomainFilter, StringComparison.OrdinalIgnoreCase)) matches = false;
+                    
+                    if (!matches && string.IsNullOrEmpty(query)) continue; 
 
                     // 2. Text Scoring (Soft match)
                     int score = 0;
                     if (criteria.Terms.Count > 0)
                     {
                         score = CalculateScore(entry, criteria.Terms.ToArray());
+                        if (score <= 0 && matches && string.IsNullOrEmpty(query)) score = 1;
                         if (score <= 0) continue;
                     }
-                    else
+                    else if (matches)
                     {
-                        score = 1; // Pure filtering mode
+                        score = 1;
                     }
+                    else { continue; }
 
                     results.Add(new RankedResult { Entry = entry, Score = score });
                 }
@@ -92,6 +104,8 @@ namespace GxMcp.Worker.Services
                         if (!string.IsNullOrEmpty(r.Entry.Description)) dict["description"] = r.Entry.Description;
                         if (r.Entry.BusinessDomain != null && r.Entry.BusinessDomain != "Geral") dict["domain"] = r.Entry.BusinessDomain;
                         dict["connections"] = (r.Entry.Calls?.Count ?? 0) + (r.Entry.CalledBy?.Count ?? 0);
+                        if (!string.IsNullOrEmpty(r.Entry.ParmRule)) dict["parm"] = r.Entry.ParmRule;
+                        if (!string.IsNullOrEmpty(r.Entry.SourceSnippet)) dict["snippet"] = r.Entry.SourceSnippet;
                         return dict;
                     })
                     .ToList();

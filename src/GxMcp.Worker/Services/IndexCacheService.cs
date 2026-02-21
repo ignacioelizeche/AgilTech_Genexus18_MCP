@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using GxMcp.Worker.Models;
 using GxMcp.Worker.Helpers;
+using System.Threading.Tasks;
 
 namespace GxMcp.Worker.Services
 {
@@ -11,11 +12,12 @@ namespace GxMcp.Worker.Services
         private string _indexPath;
         private readonly BuildService _buildService;
         private bool _initialized = false;
+        private readonly object _lock = new object();
+        private bool _savingInProgress = false;
 
         public IndexCacheService(BuildService buildService)
         {
             _buildService = buildService;
-            // Default path if not initialized with a KB
             _indexPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache", "search_index.json");
         }
 
@@ -25,12 +27,9 @@ namespace GxMcp.Worker.Services
             try
             {
                 string kbPath = _buildService.GetKBPath();
-                if (!string.IsNullOrEmpty(kbPath))
-                {
-                    Initialize(kbPath);
-                }
+                if (!string.IsNullOrEmpty(kbPath)) Initialize(kbPath);
             }
-            catch { /* Ignore, will use default path */ }
+            catch { }
         }
 
         public void Initialize(string kbPath)
@@ -44,17 +43,12 @@ namespace GxMcp.Worker.Services
                 string cacheDir = Path.Combine(localAppData, "GxMcp", "Cache");
                 if (!Directory.Exists(cacheDir)) Directory.CreateDirectory(cacheDir);
 
-                // Create a unique filename based on the KB path hash
                 string hash = GetHash(kbPath);
-                _indexPath = Path.Combine(cacheDir, $"index_{hash}.json");
+                _indexPath = Path.Combine(cacheDir, string.Format("index_{0}.json", hash));
                 _initialized = true;
-                
-                Logger.Info($"IndexCache initialized for KB: {kbPath} -> {_indexPath}");
+                Logger.Info(string.Format("IndexCache initialized: {0}", _indexPath));
             }
-            catch (Exception ex)
-            {
-                Logger.Error($"IndexCache Init Error: {ex.Message}");
-            }
+            catch (Exception ex) { Logger.Error("IndexCache Init Error: " + ex.Message); }
         }
 
         private string GetHash(string input)
@@ -71,49 +65,53 @@ namespace GxMcp.Worker.Services
             EnsureInitialized();
             if (_index != null) return _index;
 
-            try
+            lock (_lock)
             {
-                if (File.Exists(_indexPath))
+                if (_index != null) return _index;
+                try
                 {
-                    string json = File.ReadAllText(_indexPath);
-                    _index = SearchIndex.FromJson(json);
-                    Logger.Info($"Index loaded from disk. Objects: {_index?.Objects.Count ?? 0}");
+                    if (File.Exists(_indexPath))
+                    {
+                        string json = File.ReadAllText(_indexPath);
+                        _index = SearchIndex.FromJson(json);
+                        Logger.Info(string.Format("Index loaded. Objects: {0}", _index.Objects.Count));
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Failed to load index: {ex.Message}");
-            }
+                catch (Exception ex) { Logger.Error("Load Index Error: " + ex.Message); }
 
-            return _index;
+                if (_index == null) _index = new SearchIndex();
+                return _index;
+            }
         }
 
         public void UpdateIndex(SearchIndex index)
         {
-            EnsureInitialized();
             _index = index;
-            try
-            {
-                string dir = Path.GetDirectoryName(_indexPath);
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(_indexPath, _index.ToJson());
-                Logger.Info("Index updated in memory and written to disk.");
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Failed to save index: {ex.Message}");
-            }
+            // Fire and forget save to disk
+            Task.Run(() => FlushToDisk());
         }
 
-        public void Clear()
+        private void FlushToDisk()
         {
-            _index = null;
+            if (_savingInProgress) return;
+            lock (_lock)
+            {
+                _savingInProgress = true;
+                try
+                {
+                    string dir = Path.GetDirectoryName(_indexPath);
+                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    File.WriteAllText(_indexPath, _index.ToJson());
+                    Logger.Debug("Index flushed to disk (Background)");
+                }
+                catch (Exception ex) { Logger.Error("Flush Error: " + ex.Message); }
+                finally { _savingInProgress = false; }
+            }
         }
 
         public void UpdateEntry(global::Artech.Architecture.Common.Objects.KBObject obj)
         {
-            if (_index == null) GetIndex(); // Load if not already in memory
-
+            var index = GetIndex();
             var entry = new SearchIndex.IndexEntry
             {
                 Name = obj.Name,
@@ -121,7 +119,6 @@ namespace GxMcp.Worker.Services
                 Description = obj.Description
             };
 
-            // Enrichment for Attributes
             if (obj is global::Artech.Genexus.Common.Objects.Attribute attr)
             {
                 entry.DataType = attr.Type.ToString();
@@ -130,24 +127,24 @@ namespace GxMcp.Worker.Services
             }
 
             string key = string.Format("{0}:{1}", entry.Type, entry.Name);
-            if (_index.Objects.ContainsKey(key))
-                _index.Objects[key] = entry;
-            else
-                _index.Objects.Add(key, entry);
-
-            UpdateIndex(_index); // Persist changes
-            Logger.Info(string.Format("Incremental cache update for {0}", key));
+            lock (_lock)
+            {
+                if (index.Objects.ContainsKey(key)) index.Objects[key] = entry;
+                else index.Objects.Add(key, entry);
+            }
+            UpdateIndex(index);
         }
 
         public void RemoveEntry(string type, string name)
         {
-            if (_index == null) return;
+            var index = GetIndex();
             string key = string.Format("{0}:{1}", type, name);
-            if (_index.Objects.Remove(key))
+            lock (_lock)
             {
-                UpdateIndex(_index);
-                Logger.Info(string.Format("Removed {0} from cache", key));
+                if (index.Objects.Remove(key)) UpdateIndex(index);
             }
         }
+
+        public void Clear() { lock (_lock) { _index = null; } }
     }
 }
