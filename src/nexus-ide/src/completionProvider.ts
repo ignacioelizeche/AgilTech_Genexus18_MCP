@@ -42,6 +42,7 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
                                 if (partial && !field.name.toLowerCase().startsWith(partial.toLowerCase())) continue;
                                 const item = new vscode.CompletionItem(field.name, vscode.CompletionItemKind.Field);
                                 item.detail = `(Field) ${field.type}${field.isCollection ? ' Collection' : ''}`;
+                                item.sortText = `000_${field.name}`; // Fields first
                                 items.push(item);
                             }
                         }
@@ -56,7 +57,9 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
                     if (partial && !m.name.toLowerCase().startsWith(partial.toLowerCase())) continue;
                     const item = new vscode.CompletionItem(m.name, vscode.CompletionItemKind.Method);
                     item.detail = `${m.name}${m.parameters}: ${m.returnType}`;
+                    item.documentation = new vscode.MarkdownString(m.description);
                     item.insertText = new vscode.SnippetString(m.snippet || m.name);
+                    item.sortText = `002_${m.name}`; // Methods after fields
                     items.push(item);
                 }
             }
@@ -78,7 +81,9 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
         for (const func of nativeFunctions) {
             const item = new vscode.CompletionItem(func.name, vscode.CompletionItemKind.Function);
             item.detail = `(Native) ${func.name}${func.parameters}`;
+            item.documentation = new vscode.MarkdownString(`${func.description}\n\n**Example:** \`${func.example}\``);
             item.insertText = new vscode.SnippetString(func.snippet || func.name);
+            item.sortText = `003_${func.name}`;
             items.push(item);
         }
 
@@ -94,6 +99,7 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
         for (const v of variables) {
             const item = new vscode.CompletionItem(`&${v.name}`, vscode.CompletionItemKind.Variable);
             item.detail = `${v.type}(${v.length})`;
+            item.sortText = `001_${v.name}`; // Variables after fields
             items.push(item);
         }
 

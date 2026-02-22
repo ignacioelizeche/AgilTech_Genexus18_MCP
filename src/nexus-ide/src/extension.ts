@@ -6,6 +6,7 @@ import { GxTreeProvider, GxTreeItem } from './gxTreeProvider';
 import { GxDefinitionProvider } from './definitionProvider';
 import { GxHoverProvider } from './hoverProvider';
 import { GxCompletionItemProvider } from './completionProvider';
+import { GxInlineCompletionItemProvider } from './inlineCompletionProvider';
 import { GxSignatureHelpProvider } from './signatureHelpProvider';
 import { GxCodeActionProvider } from './codeActionProvider';
 import { GxRenameProvider } from './renameProvider';
@@ -33,6 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.languages.registerDefinitionProvider('genexus', new GxDefinitionProvider((cmd) => provider.callGateway(cmd))));
     context.subscriptions.push(vscode.languages.registerHoverProvider('genexus', new GxHoverProvider((cmd) => provider.callGateway(cmd))));
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider('genexus', new GxCompletionItemProvider((cmd) => provider.callGateway(cmd)), '.', '&'));
+    context.subscriptions.push(vscode.languages.registerInlineCompletionItemProvider('genexus', new GxInlineCompletionItemProvider()));
     context.subscriptions.push(vscode.languages.registerSignatureHelpProvider('genexus', new GxSignatureHelpProvider((cmd) => provider.callGateway(cmd)), '(', ','));
     context.subscriptions.push(vscode.languages.registerCodeActionsProvider('genexus', new GxCodeActionProvider((cmd) => provider.callGateway(cmd)), {
         providedCodeActionKinds: [GxCodeActionProvider.kind]
