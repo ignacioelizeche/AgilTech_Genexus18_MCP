@@ -34,6 +34,7 @@ namespace GxMcp.Worker.Services
         private readonly LinterService _linterService;
         private readonly PatternService _patternService;
         private readonly PatchService _patchService;
+        private readonly SDTService _sdtService;
 
         private CommandDispatcher()
         {
@@ -62,6 +63,7 @@ namespace GxMcp.Worker.Services
             _linterService = new LinterService(_objectService);
             _patternService = new PatternService(_indexCacheService, _objectService);
             _patchService = new PatchService(_objectService, _writeService);
+            _sdtService = new SDTService(_objectService);
         }
 
         public static CommandDispatcher Instance
@@ -105,10 +107,12 @@ namespace GxMcp.Worker.Services
                             if (action == "GetVariables") return _analyzeService.GetVariables(target);
                             return _objectService.ReadObject(target);
                         case "Write":
+                            if (action == "AddVariable") return _writeService.AddVariable(target, @params["varName"]?.ToString(), @params["typeName"]?.ToString());
                             return _writeService.WriteObject(target, action, payload);
                         case "Analyze":
                             if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target);
                             if (action == "GetDataContext") return _dataInsightService.GetDataContext(target);
+                            if (action == "GetParameters") return _analyzeService.GetParameters(target);
                             return _analyzeService.Analyze(target);
                         case "UI":
                             if (action == "GetUIContext") return _uiService.GetUIContext(target);
@@ -134,6 +138,8 @@ namespace GxMcp.Worker.Services
                         case "Test": return _testService.RunTest(target);
                         case "Validation": return _validationService.ValidateCode(target, @params["part"] != null ? @params["part"].ToString() : null, payload);
                         case "Build": return _buildService.Build(action, target);
+                        case "Structure":
+                            return _sdtService.GetSDTStructure(target);
                     }
                 }
 

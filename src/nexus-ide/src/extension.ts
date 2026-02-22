@@ -7,6 +7,8 @@ import { GxDefinitionProvider } from './definitionProvider';
 import { GxHoverProvider } from './hoverProvider';
 import { GxCompletionItemProvider } from './completionProvider';
 import { GxSignatureHelpProvider } from './signatureHelpProvider';
+import { GxCodeActionProvider } from './codeActionProvider';
+import { GxRenameProvider } from './renameProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     const provider = new GxFileSystemProvider();
@@ -28,10 +30,14 @@ export function activate(context: vscode.ExtensionContext) {
     }));
 
     context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider('genexus', new GxDocumentSymbolProvider()));
-    context.subscriptions.push(vscode.languages.registerDefinitionProvider('genexus', new GxDefinitionProvider()));
+    context.subscriptions.push(vscode.languages.registerDefinitionProvider('genexus', new GxDefinitionProvider((cmd) => provider.callGateway(cmd))));
     context.subscriptions.push(vscode.languages.registerHoverProvider('genexus', new GxHoverProvider((cmd) => provider.callGateway(cmd))));
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider('genexus', new GxCompletionItemProvider((cmd) => provider.callGateway(cmd)), '.', '&'));
-    context.subscriptions.push(vscode.languages.registerSignatureHelpProvider('genexus', new GxSignatureHelpProvider(), '(', ','));
+    context.subscriptions.push(vscode.languages.registerSignatureHelpProvider('genexus', new GxSignatureHelpProvider((cmd) => provider.callGateway(cmd)), '(', ','));
+    context.subscriptions.push(vscode.languages.registerCodeActionsProvider('genexus', new GxCodeActionProvider((cmd) => provider.callGateway(cmd)), {
+        providedCodeActionKinds: [GxCodeActionProvider.kind]
+    }));
+    context.subscriptions.push(vscode.languages.registerRenameProvider('genexus', new GxRenameProvider()));
 
     // --- INSTANT ACTIVATION ---
     // 1. Add virtual folder IMMEDIATELY (No delay, no await)
@@ -263,6 +269,31 @@ export function activate(context: vscode.ExtensionContext) {
             }
         });
     }
+
+    context.subscriptions.push(vscode.commands.registerCommand('nexus-ide.createVariable', async (uri: vscode.Uri, varName: string) => {
+        const path = decodeURIComponent(uri.path.substring(1));
+        const objName = path.split('/').pop()!.replace('.gx', '');
+
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Creating Variable &${varName}...`,
+            cancellable: false
+        }, async () => {
+            try {
+                const result = await provider.callGateway({
+                    method: 'execute_command',
+                    params: { module: 'Write', action: 'AddVariable', target: objName, varName: varName }
+                });
+                if (result && result.status === 'Success') {
+                    vscode.window.showInformationMessage(`Variable &${varName} created successfully.`);
+                } else {
+                    vscode.window.showErrorMessage(`Failed to create variable: ${result.error || JSON.stringify(result)}`);
+                }
+            } catch (e) {
+                vscode.window.showErrorMessage(`Error: ${e}`);
+            }
+        });
+    }));
 }
 
 export function deactivate() {}

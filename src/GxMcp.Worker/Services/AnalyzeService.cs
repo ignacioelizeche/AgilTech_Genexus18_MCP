@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
+using Artech.Architecture.Common.Objects;
+using Artech.Genexus.Common.Objects;
+using Artech.Genexus.Common.Parts;
 
 namespace GxMcp.Worker.Services
 {
@@ -241,6 +244,66 @@ namespace GxMcp.Worker.Services
                 }
                 result["calledBy"] = calledBy;
 
+                return result.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        public string GetParameters(string name)
+        {
+            try
+            {
+                var obj = _objectService.FindObject(name);
+                if (obj == null) return "{\"error\":\"Object not found\"}";
+
+                var result = new JObject();
+                result["name"] = obj.Name;
+                result["type"] = obj.TypeDescriptor.Name;
+
+                var rulesPart = obj.Parts.Get<RulesPart>();
+                if (rulesPart != null)
+                {
+                    dynamic parmRule = null;
+                    foreach (dynamic rule in ((dynamic)rulesPart).Rules)
+                    {
+                        if (rule.GetType().Name.Contains("ParmRule"))
+                        {
+                            parmRule = rule;
+                            break;
+                        }
+                    }
+
+                    if (parmRule != null)
+                    {
+                        var parameters = new JArray();
+                        var parmColl = ((dynamic)parmRule).Parameters;
+                        foreach (dynamic p in parmColl)
+                        {
+                            var paramItem = new JObject();
+                            paramItem["name"] = p.Accessor.ToString().TrimStart('&');
+                            paramItem["accessor"] = p.Accessor.ToString();
+                            paramItem["direction"] = p.Type.ToString(); // In, Out, InOut
+                            
+                            // Try to find variable type
+                            var varPart = obj.Parts.Get<VariablesPart>();
+                            if (varPart != null)
+                            {
+                                var variable = varPart.Variables.FirstOrDefault(v => string.Equals(v.Name, paramItem["name"].ToString(), StringComparison.OrdinalIgnoreCase));
+                                if (variable != null)
+                                {
+                                    paramItem["type"] = variable.Type.ToString();
+                                    paramItem["length"] = variable.Length;
+                                }
+                            }
+                            
+                            parameters.Add(paramItem);
+                        }
+                        result["parameters"] = parameters;
+                    }
+                }
                 return result.ToString();
             }
             catch (Exception ex)

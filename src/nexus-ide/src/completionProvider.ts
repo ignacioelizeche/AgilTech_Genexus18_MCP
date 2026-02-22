@@ -17,52 +17,78 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
         const lineUntilCursor = lineText.substring(0, position.character);
 
         // 1. Check for Member Access (e.g., &var. or &var.pa)
-        // Regex improved: matches &varName. followed by optional partial method name
         const memberMatch = lineUntilCursor.match(/&([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]*)$/);
         if (memberMatch) {
             const varName = memberMatch[1];
-            const partialMethod = memberMatch[2];
+            const partial = memberMatch[2];
             const objName = this.getObjName(document);
             const variables = await this.getVariables(objName);
             const variable = variables.find(v => v.name.toLowerCase() === varName.toLowerCase());
             
-            let type = variable ? variable.type : 'Character'; // Default to Character if not found (common for strings)
-            if (type.endsWith('Collection')) type = 'Collection'; 
+            if (variable) {
+                let type = variable.type;
+                const isCollection = type.endsWith('Collection');
+                if (isCollection) type = 'Collection';
 
-            // Map standard GeneXus type names to our keys
-            if (type === 'VarChar' || type === 'LongVarChar' || type === 'Character') type = 'Character';
-            if (type === 'Numeric' || type === 'Integer' || type === 'SmallInt') type = 'Numeric';
+                // SDT / Transaction Structure Completion
+                if (type !== 'Character' && type !== 'Numeric' && type !== 'Date' && type !== 'DateTime' && type !== 'Boolean') {
+                    try {
+                        const structure = await this.callGateway({
+                            method: 'execute_command',
+                            params: { module: 'Structure', action: 'Get', target: type }
+                        });
+                        if (structure && structure.fields) {
+                            for (const field of structure.fields) {
+                                if (partial && !field.name.toLowerCase().startsWith(partial.toLowerCase())) continue;
+                                const item = new vscode.CompletionItem(field.name, vscode.CompletionItemKind.Field);
+                                item.detail = `(Field) ${field.type}${field.isCollection ? ' Collection' : ''}`;
+                                items.push(item);
+                            }
+                        }
+                    } catch (e) {
+                        console.error("[Nexus IDE] SDT Structure error:", e);
+                    }
+                }
 
-            const methods = typeMethods[type] || typeMethods['Character']; // Default to Character methods for best UX
-            for (const m of methods) {
-                if (partialMethod && !m.name.toLowerCase().startsWith(partialMethod.toLowerCase())) continue;
-                
-                const item = new vscode.CompletionItem(m.name, vscode.CompletionItemKind.Method);
-                item.detail = `${m.name}${m.parameters}: ${m.returnType}`;
-                item.documentation = new vscode.MarkdownString(m.description);
-                item.insertText = new vscode.SnippetString(m.snippet || m.name);
-                items.push(item);
+                // Standard Methods
+                const methods = typeMethods[type] || typeMethods['Character'];
+                for (const m of methods) {
+                    if (partial && !m.name.toLowerCase().startsWith(partial.toLowerCase())) continue;
+                    const item = new vscode.CompletionItem(m.name, vscode.CompletionItemKind.Method);
+                    item.detail = `${m.name}${m.parameters}: ${m.returnType}`;
+                    item.insertText = new vscode.SnippetString(m.snippet || m.name);
+                    items.push(item);
+                }
             }
             return items;
         }
 
-        // 2. Add Native Functions and Keywords (Always relevant)
+        // 2. Context Detection: Are we inside a For Each?
+        let isInsideForEach = false;
+        for (let i = position.line; i >= 0; i--) {
+            const line = document.lineAt(i).text.toLowerCase();
+            if (line.includes('endfor')) break;
+            if (line.includes('for each')) {
+                isInsideForEach = true;
+                break;
+            }
+        }
+
+        // 3. Native Functions and Keywords
         for (const func of nativeFunctions) {
             const item = new vscode.CompletionItem(func.name, vscode.CompletionItemKind.Function);
-            item.detail = `(Native) ${func.name}${func.parameters}: ${func.returnType}`;
-            item.documentation = new vscode.MarkdownString(func.description);
+            item.detail = `(Native) ${func.name}${func.parameters}`;
             item.insertText = new vscode.SnippetString(func.snippet || func.name);
             items.push(item);
         }
 
         for (const kw of keywords) {
             const item = new vscode.CompletionItem(kw.name, vscode.CompletionItemKind.Snippet);
-            item.detail = `(Keyword) ${kw.name}`;
             item.insertText = new vscode.SnippetString(kw.snippet);
             items.push(item);
         }
 
-        // 3. Add Local Variables (If typing & or just in general)
+        // 4. Local Variables
         const objName = this.getObjName(document);
         const variables = await this.getVariables(objName);
         for (const v of variables) {
@@ -71,20 +97,21 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
             items.push(item);
         }
 
-        // 4. Add Attributes (Experimental: Search if prefix > 2)
+        // 5. Attributes (Prioritize if in For Each)
         const range = document.getWordRangeAtPosition(position);
-        if (range) {
-            const word = document.getText(range);
-            if (word.length >= 2 && !word.startsWith('&')) {
+        if (range || isInsideForEach) {
+            const word = range ? document.getText(range) : "";
+            // If in For Each, we search even with 0 chars or small prefix
+            if (isInsideForEach || (word.length >= 2 && !word.startsWith('&'))) {
                 const attrResults = await this.callGateway({
                     method: 'execute_command',
-                    params: { module: 'Search', query: `type:Attribute ${word}`, limit: 15 }
+                    params: { module: 'Search', query: `type:Attribute ${word}`, limit: isInsideForEach ? 30 : 15 }
                 });
                 if (attrResults && attrResults.results) {
                     for (const attr of attrResults.results) {
                         const item = new vscode.CompletionItem(attr.name, vscode.CompletionItemKind.Property);
                         item.detail = `(Attribute) ${attr.description || ''}`;
-                        if (attr.parm) item.documentation = new vscode.MarkdownString(attr.parm);
+                        if (isInsideForEach) item.preselect = true;
                         items.push(item);
                     }
                 }

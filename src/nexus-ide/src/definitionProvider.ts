@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 
 export class GxDefinitionProvider implements vscode.DefinitionProvider {
+    constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
+
     async provideDefinition(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -16,7 +18,6 @@ export class GxDefinitionProvider implements vscode.DefinitionProvider {
         const doMatch = line.match(/\bdo\s+['"]?([a-zA-Z0-9_]+)['"]?/i);
         if (doMatch && line.includes(word) && word === doMatch[1]) {
             const subName = doMatch[1];
-            // Search for the sub definition in the same file
             const text = document.getText();
             const subDefRegex = new RegExp(`\\b(sub)\\s+['"]?${subName}['"]?`, 'gi');
             let match;
@@ -26,16 +27,23 @@ export class GxDefinitionProvider implements vscode.DefinitionProvider {
             }
         }
 
-        // 2. Check if it's an external object call (Udp, call, etc)
-        // We look for patterns like MyProc.Udp( or call(MyProc, ...)
-        const udpMatch = line.match(/([a-zA-Z_][a-zA-Z0-9_]*)\.(Udp|Call|Execute)\(/i);
-        if (udpMatch && word === udpMatch[1]) {
-            const objName = udpMatch[1];
-            // We assume Procedures for now as they are the most common for UDP/Call
-            return new vscode.Location(
-                vscode.Uri.parse(`genexus:/Procedure/${objName}.gx`),
-                new vscode.Position(0, 0)
-            );
+        // 2. KB Object Search (Remote)
+        try {
+            const result = await this.callGateway({
+                method: 'execute_command',
+                params: { module: 'Search', query: word, limit: 10 }
+            });
+
+            if (result && result.results && result.results.length > 0) {
+                // Find exact match first
+                const exactMatch = result.results.find((obj: any) => obj.name.toLowerCase() === word.toLowerCase());
+                if (exactMatch) {
+                    const uri = vscode.Uri.parse(`genexus:/${exactMatch.type}/${exactMatch.name}.gx`);
+                    return new vscode.Location(uri, new vscode.Position(0, 0));
+                }
+            }
+        } catch (e) {
+            console.error("[Nexus IDE] Definition error:", e);
         }
 
         return undefined;

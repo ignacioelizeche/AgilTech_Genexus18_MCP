@@ -2,36 +2,66 @@ import * as vscode from 'vscode';
 import { nativeFunctions } from './gxNativeFunctions';
 
 export class GxSignatureHelpProvider implements vscode.SignatureHelpProvider {
-    provideSignatureHelp(
+    constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
+
+    async provideSignatureHelp(
         document: vscode.TextDocument,
         position: vscode.Position,
         _token: vscode.CancellationToken,
         _context: vscode.SignatureHelpContext
-    ): vscode.ProviderResult<vscode.SignatureHelp> {
+    ): Promise<vscode.SignatureHelp | undefined> {
         const lineText = document.lineAt(position).text;
         const lineUntilCursor = lineText.substring(0, position.character);
 
-        // Find the function name and the current parameter index
-        // This is a simple regex-based approach for native functions
-        const match = lineUntilCursor.match(/([a-zA-Z0-9_]+)\s*\(([^)]*)$/);
+        // Match patterns like MyProc( or &var.Method( or even just (
+        // We look for the last open parenthesis that isn't closed
+        const lastParenIndex = lineUntilCursor.lastIndexOf('(');
+        if (lastParenIndex === -1) return undefined;
+
+        const prefix = lineUntilCursor.substring(0, lastParenIndex).trim();
+        const match = prefix.match(/([a-zA-Z0-9_]+)$/);
         if (!match) return undefined;
 
-        const funcName = match[1];
-        const paramsText = match[2];
-        const paramIndex = paramsText.split(',').length - 1;
+        const name = match[1];
+        const paramsText = lineUntilCursor.substring(lastParenIndex + 1);
+        const paramIndex = (paramsText.match(/,/g) || []).length;
 
-        const func = nativeFunctions.find(f => f.name.toLowerCase() === funcName.toLowerCase());
-        if (!func || !func.paramDetails || func.paramDetails.length === 0) return undefined;
+        // 1. Check Native Functions
+        const native = nativeFunctions.find(f => f.name.toLowerCase() === name.toLowerCase());
+        if (native) {
+            const sig = new vscode.SignatureHelp();
+            const si = new vscode.SignatureInformation(native.name + native.parameters, native.description);
+            if (native.paramDetails) {
+                si.parameters = native.paramDetails.map(p => new vscode.ParameterInformation(p.trim()));
+            }
+            sig.signatures = [si];
+            sig.activeSignature = 0;
+            sig.activeParameter = Math.min(paramIndex, si.parameters.length - 1);
+            return sig;
+        }
 
-        const signatureHelp = new vscode.SignatureHelp();
-        const signatureInfo = new vscode.SignatureInformation(`${func.name}${func.parameters}`, func.description);
-        
-        signatureInfo.parameters = func.paramDetails.map(d => new vscode.ParameterInformation(d.split(':')[0], d.split(':')[1] || ''));
-        
-        signatureHelp.signatures = [signatureInfo];
-        signatureHelp.activeSignature = 0;
-        signatureHelp.activeParameter = Math.min(paramIndex, signatureInfo.parameters.length - 1);
+        // 2. KB Object Search
+        try {
+            const result = await this.callGateway({
+                method: 'execute_command',
+                params: { module: 'Analyze', action: 'GetParameters', target: name }
+            });
 
-        return signatureHelp;
+            if (result && result.parameters) {
+                const sig = new vscode.SignatureHelp();
+                const paramStr = result.parameters.map((p: any) => `${p.direction ? p.direction + ':' : ''}${p.accessor}`).join(', ');
+                const label = `${result.name}(${paramStr})`;
+                const si = new vscode.SignatureInformation(label, `(GeneXus ${result.type})`);
+                si.parameters = result.parameters.map((p: any) => new vscode.ParameterInformation(p.accessor, `${p.direction || ''} ${p.type || ''}`));
+                sig.signatures = [si];
+                sig.activeSignature = 0;
+                sig.activeParameter = Math.min(paramIndex, si.parameters.length - 1);
+                return sig;
+            }
+        } catch (e) {
+            console.error("[Nexus IDE] Signature Help error:", e);
+        }
+
+        return undefined;
     }
 }

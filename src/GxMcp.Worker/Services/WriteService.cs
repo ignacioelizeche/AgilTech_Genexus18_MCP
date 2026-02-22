@@ -204,6 +204,47 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        public string AddVariable(string target, string varName, string typeName = null)
+        {
+            try
+            {
+                var obj = _objectService.FindObject(target);
+                if (obj == null) return "{\"error\": \"Object not found\"}";
+
+                var varPart = obj.Parts.Get<global::Artech.Genexus.Common.Parts.VariablesPart>();
+                if (varPart == null) return "{\"error\": \"Variables part not found\"}";
+
+                if (varPart.Variables.Any(v => string.Equals(v.Name, varName, StringComparison.OrdinalIgnoreCase)))
+                    return "{\"status\": \"Variable already exists\"}";
+
+                global::Artech.Genexus.Common.Variable newVar = new global::Artech.Genexus.Common.Variable(varPart);
+                newVar.Name = varName;
+                
+                if (!string.IsNullOrEmpty(typeName))
+                {
+                    if (Enum.TryParse<global::Artech.Genexus.Common.eDBType>(typeName, true, out var dbType))
+                    {
+                        newVar.Type = dbType;
+                    }
+                }
+                else
+                {
+                    newVar.Type = global::Artech.Genexus.Common.eDBType.VARCHAR;
+                    newVar.Length = 100;
+                }
+
+                varPart.Variables.Add(newVar);
+                obj.Save();
+                ScheduleFlush();
+                
+                return "{\"status\": \"Success\"}";
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
         private Guid MapLogicalPartToGuid(string objType, string logicalPart)
         {
             string p = logicalPart.ToLower();
