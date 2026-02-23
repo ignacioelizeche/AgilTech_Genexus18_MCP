@@ -58,6 +58,7 @@ namespace GxMcp.Gateway
                 Console.Error.WriteLine("[Gateway] CRITICAL: KBPath is empty! Worker will fail.");
             }
 
+            startInfo.Arguments = $"--kb \"{kbPath}\"";
             startInfo.EnvironmentVariables["GX_PROGRAM_DIR"] = _config.GeneXus?.InstallationPath ?? "";
             startInfo.EnvironmentVariables["GX_KB_PATH"] = kbPath;
             startInfo.EnvironmentVariables["PATH"] = (_config.GeneXus?.InstallationPath ?? "") + ";" + Environment.GetEnvironmentVariable("PATH");

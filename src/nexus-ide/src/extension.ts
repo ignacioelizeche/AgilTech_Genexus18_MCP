@@ -7,11 +7,16 @@ import { GxDefinitionProvider } from './definitionProvider';
 import { GxHoverProvider } from './hoverProvider';
 import { GxCompletionItemProvider } from './completionProvider';
 import { GxInlineCompletionItemProvider } from './inlineCompletionProvider';
+import { GxDiagnosticProvider } from './diagnosticProvider';
+import { GxReferenceProvider } from './referenceProvider';
+import { GxWorkspaceSymbolProvider } from './workspaceSymbolProvider';
+import { GxCodeLensProvider } from './codeLensProvider';
 import { GxSignatureHelpProvider } from './signatureHelpProvider';
 import { GxCodeActionProvider } from './codeActionProvider';
 import { GxRenameProvider } from './renameProvider';
+import { GxFormatProvider } from './formatProvider';
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     const provider = new GxFileSystemProvider();
 
     // Custom Tree Provider for the GeneXus Explorer view (icons + ordering)
@@ -39,7 +44,27 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.languages.registerCodeActionsProvider('genexus', new GxCodeActionProvider((cmd) => provider.callGateway(cmd)), {
         providedCodeActionKinds: [GxCodeActionProvider.kind]
     }));
-    context.subscriptions.push(vscode.languages.registerRenameProvider('genexus', new GxRenameProvider()));
+    context.subscriptions.push(vscode.languages.registerRenameProvider('genexus', new GxRenameProvider((cmd) => provider.callGateway(cmd))));
+    context.subscriptions.push(vscode.languages.registerDocumentFormattingEditProvider('genexus', new GxFormatProvider((cmd) => provider.callGateway(cmd))));
+
+    const diagnosticProvider = new GxDiagnosticProvider((cmd) => provider.callGateway(cmd));
+    diagnosticProvider.subscribeToEvents(context);
+
+    context.subscriptions.push(vscode.languages.registerWorkspaceSymbolProvider(new GxWorkspaceSymbolProvider((cmd) => provider.callGateway(cmd))));
+    context.subscriptions.push(vscode.languages.registerCodeLensProvider('genexus', new GxCodeLensProvider((cmd) => provider.callGateway(cmd))));
+    context.subscriptions.push(vscode.languages.registerReferenceProvider('genexus', new GxReferenceProvider((cmd) => provider.callGateway(cmd))));
+
+    context.subscriptions.push(vscode.commands.registerCommand('gx.showReferences', async (objName: string) => {
+        const activeEditor = vscode.window.activeTextEditor;
+        if (!activeEditor) return;
+
+        // Trigger native reference peek/view at current position (top of file where CodeLens is)
+        await vscode.commands.executeCommand('editor.action.showReferences', 
+            activeEditor.document.uri, 
+            new vscode.Position(0, 0), 
+            [] // We let the provider find them
+        );
+    }));
 
     // --- INSTANT ACTIVATION ---
     // 1. Add virtual folder IMMEDIATELY (No delay, no await)
@@ -179,11 +204,37 @@ export function activate(context: vscode.ExtensionContext) {
             cancellable: false
         }, async (progress) => {
             try {
-                progress.report({ message: "Running GeneXus SDK Indexing..." });
+                // Trigger background indexing
                 await provider.callGateway({
                     method: "execute_command",
                     params: { module: 'KB', action: 'BulkIndex' }
                 });
+
+                // Polling loop
+                let isDone = false;
+                let lastProcessed = 0;
+
+                while (!isDone) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    const status = await provider.callGateway({
+                        method: "execute_command",
+                        params: { module: 'KB', action: 'GetIndexStatus' }
+                    });
+
+                    if (status && status.isIndexing) {
+                        const current = status.processed || 0;
+                        const total = status.total || 1;
+                        const increment = ((current - lastProcessed) / total) * 100;
+                        lastProcessed = current;
+                        
+                        progress.report({ 
+                            message: `${status.status} (${current}/${total})`,
+                            increment: increment > 0 ? increment : undefined
+                        });
+                    } else if (status && (status.status === "Complete" || !status.isIndexing)) {
+                        isDone = true;
+                    }
+                }
             } catch (e) {
                 vscode.window.showErrorMessage(`Indexing failed: ${e}`);
             }
@@ -196,6 +247,42 @@ export function activate(context: vscode.ExtensionContext) {
         provider.clearDirCache();
         treeProvider.refresh();
         vscode.window.setStatusBarMessage('$(refresh) Nexus IDE: Tree refreshed', 3000);
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('nexus-ide.refreshDiagnostics', async () => {
+        await diagnosticProvider.refreshAll();
+    }));
+
+    // Intercept standard Save event for debug
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc: vscode.TextDocument) => {
+        if (doc.uri.scheme === 'genexus') {
+            console.log(`[Nexus IDE] onDidSaveTextDocument: ${doc.uri.path}`);
+        }
+    }));
+
+    // Monitor willSave
+    context.subscriptions.push(vscode.workspace.onWillSaveTextDocument((e: vscode.TextDocumentWillSaveEvent) => {
+        if (e.document.uri.scheme === 'genexus') {
+            console.log(`[Nexus IDE] onWillSaveTextDocument: ${e.document.uri.path}`);
+        }
+    }));
+
+    context.subscriptions.push(vscode.commands.registerCommand('nexus-ide.runReorg', async () => {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Checking and Installing Database (Reorg)...",
+            cancellable: false
+        }, async () => {
+            const result = await provider.callGateway({
+                method: 'execute_command',
+                params: { module: 'Build', action: 'Reorg' }
+            });
+            if (result && result.status === 'Success') {
+                vscode.window.showInformationMessage("Reorganization successful.");
+            } else {
+                vscode.window.showErrorMessage("Reorganization failed: " + (result?.output || result?.error || 'Unknown error'));
+            }
+        });
     }));
 
     context.subscriptions.push(vscode.commands.registerCommand('nexus-ide.buildObject', async (item?: GxTreeItem) => {

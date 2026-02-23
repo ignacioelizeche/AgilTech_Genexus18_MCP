@@ -57,7 +57,24 @@ export class GxHoverProvider implements vscode.HoverProvider {
         }
 
         try {
-            // 3. Search for the object in the index (Remote)
+            // 3. Check if word is an Attribute (using specific Read:GetAttribute for rich data)
+            const attrData = await this.callGateway({
+                method: 'execute_command',
+                params: { module: 'Read', action: 'GetAttribute', target: word }
+            });
+
+            if (attrData && !attrData.error) {
+                const markdown = new vscode.MarkdownString();
+                markdown.appendMarkdown(`### (Attribute) **${attrData.name}**\n\n`);
+                if (attrData.description) markdown.appendMarkdown(`*${attrData.description}*\n\n`);
+                markdown.appendMarkdown(`**Type:** \`${attrData.type}(${attrData.length}${attrData.decimals > 0 ? ',' + attrData.decimals : ''})\`\n\n`);
+                if (attrData.table) {
+                    markdown.appendMarkdown(`**Base Table:** [${attrData.table}](https://genexus.com/search?q=${attrData.table})\n\n`);
+                }
+                return new vscode.Hover(markdown);
+            }
+
+            // 4. Fallback: Search for the object in the index (Remote)
             const result = await this.callGateway({
                 method: 'execute_command',
                 params: { module: 'Search', query: word, limit: 1 }
@@ -67,19 +84,13 @@ export class GxHoverProvider implements vscode.HoverProvider {
                 const obj = result.results[0];
                 if (obj.name.toLowerCase() === word.toLowerCase()) {
                     const markdown = new vscode.MarkdownString();
-                    markdown.appendMarkdown(`### [${obj.type}] **${obj.name}**
-
-`);
-                    if (obj.description) markdown.appendMarkdown(`*${obj.description}*
-
-`);
+                    markdown.appendMarkdown(`### [${obj.type}] **${obj.name}**\n\n`);
+                    if (obj.description) markdown.appendMarkdown(`*${obj.description}*\n\n`);
                     if (obj.parm) {
                         markdown.appendCodeblock(obj.parm, 'genexus');
                     }
                     if (obj.snippet) {
-                        markdown.appendMarkdown(`---
-**Preview:**
-`);
+                        markdown.appendMarkdown(`---\n**Preview:**\n`);
                         markdown.appendCodeblock(obj.snippet, 'genexus');
                     }
                     return new vscode.Hover(markdown);

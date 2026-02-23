@@ -173,13 +173,24 @@ namespace GxMcp.Worker.Services
                 foreach (var obj in kb.DesignModel.Objects.GetByName(null, null, name))
                 {
                     if (string.Equals(obj.TypeDescriptor.Name, "Attribute", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var json = new JObject();
-                        json["name"] = obj.Name;
-                        json["guid"] = obj.Guid.ToString();
-                        return json.ToString();
+            {
+                dynamic attr = obj;
+                var json = new JObject();
+                json["name"] = attr.Name;
+                json["description"] = attr.Description;
+                json["type"] = attr.Type.ToString();
+                json["length"] = (int)attr.Length;
+                json["decimals"] = (int)attr.Decimals;
+                
+                try {
+                    if (attr.Table != null) {
+                        json["table"] = attr.Table.Name;
                     }
-                }
+                } catch {}
+
+                return json.ToString();
+            }
+        }
                 return "{\"error\":\"Attribute not found\"}";
             }
             catch (Exception ex)
@@ -280,13 +291,20 @@ namespace GxMcp.Worker.Services
                     {
                         var parameters = new JArray();
                         var parmColl = ((dynamic)parmRule).Parameters;
+                        
+                        // Also build a signature string like "ProcName(&Var1, &Var2)"
+                        var paramNames = new List<string>();
+
                         foreach (dynamic p in parmColl)
                         {
                             var paramItem = new JObject();
-                            paramItem["name"] = p.Accessor.ToString().TrimStart('&');
-                            paramItem["accessor"] = p.Accessor.ToString();
-                            paramItem["direction"] = p.Type.ToString(); // In, Out, InOut
+                            string accessor = p.Accessor.ToString();
+                            paramItem["accessor"] = accessor;
+                            paramItem["name"] = accessor.TrimStart('&');
                             
+                            // Direction mapping: In:0, Out:1, InOut:2 (or similar depending on SDK)
+                            paramItem["direction"] = p.Type.ToString(); 
+
                             // Try to find variable type
                             var varPart = obj.Parts.Get<VariablesPart>();
                             if (varPart != null)
@@ -294,14 +312,16 @@ namespace GxMcp.Worker.Services
                                 var variable = varPart.Variables.FirstOrDefault(v => string.Equals(v.Name, paramItem["name"].ToString(), StringComparison.OrdinalIgnoreCase));
                                 if (variable != null)
                                 {
-                                    paramItem["type"] = variable.Type.ToString();
+                                    paramItem["typeName"] = variable.Type.ToString();
                                     paramItem["length"] = variable.Length;
                                 }
                             }
                             
                             parameters.Add(paramItem);
+                            paramNames.Add(accessor);
                         }
                         result["parameters"] = parameters;
+                        result["signature"] = $"{obj.Name}({string.Join(", ", paramNames)})";
                     }
                 }
                 return result.ToString();

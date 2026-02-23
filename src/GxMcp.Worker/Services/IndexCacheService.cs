@@ -3,6 +3,8 @@ using System.IO;
 using GxMcp.Worker.Models;
 using GxMcp.Worker.Helpers;
 using System.Threading.Tasks;
+using System.Linq;
+using Artech.Architecture.Common.Objects;
 
 namespace GxMcp.Worker.Services
 {
@@ -164,6 +166,42 @@ namespace GxMcp.Worker.Services
                 entry.Length = attr.Length;
                 entry.Decimals = attr.Decimals;
             }
+
+            // ENRICHMENT: Dependencies (Calls and Tables)
+            try
+            {
+                foreach (dynamic reference in obj.GetReferences())
+                {
+                    try
+                    {
+                        dynamic targetKey = reference.To;
+                        string targetName = targetKey.Name;
+
+                        // Robust Name Resolution
+                        if (string.IsNullOrEmpty(targetName))
+                        {
+                            string keyStr = targetKey.ToString();
+                            if (keyStr.Contains(":")) targetName = keyStr.Split(':')[1];
+                            else targetName = keyStr;
+                        }
+
+                        if (string.IsNullOrEmpty(targetName)) continue;
+
+                        string targetType = targetKey.TypeDescriptor.Name;
+
+                        if (targetType == "Attribute" || targetType == "Table")
+                        {
+                            if (!entry.Tables.Contains(targetName)) entry.Tables.Add(targetName);
+                        }
+                        else
+                        {
+                            if (!entry.Calls.Contains(targetName)) entry.Calls.Add(targetName);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
 
             string key = string.Format("{0}:{1}", entry.Type, entry.Name);
             lock (_lock)

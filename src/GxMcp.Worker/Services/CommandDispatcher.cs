@@ -35,6 +35,8 @@ namespace GxMcp.Worker.Services
         private readonly PatternService _patternService;
         private readonly PatchService _patchService;
         private readonly SDTService _sdtService;
+        private readonly StructureService _structureService;
+        private readonly FormatService _formatService;
 
         private CommandDispatcher()
         {
@@ -50,7 +52,7 @@ namespace GxMcp.Worker.Services
             _uiService = new UIService(_kbService, _objectService);
             _objectService.SetDataInsightService(_dataInsightService);
             _objectService.SetUIService(_uiService);
-            _refactorService = new RefactorService(_kbService);
+            _refactorService = new RefactorService(_kbService, _objectService, _indexCacheService);
             _batchService = new BatchService(_kbService, _writeService);
             _forgeService = new ForgeService(_kbService);
             _validationService = new ValidationService(_kbService);
@@ -64,12 +66,16 @@ namespace GxMcp.Worker.Services
             _patternService = new PatternService(_indexCacheService, _objectService);
             _patchService = new PatchService(_objectService, _writeService);
             _sdtService = new SDTService(_objectService);
+            _structureService = new StructureService(_objectService);
+            _formatService = new FormatService();
         }
 
         public static CommandDispatcher Instance
         {
             get { lock (_lock) { return _instance ?? (_instance = new CommandDispatcher()); } }
         }
+
+        public KbService GetKbService() { return _kbService; }
 
         public string Dispatch(string line)
         {
@@ -93,6 +99,7 @@ namespace GxMcp.Worker.Services
                     {
                         case "KB":
                             if (action == "BulkIndex") return _kbService.BulkIndex();
+                            if (action == "GetIndexStatus") return _kbService.GetIndexStatus();
                             if (action == "Initialize") return _kbService.GetKB() != null ? "{\"status\":\"Ready\"}" : "{\"error\":\"Failed to open KB\"}";
                             return "{\"error\": \"Action not found in KB\"}";
                         case "ListObjects":
@@ -120,7 +127,7 @@ namespace GxMcp.Worker.Services
                         // case "Doctor": return _buildService.Doctor(target);
                         case "Batch": return _batchService.ProcessBatch(action, target, payload);
                         case "Forge": return _forgeService.Scaffold(target, payload, @params);
-                        case "Refactor": return _refactorService.Refactor(target, action);
+                        case "Refactor": return _refactorService.Refactor(target, action, payload);
                         case "Wiki": return _wikiService.Generate(target);
                         case "History": return _historyService.Execute(target, action);
                         case "Visualizer": return _visualizerService.GenerateGraph(target);
@@ -139,7 +146,10 @@ namespace GxMcp.Worker.Services
                         case "Validation": return _validationService.ValidateCode(target, @params["part"] != null ? @params["part"].ToString() : null, payload);
                         case "Build": return _buildService.Build(action, target);
                         case "Structure":
+                            if (action == "GetTable") return _structureService.GetTableAttributes(target);
                             return _sdtService.GetSDTStructure(target);
+                        case "Formatting":
+                            return _formatService.Format(payload);
                     }
                 }
 

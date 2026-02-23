@@ -1,7 +1,7 @@
 {
     "GeneXus": {
         "InstallationPath": "C:\\Program Files (x86)\\GeneXus\\GeneXus18",
-        "WorkerExecutable": "C:\\Projetos\\GenexusMCP\\src\\GxMcp.Worker\\bin\\Debug\\GxMcp.Worker.exe"
+        "WorkerExecutable": "C:\\Projetos\\GenexusMCP\\src\\GxMcp.Worker\\bin\\Release\\GxMcp.Worker.exe"
     },
     "Server": {
         "HttpPort": 5000,

@@ -204,6 +204,27 @@ export const keywords: GxFunction[] = [
         parameters: '',
         returnType: '',
         snippet: 'If ${1:condition}\n\t${2:code}\nElse\n\t${3:code}\nEndIf'
+    },
+    {
+        name: 'Sub',
+        description: 'Defines a subroutine.',
+        parameters: '(\'Name\')',
+        returnType: '',
+        snippet: 'Sub \'${1:SubName}\'\n\t${2:code}\nEndSub'
+    },
+    {
+        name: 'New',
+        description: 'Creates a new record in a table.',
+        parameters: '',
+        returnType: '',
+        snippet: 'New\n\t${1:Attribute} = ${2:Value}\nEndNew'
+    },
+    {
+        name: 'For In',
+        description: 'Iterates through a collection.',
+        parameters: '(&Var in &Collection)',
+        returnType: '',
+        snippet: 'For ${1:&item} in ${2:&collection}\n\t${3:code}\nEndFor'
     }
 ];
 

@@ -84,6 +84,8 @@ namespace GxMcp.Worker.Services
                     sb.AppendLine("    <BuildOne BuildCalled=\"true\" ObjectName=\"" + target + "\" />");
                 else if (action.Equals("RebuildAll", StringComparison.OrdinalIgnoreCase))
                     sb.AppendLine("    <RebuildAll />");
+                else if (action.Equals("Reorg", StringComparison.OrdinalIgnoreCase))
+                    sb.AppendLine("    <CheckAndInstallDatabase />");
                 else sb.AppendLine("    <BuildAll />");
                 sb.AppendLine("    <CloseKnowledgeBase />");
                 sb.AppendLine("  </Target></Project>");

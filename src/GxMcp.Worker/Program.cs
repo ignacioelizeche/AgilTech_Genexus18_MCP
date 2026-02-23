@@ -40,6 +40,30 @@ namespace GxMcp.Worker
 
                 InitializeSdk(gxPath);
                 _dispatcher = CommandDispatcher.Instance;
+                
+                // Explicitly open KB if path is provided in environment or arguments
+                string kbPath = Environment.GetEnvironmentVariable("GX_KB_PATH");
+                
+                // Check command line arguments for --kb
+                for (int i = 0; i < args.Length; i++)
+                {
+                    if (args[i] == "--kb" && i + 1 < args.Length)
+                    {
+                        kbPath = args[i + 1];
+                        break;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(kbPath))
+                {
+                    try {
+                        Logger.Info($"Worker auto-opening KB: {kbPath}");
+                        _dispatcher.GetKbService().OpenKB(kbPath);
+                    } catch (Exception ex) {
+                        Logger.Error($"Worker failed to auto-open KB: {ex.Message}");
+                    }
+                }
+
                 Logger.Info("Worker SDK ready.");
 
                 var readerThread = new Thread(() => {
@@ -113,12 +137,16 @@ namespace GxMcp.Worker
         private static void ProcessCommand(string line)
         {
             try {
+                Logger.Debug($"[WORKER-STDI] Received raw line: {(line.Length > 100 ? line.Substring(0, 100) + "..." : line)}");
                 var obj = JObject.Parse(line);
                 string idJson = obj["id"]?.ToString() ?? "null";
+                string method = obj["method"]?.ToString();
+
+                Logger.Info($"[WORKER-STDI] Processing command: {method} (ID: {idJson})");
 
                 string result = _dispatcher.Dispatch(line);
                 SendResponse(result, idJson);
-            } catch (Exception ex) { Logger.Error("ProcessCommand Error: " + ex.Message); }
+            } catch (Exception ex) { Logger.Error("ProcessCommand Error: " + ex.Message + " | Line: " + (line.Length > 100 ? line.Substring(0, 100) : line)); }
         }
 
         private static void SendResponse(string result, string id)

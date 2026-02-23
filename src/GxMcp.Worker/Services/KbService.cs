@@ -1,100 +1,88 @@
 using System;
-using System.IO;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
-using System.Reflection;
-using System.Linq;
-using Artech.Architecture.Common.Objects;
-using Artech.Genexus.Common.Objects;
 
 namespace GxMcp.Worker.Services
 {
     public class KbService
     {
-        private static global::Artech.Architecture.Common.Objects.KnowledgeBase _kb;
-        private static readonly object _kbLock = new object();
         private readonly BuildService _buildService;
         private readonly IndexCacheService _indexCacheService;
+
+        // Progress Tracking
+        private static int _processedCount = 0;
+        private static int _totalCount = 0;
+        private static bool _isIndexing = false;
+        private static string _currentStatus = "";
+
+        private static dynamic _kb;
+        private static readonly object _kbLock = new object();
 
         public KbService(BuildService buildService, IndexCacheService indexCacheService)
         {
             _buildService = buildService;
             _indexCacheService = indexCacheService;
+        }
 
-            // PERFORMANCE: Eager KB Opening in background if path is already known
-            string kbPath = Environment.GetEnvironmentVariable("GX_KB_PATH");
-            if (!string.IsNullOrEmpty(kbPath))
-            {
-                System.Threading.Tasks.Task.Run(() => {
-                    try { EnsureKbOpen(); } catch { }
-                });
+        public IndexCacheService GetIndexCache()
+        {
+            return _indexCacheService;
+        }
+
+        public dynamic GetKB()
+        {
+            lock (_kbLock) 
+            { 
+                if (_kb == null)
+                {
+                    string kbPath = Environment.GetEnvironmentVariable("GX_KB_PATH");
+                    if (!string.IsNullOrEmpty(kbPath))
+                    {
+                        try 
+                        { 
+                            Logger.Info($"Auto-opening KB from environment: {kbPath}");
+                            OpenKB(kbPath); 
+                        } 
+                        catch (Exception ex) 
+                        { 
+                            Logger.Error($"Auto-open failed: {ex.Message}");
+                        }
+                    }
+                    else
+                    {
+                        Logger.Warn("GX_KB_PATH environment variable is empty.");
+                    }
+                }
+                return _kb; 
             }
         }
 
-        public global::Artech.Architecture.Common.Objects.KnowledgeBase GetKB() 
-        { 
-            if (_kb != null) return _kb;
-            EnsureKbOpen(); 
-            return _kb; 
-        }
-
-        public IndexCacheService GetIndexCache() { return _indexCacheService; }
-
-        private void EnsureKbOpen()
+        public void OpenKB(string path)
         {
-            if (_kb != null) return;
             lock (_kbLock)
             {
-                if (_kb != null) return;
-                
-                string gxPath = Environment.GetEnvironmentVariable("GX_PROGRAM_DIR") ?? @"C:\Program Files (x86)\GeneXus\GeneXus18";
+                if (_kb != null)
+                {
+                    try { if (string.Equals(_kb.Location, path, StringComparison.OrdinalIgnoreCase)) return; } catch { }
+                    try { _kb.Close(); } catch { }
+                }
+
                 try {
-                    // SECURE SDK INITIALIZATION (via Reflection to be version-agnostic)
-                    try {
-                        var asm = Assembly.Load("Artech.Architecture.Common");
-                        var type = asm.GetType("Artech.Architecture.Common.Services.KnowledgeBaseService");
-                        if (type != null) {
-                            var prop = type.GetProperty("Current", BindingFlags.Public | BindingFlags.Static);
-                            var val = prop?.GetValue(null);
-                            Logger.Debug("SDK KnowledgeBaseService triggered.");
-                        }
-                    } catch (Exception ex) { Logger.Debug("SDK Trigger skipped: " + ex.Message); }
-
-                    string kbPath = Environment.GetEnvironmentVariable("GX_KB_PATH");
-                    if (string.IsNullOrEmpty(kbPath)) throw new Exception("GX_KB_PATH environment variable not set by Gateway");
-
-                    if (kbPath.EndsWith(".gxw", StringComparison.OrdinalIgnoreCase)) kbPath = Path.GetDirectoryName(kbPath);
-
-                    // Initialize the cache path based on the actual KB being opened
-                    _indexCacheService.Initialize(kbPath);
-
+                    Logger.Info($"Opening KB: {path}");
                     string oldDir = Directory.GetCurrentDirectory();
                     try {
-                        Directory.SetCurrentDirectory(gxPath);
-                        Logger.Info($"Opening KB in OFFLINE mode: {kbPath}");
-
-                        var options = new global::Artech.Architecture.Common.Objects.KnowledgeBase.OpenOptions(kbPath);
-                        options.EnableMultiUser = true;
-                        options.AvoidIndexing = true; // DO NOT use SDK indexing (we have our own)
+                        string kbDir = Path.GetDirectoryName(path);
+                        Directory.SetCurrentDirectory(kbDir);
                         
-                        // Disable everything slow
-                        try {
-                            var props = options.GetType().GetProperties();
-                            foreach(var p in props) {
-                                if (p.Name == "NoAutomaticUpdate" || p.Name == "OfflineMode" || p.Name == "AvoidCheckingNetwork") {
-                                    p.SetValue(options, true);
-                                }
-                            }
-                        } catch { }
-
+                        // Use direct call with OpenOptions for stability
+                        var options = new global::Artech.Architecture.Common.Objects.KnowledgeBase.OpenOptions(path);
+                        
                         _kb = global::Artech.Architecture.Common.Objects.KnowledgeBase.Open(options);
-                        if (_kb == null) throw new Exception("KnowledgeBase.Open returned null");
                         
-                        // Ensure minimal context is loaded
-                        if (_kb.DesignModel == null) throw new Exception("DesignModel failed to load");
-                        
-                        Logger.Info($"KB opened successfully in {System.Diagnostics.Process.GetCurrentProcess().UserProcessorTime.TotalMilliseconds}ms virtual time.");
+                        Logger.Info($"KB opened successfully. DesignModel: {_kb.DesignModel.Name}");
                     } finally { Directory.SetCurrentDirectory(oldDir); }
                 } catch (Exception ex) { 
                     Logger.Error($"ERROR opening KB: {ex.Message}");
@@ -106,121 +94,167 @@ namespace GxMcp.Worker.Services
 
         public string BulkIndex()
         {
-            try
-            {
-                var kb = GetKB();
-                if (kb == null) return "{\"error\":\"KB not open\"}";
-                
-                Logger.Info("Bulk Indexing starting (Parallel)...");
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                
-                var index = new SearchIndex { LastUpdated = DateTime.Now };
-                var concurrentDict = new System.Collections.Concurrent.ConcurrentDictionary<string, SearchIndex.IndexEntry>();
-                
-                var objects = kb.DesignModel.Objects.GetAll().ToList();
-                int total = objects.Count;
-                int processed = 0;
+            if (_isIndexing) return "{\"status\":\"Already in progress\"}";
 
-                System.Threading.Tasks.Parallel.ForEach(objects, (obj) => {
+            System.Threading.Tasks.Task.Run(() => {
+                try
+                {
+                    dynamic kb = GetKB();
+                    if (kb == null) { _isIndexing = false; return; }
+                    
+                    Logger.Info("Bulk Indexing starting...");
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    
+                    _isIndexing = true;
+                    _processedCount = 0;
+                    _currentStatus = "Gathering objects...";
+                    
+                    var objects = new List<dynamic>();
                     try {
-                        string parentName = null;
-                        string moduleName = null;
+                        foreach (dynamic obj in kb.DesignModel.Objects.GetAll()) {
+                            objects.Add(obj);
+                        }
+                    } catch (Exception ex) { Logger.Error("Gather error: " + ex.Message); }
+
+                    _totalCount = objects.Count;
+                    int processed = 0;
+
+                    var index = new SearchIndex { LastUpdated = DateTime.Now };
+
+                    _currentStatus = "Processing objects...";
+                    foreach (dynamic obj in objects) {
                         try {
-                            if (obj.Parent != null && obj.Parent.Guid != obj.Guid)
+                            string parentName = null;
+                            string moduleName = null;
+                            try {
+                                if (obj.Parent != null && obj.Parent.Guid != obj.Guid)
+                                {
+                                    string pType = obj.Parent.TypeDescriptor.Name;
+                                    if (pType == "DesignModel")
+                                        parentName = "Root Module";
+                                    else if (pType == "Module" || pType == "Folder")
+                                        parentName = obj.Parent.Name;
+                                }
+                            } catch { }
+                            try {
+                                if (obj.Module != null && obj.Module.Guid != obj.Guid)
+                                    moduleName = obj.Module.Name;
+                            } catch { }
+
+                            var entry = new SearchIndex.IndexEntry {
+                                Name = obj.Name,
+                                Type = obj.TypeDescriptor.Name,
+                                Description = obj.Description,
+                                Parent = parentName,
+                                Module = moduleName
+                            };
+
+                            try {
+                                string t = entry.Type;
+                                if (t == "Attribute") {
+                                    entry.DataType = obj.Type.ToString();
+                                    entry.Length = obj.Length;
+                                    entry.Decimals = obj.Decimals;
+                                } else if (t == "Table") {
+                                    entry.RootTable = obj.Name;
+                                }
+                            } catch { }
+
+                            if (obj.Name.Contains("_"))
                             {
-                                // Root children usually have the DesignModel as Parent in SDK
-                                if (obj.Parent.TypeDescriptor.Name == "DesignModel")
-                                    parentName = "Root Module";
-                                else if (obj.Parent is global::Artech.Architecture.Common.Objects.Module || obj.Parent is global::Artech.Architecture.Common.Objects.Folder)
-                                    parentName = obj.Parent.Name;
-                                // Else, if the parent is neither DesignModel, Module nor Folder, it might be an internal object or part of another object,
-                                // in which case, we probably don't want to show it as a "parent" for hierarchical browsing.
+                                entry.BusinessDomain = obj.Name.Split('_')[0];
+                            }
+
+                            try {
+                                if (entry.Type == "Procedure" || entry.Type == "WebPanel")
+                                {
+                                    dynamic rulesPart = obj.Parts.Get(Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534")); // Rules
+                                    if (rulesPart != null)
+                                    {
+                                        string rSrc = rulesPart.Source;
+                                        var parmMatch = System.Text.RegularExpressions.Regex.Match(rSrc, @"(?i)\bparm\s*\(.*?\)\s*;", System.Text.RegularExpressions.RegexOptions.Singleline);
+                                        if (parmMatch.Success) entry.ParmRule = parmMatch.Value.Trim();
+                                    }
+
+                                    dynamic sourcePart = obj.Parts.Get(Guid.Parse("c5f0ef88-9ef8-4218-bf76-915024b3c48f")); // Source
+                                    if (sourcePart != null)
+                                    {
+                                        string sSrc = sourcePart.Source;
+                                        if (!string.IsNullOrEmpty(sSrc)) {
+                                            var lines = sSrc.Split('\n');
+                                            entry.SourceSnippet = string.Join("\n", lines.Take(5)).Trim();
+                                        }
+                                    }
+                                }
+                            } catch { }
+
+                            try
+                            {
+                                foreach (dynamic reference in obj.GetReferences())
+                                {
+                                    try
+                                    {
+                                        dynamic targetKey = reference.To;
+                                        string targetName = targetKey.Name;
+                                        if (string.IsNullOrEmpty(targetName)) targetName = targetKey.ToString();
+
+                                        if (string.IsNullOrEmpty(targetName)) continue;
+
+                                        string targetType = targetKey.TypeDescriptor.Name;
+                                        if (targetType == "Attribute" || targetType == "Table")
+                                        {
+                                            if (!entry.Tables.Contains(targetName)) entry.Tables.Add(targetName);
+                                        }
+                                        else
+                                        {
+                                            if (!entry.Calls.Contains(targetName)) entry.Calls.Add(targetName);
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                            catch { }
+
+                            index.Objects[string.Format("{0}:{1}", entry.Type, entry.Name)] = entry;
+                            
+                            processed++;
+                            _processedCount = processed;
+                            if (processed % 1000 == 0) {
+                                Logger.Info(string.Format("Progress: {0}/{1} objects indexed...", processed, _totalCount));
                             }
                         } catch { }
-                        try {
-                            if (obj.Module != null && obj.Module.Guid != obj.Guid)
-                                moduleName = obj.Module.Name;
-                        } catch { }
-                        // For Folder objects: GeneXus SDK may return DesignModel as Parent even when
-                        // the folder is visually nested inside a Module. Use obj.Module as the
-                        // organizational parent to correctly place the folder in the hierarchy.
-                        try {
-                            if (obj is global::Artech.Architecture.Common.Objects.Folder
-                                && (parentName == "Root Module" || parentName == null)
-                                && !string.IsNullOrEmpty(moduleName))
-                            {
-                                parentName = moduleName;
-                            }
-                        } catch { }
-
-                        var entry = new SearchIndex.IndexEntry {
-                            Name = obj.Name,
-                            Type = obj.TypeDescriptor.Name,
-                            Description = obj.Description,
-                            Parent = parentName,
-                            Module = moduleName
-                        };
-
-                        // ENRICHMENT: Attributes metadata for Smart Injection
-                        if (obj is global::Artech.Genexus.Common.Objects.Attribute attr)
-                        {
-                            entry.DataType = attr.Type.ToString();
-                            entry.Length = attr.Length;
-                            entry.Decimals = attr.Decimals;
-                        }
-
-                        // ENRICHMENT: Tables root info
-                        if (obj is global::Artech.Genexus.Common.Objects.Table tbl)
-                        {
-                            entry.RootTable = tbl.Name;
-                        }
-
-                        // BUSINESS DOMAIN: Basic inference
-                        if (obj.Name.Contains("_"))
-                        {
-                            entry.BusinessDomain = obj.Name.Split('_')[0];
-                        }
-
-                        // ENRICHMENT: Parm and Snippet
-                        if (obj is Procedure || obj is WebPanel)
-                        {
-                            var rules = obj.Parts.Get<global::Artech.Genexus.Common.Parts.RulesPart>();
-                            if (rules != null)
-                            {
-                                var parmMatch = System.Text.RegularExpressions.Regex.Match(rules.Source, @"(?i)\bparm\s*\(.*?\)\s*;", System.Text.RegularExpressions.RegexOptions.Singleline);
-                                if (parmMatch.Success) entry.ParmRule = parmMatch.Value.Trim();
-                            }
-
-                            var source = obj.Parts.Get<global::Artech.Genexus.Common.Parts.SourcePart>();
-                            if (source != null && !string.IsNullOrEmpty(source.Source))
-                            {
-                                var lines = source.Source.Split('\n');
-                                entry.SourceSnippet = string.Join("\n", lines.Take(5)).Trim();
-                            }
-                        }
-
-                        concurrentDict.TryAdd(string.Format("{0}:{1}", entry.Type, entry.Name), entry);
-                        
-                        var current = System.Threading.Interlocked.Increment(ref processed);
-                        if (current % 1000 == 0) {
-                            Logger.Info(string.Format("Progress: {0}/{1} objects indexed...", current, total));
-                        }
-                    } catch {
-                        // Logger.Debug(string.Format("Error indexing object {0}: {1}", obj.Name, ex.Message));
                     }
-                });
 
-                foreach (var kvp in concurrentDict) index.Objects[kvp.Key] = kvp.Value;
+                    _indexCacheService.UpdateIndex(index);
+                    sw.Stop();
+                    _isIndexing = false;
+                    _processedCount = _totalCount;
+                    _currentStatus = "Complete";
+                    
+                    Logger.Info($"Bulk Indexing complete. {_totalCount} objects in {sw.ElapsedMilliseconds}ms.");
+                } catch (Exception ex) { 
+                    _isIndexing = false;
+                    Logger.Error($"BulkIndex Fatal: {ex.Message}");
+                }
+            });
 
-                _indexCacheService.UpdateIndex(index);
-                sw.Stop();
-                
-                Logger.Info($"Bulk Indexing complete. {total} objects in {sw.ElapsedMilliseconds}ms.");
-                return "{\"status\":\"Success\", \"totalIndexed\":" + total + ", \"timeMs\":" + sw.ElapsedMilliseconds + "}";
-            } catch (Exception ex) { 
-                Logger.Error($"BulkIndex Fatal: {ex.Message}");
-                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; 
-            }
+            return "{\"status\":\"Started\"}";
+        }
+
+        public string GetIndexStatus()
+        {
+            var json = new Newtonsoft.Json.Linq.JObject();
+            json["isIndexing"] = _isIndexing;
+            json["total"] = _totalCount;
+            json["processed"] = _processedCount;
+            json["status"] = _currentStatus;
+            
+            if (_totalCount > 0)
+                json["progress"] = (int)((_processedCount / (float)_totalCount) * 100);
+            else
+                json["progress"] = 0;
+
+            return json.ToString();
         }
     }
 }

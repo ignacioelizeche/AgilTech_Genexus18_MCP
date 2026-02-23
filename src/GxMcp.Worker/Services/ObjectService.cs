@@ -33,41 +33,65 @@ namespace GxMcp.Worker.Services
 
         public KBObject FindObject(string target)
         {
+            if (string.IsNullOrEmpty(target)) return null;
             var sw = Stopwatch.StartNew();
             var kb = _kbService.GetKB();
             if (kb == null) return null;
 
             string typePart = null;
-            string namePart = target;
+            string namePart = target.Trim();
 
             if (target.Contains(":"))
             {
                 var parts = target.Split(':');
-                typePart = parts[0];
-                namePart = parts[1];
+                typePart = parts[0].Trim();
+                namePart = parts[1].Trim();
             }
 
+            // 1. Precise search with type if provided
+            if (typePart != null)
+            {
+                foreach (KBObject obj in kb.DesignModel.Objects.GetByName(null, null, namePart))
+                {
+                    if (string.Equals(obj.TypeDescriptor.Name, typePart, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.Debug(string.Format("FindObject '{0}' SUCCESS (Typed) in {1}ms", target, sw.ElapsedMilliseconds));
+                        return obj;
+                    }
+                }
+            }
+
+            // 2. Global search, prioritizing non-container objects
+            KBObject firstMatch = null;
             foreach (KBObject obj in kb.DesignModel.Objects.GetByName(null, null, namePart))
             {
-                if (typePart == null || string.Equals(obj.TypeDescriptor.Name, typePart, StringComparison.OrdinalIgnoreCase))
+                if (firstMatch == null) firstMatch = obj;
+                
+                string type = obj.TypeDescriptor.Name;
+                if (type != "Folder" && type != "Module")
                 {
-                    Logger.Debug(string.Format("FindObject '{0}' SUCCESS in {1}ms", target, sw.ElapsedMilliseconds));
+                    Logger.Debug(string.Format("FindObject '{0}' SUCCESS (Global) in {1}ms", target, sw.ElapsedMilliseconds));
                     return obj;
                 }
             }
-            return null;
+
+            if (firstMatch != null)
+            {
+                Logger.Debug(string.Format("FindObject '{0}' SUCCESS (Container) in {1}ms", target, sw.ElapsedMilliseconds));
+            }
+            return firstMatch;
         }
 
         public string ReadObject(string target)
         {
             var obj = FindObject(target);
-            if (obj == null) return "{\"error\": \"Object not found\"}";
+            if (obj == null) return "{\"error\": \"Object not found: " + target + "\"}";
 
             var parts = new JArray();
             foreach (KBObjectPart p in obj.Parts)
             {
                 parts.Add(new JObject { 
-                    ["name"] = p.Type.ToString(), 
+                    ["name"] = p.TypeDescriptor?.Name ?? p.Type.ToString(), 
                     ["guid"] = p.Type.ToString() 
                 });
             }
@@ -93,7 +117,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found\"}";
+                if (obj == null) return "{\"error\": \"Object not found: " + target + "\"}";
 
                 // Special handling for Layout
                 if (partName.Equals("layout", StringComparison.OrdinalIgnoreCase))
@@ -111,21 +135,33 @@ namespace GxMcp.Worker.Services
                 Guid partGuid = MapLogicalPartToGuid(obj.TypeDescriptor.Name, partName);
                 
                 KBObjectPart part = null;
-                foreach (KBObjectPart p in obj.Parts)
+                if (partGuid != Guid.Empty)
                 {
-                    if (p.Type == partGuid) { part = p; break; }
+                    foreach (KBObjectPart p in obj.Parts)
+                    {
+                        if (p.Type == partGuid) { part = p; break; }
+                    }
                 }
 
-                // Dynamic Discovery Fallback: if part not found by GUID, try to find by type
+                // Dynamic Discovery Fallback: if part not found by GUID, try to find by type or interface
                 if (part == null)
                 {
-                    if (partName.Equals("Source", StringComparison.OrdinalIgnoreCase) || partName.Equals("Code", StringComparison.OrdinalIgnoreCase))
-                        part = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p is ISource);
-                    else if (partName.Equals("Variables", StringComparison.OrdinalIgnoreCase))
-                        part = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p is global::Artech.Genexus.Common.Parts.VariablesPart);
+                    foreach (KBObjectPart p in obj.Parts)
+                    {
+                        if (p is ISource && (partName.Equals("Source", StringComparison.OrdinalIgnoreCase) || partName.Equals("Code", StringComparison.OrdinalIgnoreCase) || partName.Equals("Events", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            part = p;
+                            break;
+                        }
+                        if (p is global::Artech.Genexus.Common.Parts.VariablesPart && partName.Equals("Variables", StringComparison.OrdinalIgnoreCase))
+                        {
+                            part = p;
+                            break;
+                        }
+                    }
                 }
 
-                if (part == null) return "{\"error\": \"Part '" + partName + "' not found in " + obj.TypeDescriptor.Name + ". Available parts: " + string.Join(", ", obj.Parts.Cast<KBObjectPart>().Select(p => p.Type.ToString())) + "\"}";
+                if (part == null) return "{\"error\": \"Part '" + partName + "' not found in " + obj.TypeDescriptor.Name + ". Available parts: " + string.Join(", ", obj.Parts.Cast<KBObjectPart>().Select(p => p.TypeDescriptor?.Name ?? p.Type.ToString())) + "\"}";
 
                 JObject result = new JObject();
                 
@@ -218,6 +254,9 @@ namespace GxMcp.Worker.Services
                 case "rules": return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
                 case "events": return Guid.Parse("c44bd5ff-f918-415b-98e6-aca44fed84fa");
                 case "variables": return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
+                case "structure": return Guid.Parse("1608677c-a7a2-4a00-8809-6d2466085a5a");
+                case "webform": return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
+                case "help": return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
                 default: return Guid.Empty;
             }
         }
@@ -235,9 +274,8 @@ namespace GxMcp.Worker.Services
                 if (p == "help") return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
             }
             
-            if (objType.Equals("WebPanel", StringComparison.OrdinalIgnoreCase) || objType.Equals("Transaction", StringComparison.OrdinalIgnoreCase))
+            if (objType.Equals("WebPanel", StringComparison.OrdinalIgnoreCase))
             {
-                // Em WebPanels e Transactions, 'Source' lógico mapeia para 'Events' do SDK
                 if (p == "events" || p == "source" || p == "code") return Guid.Parse("c44bd5ff-f918-415b-98e6-aca44fed84fa");
                 if (p == "rules") return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
                 if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
@@ -248,6 +286,22 @@ namespace GxMcp.Worker.Services
             if (objType.Equals("Transaction", StringComparison.OrdinalIgnoreCase))
             {
                 if (p == "structure") return Guid.Parse("1608677c-a7a2-4a00-8809-6d2466085a5a");
+                if (p == "events" || p == "source" || p == "code") return Guid.Parse("c44bd5ff-f918-415b-98e6-aca44fed84fa");
+                if (p == "rules") return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
+                if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
+                if (p == "webform") return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
+            }
+
+            if (objType.Equals("DataProvider", StringComparison.OrdinalIgnoreCase))
+            {
+                if (p == "source" || p == "code") return Guid.Parse("91705646-6086-4f32-8871-08149817e754");
+                if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
+                if (p == "help") return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
+            }
+
+            if (objType.Equals("SDT", StringComparison.OrdinalIgnoreCase) || objType.Equals("StructuredDataType", StringComparison.OrdinalIgnoreCase))
+            {
+                if (p == "structure" || p == "source") return Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3");
             }
 
             return GetPartGuid(p);

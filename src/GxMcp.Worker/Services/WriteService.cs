@@ -93,20 +93,37 @@ namespace GxMcp.Worker.Services
 
                 Logger.Debug(string.Format("[DEBUG-SAVE] Object Found: {0} ({1})", obj.Name, obj.TypeDescriptor.Name));
 
-                Guid partGuid = MapLogicalPartToGuid(obj.TypeDescriptor.Name, partName);
-                global::Artech.Architecture.Common.Objects.KBObjectPart part = obj.Parts.Cast<global::Artech.Architecture.Common.Objects.KBObjectPart>().FirstOrDefault(p => p.Type == partGuid);
+                // Log all parts for debugging
+                foreach (var p in obj.Parts) {
+                    Logger.Debug(string.Format("[DEBUG-SAVE] Available Part: {0} (GUID: {1}, Type: {2})", p.TypeDescriptor?.Name, p.Type, p.GetType().Name));
+                }
 
-                if (part == null && (partName.Equals("Source", StringComparison.OrdinalIgnoreCase) || partName.Equals("Code", StringComparison.OrdinalIgnoreCase)))
+                Guid partGuid = MapLogicalPartToGuid(obj.TypeDescriptor.Name, partName);
+                global::Artech.Architecture.Common.Objects.KBObjectPart part = null;
+                
+                // Strategy 1: Map by logical GUID
+                if (partGuid != Guid.Empty) {
+                    part = obj.Parts.Cast<global::Artech.Architecture.Common.Objects.KBObjectPart>().FirstOrDefault(p => p.Type == partGuid);
+                }
+
+                // Strategy 2: Fallback to name-based or interface-based matching
+                if (part == null)
                 {
-                    part = obj.Parts.Cast<global::Artech.Architecture.Common.Objects.KBObjectPart>().FirstOrDefault(p => p is global::Artech.Architecture.Common.Objects.ISource);
+                    string pName = partName.ToLower();
+                    foreach (global::Artech.Architecture.Common.Objects.KBObjectPart p in obj.Parts)
+                    {
+                        if (pName == "variables" && p is global::Artech.Genexus.Common.Parts.VariablesPart) { part = p; break; }
+                        if ((pName == "source" || pName == "code" || pName == "events") && p is global::Artech.Architecture.Common.Objects.ISource) { part = p; break; }
+                        if (pName == "structure" && (p.GetType().Name.Contains("Structure") || p.TypeDescriptor.Name.Equals("Structure", StringComparison.OrdinalIgnoreCase))) { part = p; break; }
+                    }
                 }
 
                 if (part == null) {
                     Logger.Error("[DEBUG-SAVE] Part NOT FOUND in object: " + partName);
-                    return "{\"error\": \"Part not found\"}";
+                    return "{\"error\": \"Part not found in " + obj.TypeDescriptor.Name + "\"}";
                 }
 
-                Logger.Debug(string.Format("[DEBUG-SAVE] Target Part: {0} (Type: {1})", part.Type, part.GetType().Name));
+                Logger.Info(string.Format("[DEBUG-SAVE] Target Part Selected: {0} (GUID: {1}, Type: {2})", part.TypeDescriptor?.Name, part.Type, part.GetType().Name));
 
                 // 1. SET CONTENT
                 bool contentSet = false;
@@ -173,22 +190,48 @@ namespace GxMcp.Worker.Services
                 // 3. PERSISTENCE SEQUENCE
                 try
                 {
-                    // Checkout
-                    try {
-                        var checkoutMethod = obj.GetType().GetMethod("Checkout", BindingFlags.Public | BindingFlags.Instance);
-                        checkoutMethod?.Invoke(obj, null);
-                        Logger.Debug("[DEBUG-SAVE] SDK Checkout invoked.");
-                    } catch { }
+                    var kb = _objectService.GetKbService().GetKB();
+                    if (kb == null) throw new Exception("KB not opened");
 
-                    Logger.Info("[DEBUG-SAVE] Invoking obj.Save()...");
-                    obj.Save();
-                    Logger.Info("[DEBUG-SAVE] obj.Save() completed (Fast Save).");
-                    
-                    // Trigger background flush for long-lasting persistence
-                    ScheduleFlush();
+                    // 1. Start Transaction
+                    Logger.Info("[DEBUG-SAVE] Starting SDK Transaction...");
+                    var transaction = kb.BeginTransaction();
+
+                    try {
+                        // 2. Checkout
+                        try {
+                            var checkoutMethod = obj.GetType().GetMethod("Checkout", BindingFlags.Public | BindingFlags.Instance);
+                            checkoutMethod?.Invoke(obj, null);
+                            Logger.Debug("[DEBUG-SAVE] SDK Checkout invoked.");
+                        } catch { }
+
+                        // 3. Save Part (CRITICAL: Save the part explicitly first)
+                        Logger.Info(string.Format("[DEBUG-SAVE] Invoking part.Save() for {0}...", part.TypeDescriptor?.Name));
+                        part.Save();
+                        Logger.Info("[DEBUG-SAVE] part.Save() completed.");
+
+                        // 4. Save Object
+                        Logger.Info("[DEBUG-SAVE] Invoking obj.Save()...");
+                        obj.Save();
+                        Logger.Info("[DEBUG-SAVE] obj.Save() completed.");
+
+                        // 5. Transaction Commit
+                        Logger.Info("[DEBUG-SAVE] Committing SDK Transaction...");
+                        transaction.Commit();
+                        Logger.Info("[DEBUG-SAVE] SDK Transaction Committed.");
+                    }
+                    catch (Exception ex) {
+                        Logger.Error("[DEBUG-SAVE] Transaction Error: " + ex.Message);
+                        transaction.Rollback();
+                        throw;
+                    }
 
                     _objectService.GetKbService().GetIndexCache().UpdateEntry(obj);
-                    Logger.Info("[DEBUG-SAVE] FAST SAVE SUCCESSFUL.");
+                    
+                    // Final persistence in background for "Fast Save"
+                    ScheduleFlush();
+
+                    Logger.Info("[DEBUG-SAVE] SAVE & COMMIT COMPLETE.");
                     return "{\"status\": \"Success\"}";
                 }
                 catch (Exception saveEx)
@@ -258,17 +301,34 @@ namespace GxMcp.Worker.Services
                 if (p == "help") return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
             }
             
-            if (objType.Equals("WebPanel", StringComparison.OrdinalIgnoreCase) || objType.Equals("Transaction", StringComparison.OrdinalIgnoreCase))
+            if (objType.Equals("WebPanel", StringComparison.OrdinalIgnoreCase))
             {
-                // Em WebPanels e Transactions, 'Source' lógico mapeia para 'Events' do SDK
                 if (p == "events" || p == "source" || p == "code") return Guid.Parse("c44bd5ff-f918-415b-98e6-aca44fed84fa");
                 if (p == "rules") return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
                 if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
+                if (p == "layout") return Guid.Parse("ad3ca970-19d0-44e1-a7b7-db05556e820c");
+                if (p == "webform") return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
             }
 
             if (objType.Equals("Transaction", StringComparison.OrdinalIgnoreCase))
             {
                 if (p == "structure") return Guid.Parse("1608677c-a7a2-4a00-8809-6d2466085a5a");
+                if (p == "events" || p == "source" || p == "code") return Guid.Parse("c44bd5ff-f918-415b-98e6-aca44fed84fa");
+                if (p == "rules") return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
+                if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
+                if (p == "webform") return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
+            }
+
+            if (objType.Equals("DataProvider", StringComparison.OrdinalIgnoreCase))
+            {
+                if (p == "source" || p == "code") return Guid.Parse("91705646-6086-4f32-8871-08149817e754");
+                if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
+                if (p == "help") return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
+            }
+
+            if (objType.Equals("SDT", StringComparison.OrdinalIgnoreCase) || objType.Equals("StructuredDataType", StringComparison.OrdinalIgnoreCase))
+            {
+                if (p == "structure" || p == "source") return Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3");
             }
 
             return ObjectService.GetPartGuid(p);

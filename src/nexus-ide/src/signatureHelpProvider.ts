@@ -49,10 +49,18 @@ export class GxSignatureHelpProvider implements vscode.SignatureHelpProvider {
 
             if (result && result.parameters) {
                 const sig = new vscode.SignatureHelp();
-                const paramStr = result.parameters.map((p: any) => `${p.direction ? p.direction + ':' : ''}${p.accessor}`).join(', ');
-                const label = `${result.name}(${paramStr})`;
+                const label = result.signature || `${result.name}(${result.parameters.map((p: any) => p.accessor).join(', ')})`;
                 const si = new vscode.SignatureInformation(label, `(GeneXus ${result.type})`);
-                si.parameters = result.parameters.map((p: any) => new vscode.ParameterInformation(p.accessor, `${p.direction || ''} ${p.type || ''}`));
+                
+                si.parameters = result.parameters.map((p: any) => {
+                    const paramLabel = p.accessor;
+                    const docParts = [];
+                    if (p.direction) docParts.push(`**Direction**: ${p.direction}`);
+                    if (p.typeName) docParts.push(`**Type**: ${p.typeName}${p.length ? '(' + p.length + ')' : ''}`);
+                    
+                    return new vscode.ParameterInformation(paramLabel, new vscode.MarkdownString(docParts.join('  \n')));
+                });
+
                 sig.signatures = [si];
                 sig.activeSignature = 0;
                 sig.activeParameter = Math.min(paramIndex, si.parameters.length - 1);

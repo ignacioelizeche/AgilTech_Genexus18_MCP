@@ -129,19 +129,27 @@ namespace GxMcp.Gateway
             app.MapPost("/api/command", async (HttpRequest request) => {
                 using (var reader = new StreamReader(request.Body)) {
                     string body = await reader.ReadToEndAsync();
+                    Log($"[HTTP] Received command body: {(body.Length > 100 ? body.Substring(0, 100) + "..." : body)}");
+                    
                     var requestObj = JsonConvert.DeserializeObject<JObject>(body);
                     string requestId = Guid.NewGuid().ToString();
                     var tcs = new TaskCompletionSource<string>();
                     _pendingRequests[requestId] = tcs;
 
                     var rpcWrapper = new { jsonrpc = "2.0", id = requestId, method = "execute_command", @params = requestObj?["params"] ?? requestObj };
-                    await _worker!.SendCommandAsync(JsonConvert.SerializeObject(rpcWrapper));
+                    string rpcStr = JsonConvert.SerializeObject(rpcWrapper);
+                    Log($"[HTTP] Sending to worker: {(rpcStr.Length > 100 ? rpcStr.Substring(0, 100) + "..." : rpcStr)}");
+                    
+                    await _worker!.SendCommandAsync(rpcStr);
+                    Log($"[HTTP] Command {requestId} sent to worker. Waiting for response...");
 
                     if (await Task.WhenAny(tcs.Task, Task.Delay(30000)) == tcs.Task) {
                         var res = JObject.Parse(await tcs.Task);
+                        Log($"[HTTP] Worker responded for {requestId}: {(res.ToString(Formatting.None).Length > 100 ? res.ToString(Formatting.None).Substring(0, 100) + "..." : res.ToString(Formatting.None))}");
                         return Results.Content(res["result"]?.ToString() ?? await tcs.Task, "application/json");
                     }
-                    return Results.BadRequest("Timeout");
+                    Log($"[HTTP] Timeout for {requestId}");
+                    return Results.BadRequest(new { error = "Timeout", requestId = requestId });
                 }
             });
 

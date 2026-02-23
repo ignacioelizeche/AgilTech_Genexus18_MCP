@@ -49,7 +49,13 @@ namespace GxMcp.Worker.Services
 
                 // 2. Apply Semantic Filters (usedby:)
                 if (!string.IsNullOrEmpty(criteria.UsedByFilter))
-                    queryResults = queryResults.Where(e => e.RootTable != null && e.RootTable.Equals(criteria.UsedByFilter, StringComparison.OrdinalIgnoreCase));
+                {
+                    queryResults = queryResults.Where(e => 
+                        (e.RootTable != null && string.Equals(e.RootTable, criteria.UsedByFilter, StringComparison.OrdinalIgnoreCase)) ||
+                        (e.Calls != null && e.Calls.Exists(c => string.Equals(c, criteria.UsedByFilter, StringComparison.OrdinalIgnoreCase))) ||
+                        (e.Tables != null && e.Tables.Exists(t => string.Equals(t, criteria.UsedByFilter, StringComparison.OrdinalIgnoreCase)))
+                    );
+                }
 
                 // 3. Scoring and Finalizing
                 var finalResults = queryResults
@@ -77,7 +83,11 @@ namespace GxMcp.Worker.Services
                         description = r.Entry.Description,
                         parm = r.Entry.ParmRule,
                         snippet = r.Entry.SourceSnippet,
-                        parent = r.Entry.Parent
+                        parent = r.Entry.Parent,
+                        dataType = r.Entry.DataType,
+                        length = r.Entry.Length,
+                        decimals = r.Entry.Decimals,
+                        table = r.Entry.RootTable
                     })
                 });
 
@@ -114,7 +124,7 @@ namespace GxMcp.Worker.Services
             
             // Extract usedby:
             if (query.Contains("usedby:")) {
-                var m = System.Text.RegularExpressions.Regex.Match(query, @"usedby:(\w+)");
+                var m = System.Text.RegularExpressions.Regex.Match(query, @"usedby:([\w\.]+)");
                 if (m.Success) { c.UsedByFilter = m.Groups[1].Value; query = query.Replace(m.Value, ""); }
             }
             // Extract parent:

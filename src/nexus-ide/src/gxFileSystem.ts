@@ -103,10 +103,10 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         }
 
         const cachedContent = this._contentCache.get(uri.toString());
+        // Use exact size from cache if available, otherwise use a placeholder
         const size = cachedContent ? cachedContent.byteLength : 1024; 
 
         // Important: If mtime doesn't exist, we MUST set it once.
-        // But we MUST NOT update it on every read/stat if the file hasn't actually been written to.
         if (!this._mtimes.has(uri.toString())) {
             this._mtimes.set(uri.toString(), Date.now()); 
         }
@@ -192,9 +192,15 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
                     params: { module: 'Read', action: 'ExtractSource', target: objName, part: partName }
                 });
                 let data: Uint8Array;
-                if (result && result.source) data = Buffer.from(result.source, 'utf8');
-                else if (partName === 'Variables' && result.variables) data = Buffer.from(result.variables.map((v: any) => `&${v.name} : ${v.type}(${v.length})`).join('\n'), 'utf8');
-                else data = Buffer.from("// Part not available", 'utf8');
+                if (result && result.source) {
+                    data = Buffer.from(result.source, 'utf8');
+                } else if (result && result.error) {
+                    data = Buffer.from(`// Error from Gateway: ${result.error}\n// Target: ${objName}, Part: ${partName}`, 'utf8');
+                } else if (partName === 'Variables' && result && result.variables) {
+                    data = Buffer.from(result.variables.map((v: any) => `&${v.name} : ${v.type}(${v.length})`).join('\n'), 'utf8');
+                } else {
+                    data = Buffer.from(`// Part not available: ${partName}\n// Object: ${objName}`, 'utf8');
+                }
                 
                 this._readCache.set(cacheKey, { data, time: Date.now() });
                 this._contentCache.set(uri.toString(), data);
@@ -213,35 +219,52 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         return this._writeFile(uri, content, options);
     }
 
-    async _writeFile(uri: vscode.Uri, content: Uint8Array, _options: { create: boolean; overwrite: boolean }): Promise<void> {
+    async _writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean }): Promise<void> {
+        console.log(`[Nexus IDE] 🔥 _writeFile START: ${uri.path}`);
         const path = decodeURIComponent(uri.path.substring(1));
         const parts = path.split('/');
         const objName = parts[parts.length - 1].replace('.gx', '');
         const partName = this.getPart(uri);
         const source = Buffer.from(content).toString('utf8');
 
+        console.log(`[Nexus IDE] 💾 Saving: ${objName} (Part: ${partName}) - Length: ${source.length}`);
+
+        // Update caches and metadata immediately
         this._contentCache.set(uri.toString(), content);
         this._mtimes.set(uri.toString(), Date.now());
 
         try {
+            console.log(`[Nexus IDE] 📡 Calling Gateway for Write: ${objName} (Part: ${partName}) - URL: ${this.baseUrl}`);
             const result = await this.callGateway({
                 method: "execute_command",
                 params: { module: 'Write', target: objName, action: partName, payload: source }
             });
-            if (result && (result.error || result.status === 'Error')) throw new Error(result.error || 'SDK Error');
             
-            // On successful save, we keep the content in cache and update mtime
-            this._contentCache.set(uri.toString(), content);
-            this._mtimes.set(uri.toString(), Date.now());
+            console.log(`[Nexus IDE] 📥 Gateway Response for Write:`, result ? JSON.stringify(result).substring(0, 100) : "NULL");
+            
+            // CRITICAL: Better validation of response
+            const isError = !result || (typeof result === 'object' && (result.error || result.status === 'Error'));
+            const isEmpty = !result || (typeof result === 'string' && result.trim() === "");
+
+            if (isError || isEmpty) {
+                const errorDetail = result?.error || result?.output || (isEmpty ? "Empty response from Worker" : "Unknown Worker Error");
+                throw new Error(errorDetail);
+            }
+            
+            console.log(`[Nexus IDE] ✅ Save success signal received for ${objName}`);
+            
+            // Invalidate read caches
+            const cacheKey = this.getCacheKey(uri, partName);
+            this._readCache.delete(cacheKey);
+            
+            // CRITICAL: Notify VS Code that the file has changed on disk
+            this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
             
             vscode.window.setStatusBarMessage(`$(check) Saved ${objName}`, 5000);
         } catch (err) {
+            console.error(`[Nexus IDE] ❌ Save Error: ${err}`);
             vscode.window.showErrorMessage(`Save Error: ${err}`);
             throw err;
-        } finally {
-            // We increase the timeout or remove it to ensure VS Code doesn't re-read stale data from gateway
-            // before the gateway's own cache is fully flushed.
-            setTimeout(() => this._contentCache.delete(uri.toString()), 5000);
         }
     }
 
@@ -255,12 +278,15 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
             const timeout = customTimeout || 60000; // Default to 60s
             const req = http.request(this.baseUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Content-Length': data.length },
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
                 timeout: timeout
             }, (res) => {
                 let body = '';
                 res.on('data', (chunk) => body += chunk);
-                res.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(body); } });
+                res.on('end', () => { 
+                    console.log(`[Nexus IDE] 🌐 HTTP Response: ${res.statusCode} for ${JSON.stringify(command).substring(0, 50)}`);
+                    try { resolve(JSON.parse(body)); } catch { resolve(body); } 
+                });
             });
             req.on('timeout', () => { 
                 req.destroy(); 
