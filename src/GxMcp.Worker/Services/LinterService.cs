@@ -19,63 +19,59 @@ namespace GxMcp.Worker.Services
             _objectService = objectService;
         }
 
-        public string Lint(string target)
+        public string Lint(string target, string specificPart = null)
         {
             try
             {
                 KBObject obj = _objectService.FindObject(target);
                 if (obj == null) return "{\"error\": \"Object not found\"}";
 
-                // Aggregate code from all parts for better analysis
+                var issues = new JArray();
                 var parts = obj.Parts.Cast<KBObjectPart>().ToList();
-                var sourceCode = "";
-                var rulesCode = "";
-                var eventsCode = "";
+
+                Logger.Info($"Linting {obj.Name} ({obj.TypeDescriptor.Name}). SpecificPart: {specificPart}");
 
                 foreach (var part in parts)
                 {
+                    string rawPartName = GetPartName(part);
+                    // NORMALIZAÇÃO: Mapeia o nome interno do SDK para o nome amigável da UI
+                    string uiPartName = rawPartName;
+                    if (rawPartName == "Procedure") uiPartName = "Source";
+                    
+                    Logger.Debug($"Processing part: {rawPartName} (UI Name: {uiPartName})");
+
                     if (part is ISource sourcePart)
                     {
-                        var content = sourcePart.Source ?? "";
-                        if (part is RulesPart) rulesCode = content;
-                        else if (part.TypeDescriptor.Name == "Events") eventsCode = content;
-                        else sourceCode += content + "\n";
+                        string content = sourcePart.Source ?? "";
+                        if (string.IsNullOrEmpty(content)) continue;
+
+                        string cleanContent = StripComments(content);
+
+                        if (part is RulesPart)
+                        {
+                            CheckRulesPart(cleanContent, content, issues, "Rules");
+                            if (obj is Procedure || obj is WebPanel)
+                                CheckParmRule(cleanContent, obj.Name, issues, "Rules");
+                        }
+                        else if (rawPartName == "Events" || rawPartName == "Procedure" || rawPartName == "Source")
+                        {
+                            // Validação de filtro de part vindo da UI
+                            if (!string.IsNullOrEmpty(specificPart) && !specificPart.Equals(uiPartName, StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            CheckLogicPart(cleanContent, content, issues, uiPartName);
+                            if (rawPartName == "Procedure" || rawPartName == "Source")
+                                CheckSubroutines(cleanContent, issues, content, uiPartName);
+                        }
+                    }
+                    else if (part is VariablesPart varPart)
+                    {
+                        if (string.IsNullOrEmpty(specificPart) || specificPart == "Variables")
+                            CheckVariableUsageInObject(obj, issues, "Variables");
                     }
                 }
 
-                string fullCode = rulesCode + "\n" + eventsCode + "\n" + sourceCode;
-                string cleanFullCode = StripComments(fullCode);
-                
-                var issues = new JArray();
-
-                // 1. Commit inside Loop (Critical)
-                CheckCommitInsideLoop(cleanFullCode, issues);
-
-                // 2. Unfiltered Loop (Critical)
-                CheckUnfilteredLoop(cleanFullCode, issues);
-
-                // 3. Sleep/Wait (Warning)
-                CheckSleepWait(cleanFullCode, issues);
-
-                // 4. Dynamic Call (Warning)
-                CheckDynamicCall(cleanFullCode, issues);
-
-                // 5. New without When Duplicate (Info)
-                CheckNewWhenDuplicate(cleanFullCode, issues, fullCode);
-
-                // 6. Undeclared Variables (Critical)
-                CheckVariableUsage(cleanFullCode, obj, issues, fullCode);
-
-                // 7. Subroutine Analysis (Unused Subs)
-                CheckSubroutines(cleanFullCode, issues, fullCode);
-
-                // 8. Parm Rule Check (Procedures/WebPanels)
-                if (obj is Procedure || obj is WebPanel)
-                {
-                    CheckParmRule(StripComments(rulesCode), obj.Name, issues);
-                }
-
-                // 9. SDK NATIVE VALIDATION
+                // 9. SDK NATIVE VALIDATION (Always run for the whole object)
                 CheckNativeSDK(obj, issues);
 
                 var result = new JObject();
@@ -83,32 +79,151 @@ namespace GxMcp.Worker.Services
                 result["issueCount"] = issues.Count;
                 result["issues"] = issues;
 
+                Logger.Info($"Linting finished for {obj.Name}. Issues found: {issues.Count}");
+
                 return result.ToString();
             }
             catch (Exception ex)
             {
+                Logger.Error("Linter Error: " + ex.Message);
                 return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
 
-        private void CheckCommitInsideLoop(string code, JArray issues)
+        private string GetPartName(KBObjectPart part)
         {
-            // Improved regex for multi-line support
-            var forEachBlocks = Regex.Matches(code, @"(?is)\bfor\s+each\b.*?\bendfor\b", RegexOptions.Compiled);
+            if (part is RulesPart) return "Rules";
+            if (part is VariablesPart) return "Variables";
+            return part.TypeDescriptor.Name;
+        }
+
+        private void CheckLogicPart(string cleanCode, string originalCode, JArray issues, string partName)
+        {
+            CheckCommitInsideLoop(cleanCode, issues, originalCode, partName);
+            CheckUnfilteredLoop(cleanCode, issues, originalCode, partName);
+            CheckSleepWait(cleanCode, issues, originalCode, partName);
+            CheckDynamicCall(cleanCode, issues, originalCode, partName);
+            CheckNewWhenDuplicate(cleanCode, issues, originalCode, partName);
+        }
+
+        private void CheckRulesPart(string cleanCode, string originalCode, JArray issues, string partName)
+        {
+            // Future specific rules checks
+        }
+
+        private void CheckCommitInsideLoop(string cleanCode, JArray issues, string originalCode, string partName)
+        {
+            var forEachBlocks = Regex.Matches(cleanCode, @"(?is)\bfor\s+each\b\s*.*?\s*\bendfor\b", RegexOptions.Compiled);
             foreach (Match m in forEachBlocks)
             {
                 if (Regex.IsMatch(m.Value, @"(?i)\bcommit\b", RegexOptions.Compiled))
                 {
-                    issues.Add(CreateIssue("GX001", "Commit inside loop", "Critical", "Avoid using Commit inside a For Each loop as it breaks the LUW and cursor.", m.Value));
+                    int line = GetLineNumber(originalCode, m.Index);
+                    issues.Add(CreateIssue("GX001", "Commit inside loop", "Critical", "Avoid using Commit inside a For Each loop as it breaks the LUW and cursor.", "Commit", line, partName));
                 }
             }
         }
 
-        private void CheckParmRule(string code, string objName, JArray issues)
+        private void CheckUnfilteredLoop(string cleanCode, JArray issues, string originalCode, string partName)
         {
-            if (string.IsNullOrWhiteSpace(code) || !Regex.IsMatch(code, @"(?i)\bparm\s*\(", RegexOptions.Compiled))
+            var forEachBlocks = Regex.Matches(cleanCode, @"(?is)\bfor\s+each\b\s*.*?\s*\bendfor\b", RegexOptions.Compiled);
+            foreach (Match m in forEachBlocks)
             {
-                issues.Add(CreateIssue("GX006", "Parm rule missing", "Warning", "Procedure/WebPanel " + objName + " has no parameters defined in Rules.", "parm(...)"));
+                string block = m.Value;
+                if (!Regex.IsMatch(block, @"(?i)\bwhere\b|\bdefined\s+by\b", RegexOptions.Compiled))
+                {
+                    int line = GetLineNumber(originalCode, m.Index);
+                    issues.Add(CreateIssue("GX002", "Unfiltered loop", "Critical", "Full table scan detected. Consider adding a 'where' clause.", "For Each", line, partName));
+                }
+            }
+        }
+
+        private void CheckSleepWait(string cleanCode, JArray issues, string originalCode, string partName)
+        {
+            var matches = Regex.Matches(cleanCode, @"(?i)\b(?:sleep|wait)\s*\(\s*\d+\s*\)", RegexOptions.Compiled);
+            foreach (Match m in matches)
+            {
+                int line = GetLineNumber(originalCode, m.Index);
+                issues.Add(CreateIssue("GX003", "Blocking call", "Warning", "Sleep/Wait calls block server threads. Use with caution in web environments.", m.Value, line, partName));
+            }
+        }
+
+        private void CheckDynamicCall(string cleanCode, JArray issues, string originalCode, string partName)
+        {
+            var matches = Regex.Matches(cleanCode, @"(?i)\b(?:call|udp)\s*\(\s*&\w+\s*.*?\)", RegexOptions.Compiled);
+            foreach (Match m in matches)
+            {
+                int line = GetLineNumber(originalCode, m.Index);
+                issues.Add(CreateIssue("GX004", "Dynamic call", "Warning", "Call via variable breaks the call tree. Use literal names if possible.", m.Value, line, partName));
+            }
+        }
+
+        private void CheckVariableUsageInObject(KBObject obj, JArray issues, string partName)
+        {
+            var varPart = obj.Parts.Get<VariablesPart>();
+            if (varPart == null) return;
+
+            string varContent = VariableInjector.GetVariablesAsText(obj);
+            
+            string allCode = "";
+            foreach (var p in obj.Parts)
+                if (p is ISource s) allCode += (s.Source ?? "") + "\n";
+            
+            string cleanAllCode = StripComments(allCode);
+
+            foreach (var v in varPart.Variables)
+            {
+                if (new[] { "Pgmname", "Pgmdesc", "Mode", "Time", "Today", "UserId", "Output", "Page", "Line", "ReturnCode" }
+                    .Contains(v.Name, StringComparer.OrdinalIgnoreCase)) continue;
+
+                if (!Regex.IsMatch(cleanAllCode, @"&" + Regex.Escape(v.Name) + @"\b", RegexOptions.IgnoreCase))
+                {
+                    int line = 0;
+                    var defMatch = Regex.Match(varContent, @"(?i)\b" + Regex.Escape(v.Name) + @"\b", RegexOptions.Compiled);
+                    if (defMatch.Success) line = GetLineNumber(varContent, defMatch.Index);
+
+                    issues.Add(CreateIssue("GX008", "Unused variable", "Warning", $"Variable '&{v.Name}' is defined but never used.", "&" + v.Name, line, "Variables"));
+                }
+            }
+        }
+
+        private void CheckSubroutines(string cleanCode, JArray issues, string originalCode, string partName)
+        {
+            var subDefinitions = Regex.Matches(cleanCode, @"(?is)\bsub\s+'([^']+)'(.*?)\bendsub\b", RegexOptions.Compiled);
+            var subCalls = Regex.Matches(cleanCode, @"(?i)\bdo\s+'([^']+)'", RegexOptions.Compiled);
+
+            var calledSubs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Match m in subCalls) calledSubs.Add(m.Groups[1].Value);
+
+            foreach (Match m in subDefinitions)
+            {
+                string subName = m.Groups[1].Value;
+                if (!calledSubs.Contains(subName))
+                {
+                    int line = GetLineNumber(originalCode, m.Index);
+                    issues.Add(CreateIssue("GX009", "Unused subroutine", "Warning", $"Subroutine '{subName}' is defined but never called.", "Sub '" + subName + "'", line, partName));
+                }
+            }
+        }
+
+        private void CheckParmRule(string cleanCode, string objName, JArray issues, string partName)
+        {
+            if (string.IsNullOrWhiteSpace(cleanCode) || !Regex.IsMatch(cleanCode, @"(?i)\bparm\s*\(", RegexOptions.Compiled))
+            {
+                issues.Add(CreateIssue("GX006", "Parm rule missing", "Warning", "Procedure/WebPanel " + objName + " has no parameters defined in Rules.", "parm(...)", 1, partName));
+            }
+        }
+
+        private void CheckNewWhenDuplicate(string cleanCode, JArray issues, string originalCode, string partName)
+        {
+            var newBlocks = Regex.Matches(cleanCode, @"(?is)\bnew\b\s*.*?\s*\bendnew\b", RegexOptions.Compiled);
+            foreach (Match m in newBlocks)
+            {
+                if (!Regex.IsMatch(m.Value, @"(?i)\bwhen\s+duplicate\b", RegexOptions.Compiled))
+                {
+                    int line = GetLineNumber(originalCode, m.Index);
+                    issues.Add(CreateIssue("GX005", "New without When Duplicate", "Info", "Consider adding 'when duplicate' to handle unique index collisions gracefully.", "New", line, partName));
+                }
             }
         }
 
@@ -117,146 +232,20 @@ namespace GxMcp.Worker.Services
             var blockComments = @"/\*(.*?)\*/";
             var lineComments = @"//(.*?)(?:\r?\n|$)";
             var strings = @"""((\\[^\n]|[^""\n])*)""|'((\\[^\n]|[^'\n])*)'";
-            
-            return Regex.Replace(code, blockComments + "|" + lineComments + "|" + strings, 
-                me => {
-                    if (me.Value.StartsWith("/*") || me.Value.StartsWith("//"))
-                        return me.Value.StartsWith("//") ? Environment.NewLine : "";
-                    return me.Value; 
-                },
-                RegexOptions.Singleline);
-        }
 
-        private void CheckUnfilteredLoop(string code, JArray issues)
-        {
-            // Improved regex for capturing header accurately even with line breaks
-            var forEachStarts = Regex.Matches(code, @"(?is)\bfor\s+each\b\s*(.*?)(?:\n|where|defined by|order|optimized|using)", RegexOptions.Compiled);
-            foreach (Match m in forEachStarts)
-            {
-                string header = m.Value;
-                if (!Regex.IsMatch(header, @"(?i)\bwhere\b|\bdefined\s+by\b", RegexOptions.Compiled))
-                {
-                    // Check if there are where clauses further down in the block
-                    // We look for 'where' before 'endfor' in the same scope. 
-                    // This is a simplified check.
-                    int startPos = m.Index;
-                    int endPos = code.ToLower().IndexOf("endfor", startPos);
-                    if (endPos > startPos)
-                    {
-                        string block = code.Substring(startPos, endPos - startPos);
-                        if (!Regex.IsMatch(block, @"(?i)\bwhere\b|\bdefined\s+by\b", RegexOptions.Compiled))
-                        {
-                            issues.Add(CreateIssue("GX002", "Unfiltered loop", "Critical", "Full table scan detected. Consider adding a 'where' clause.", m.Value));
-                        }
-                    }
-                }
-            }
-        }
+            // SUBSTITUIÇÃO ELITE: Primeiro identifica strings, comentários de bloco e linha
+            string result = Regex.Replace(code, string.Format("{0}|{1}|{2}", strings, blockComments, lineComments), me => {
+                if (me.Value.StartsWith("\"") || me.Value.StartsWith("'"))
+                    return me.Value; // É uma string, não mexer
+                
+                if (me.Value.StartsWith("/*"))
+                    return new string(' ', me.Length); // Comentário de bloco -> espaços
+                
+                string suffix = me.Value.EndsWith("\n") ? "\n" : "";
+                return new string(' ', me.Length - suffix.Length) + suffix;
+            }, RegexOptions.Singleline);
 
-        private void CheckSleepWait(string code, JArray issues)
-        {
-            var matches = Regex.Matches(code, @"(?i)\b(?:sleep|wait)\s*\(\s*\d+\s*\)", RegexOptions.Compiled);
-            foreach (Match m in matches)
-            {
-                issues.Add(CreateIssue("GX003", "Blocking call", "Warning", "Sleep/Wait calls block server threads. Use with caution in web environments.", m.Value));
-            }
-        }
-
-        private void CheckDynamicCall(string code, JArray issues)
-        {
-            var matches = Regex.Matches(code, @"(?i)\b(?:call|udp)\s*\(\s*&\w+\s*.*?\)", RegexOptions.Compiled);
-            foreach (Match m in matches)
-            {
-                issues.Add(CreateIssue("GX004", "Dynamic call", "Warning", "Call via variable breaks the call tree. Use literal names if possible.", m.Value));
-            }
-        }
-
-        private void CheckNewWhenDuplicate(string code, JArray issues, string originalCode)
-        {
-            var newBlocks = Regex.Matches(code, @"(?is)\bnew\b.*?\bendnew\b", RegexOptions.Compiled);
-            foreach (Match m in newBlocks)
-            {
-                if (!Regex.IsMatch(m.Value, @"(?i)\bwhen\s+duplicate\b", RegexOptions.Compiled))
-                {
-                    int line = GetLineNumber(originalCode, m.Index);
-                    issues.Add(CreateIssue("GX005", "New without When Duplicate", "Info", "Consider adding 'when duplicate' to handle unique index collisions gracefully.", m.Value, line));
-                }
-            }
-        }
-
-        private void CheckVariableUsage(string cleanCode, KBObject obj, JArray issues, string originalCode)
-        {
-            var varPart = obj.Parts.Get<VariablesPart>();
-            if (varPart == null) return;
-
-            var declaredVars = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-            foreach (var v in varPart.Variables)
-            {
-                if (!declaredVars.ContainsKey(v.Name))
-                    declaredVars.Add(v.Name, false);
-            }
-
-            // Standard GeneXus predefined variables
-            var standardVars = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-                "Pgmname", "Pgmdesc", "Mode", "Time", "Today", "UserId", "Output", "Page", "Line", "ReturnCode"
-            };
-
-            // Match all &identifiers
-            var matches = Regex.Matches(cleanCode, @"&([a-zA-Z0-9_]+)", RegexOptions.Compiled);
-            foreach (Match m in matches)
-            {
-                string varName = m.Groups[1].Value;
-                if (declaredVars.ContainsKey(varName))
-                {
-                    declaredVars[varName] = true;
-                }
-                else if (!standardVars.Contains(varName))
-                {
-                    int line = GetLineNumber(originalCode, m.Index);
-                    issues.Add(CreateIssue("GX007", "Undeclared variable", "Error", $"Variable '&{varName}' is used but not defined in the object.", m.Value, line));
-                }
-            }
-
-            // Flag Unused Variables
-            string varContent = VariableInjector.GetVariablesAsText(obj);
-            foreach (var kvp in declaredVars)
-            {
-                if (!kvp.Value && !standardVars.Contains(kvp.Key))
-                {
-                    // Find the definition line for the unused variable in the Variables view
-                    int line = 0;
-                    var defMatch = Regex.Match(varContent, @"(?i)\b" + Regex.Escape(kvp.Key) + @"\b", RegexOptions.Compiled);
-                    if (defMatch.Success) line = GetLineNumber(varContent, defMatch.Index);
-                    
-                    issues.Add(CreateIssue("GX008", "Unused variable", "Warning", $"Variable '&{kvp.Key}' is defined but never used in the code.", "&" + kvp.Key, line));
-                }
-            }
-        }
-
-        private void CheckSubroutines(string code, JArray issues, string originalCode)
-        {
-            var subDefinitions = Regex.Matches(code, @"(?is)\bsub\s+'([^']+)'(.*?)\bendsub\b", RegexOptions.Compiled);
-            var subCalls = Regex.Matches(code, @"(?i)\bdo\s+'([^']+)'", RegexOptions.Compiled);
-
-            var definedSubs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (Match m in subDefinitions)
-            {
-                definedSubs.Add(m.Groups[1].Value);
-            }
-
-            var calledSubs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (Match m in subCalls)
-            {
-                calledSubs.Add(m.Groups[1].Value);
-            }
-
-            foreach (var subName in definedSubs)
-            {
-                if (!calledSubs.Contains(subName))
-                {
-                    issues.Add(CreateIssue("GX009", "Unused subroutine", "Warning", $"Subroutine '{subName}' is defined but never called.", "Sub '" + subName + "'"));
-                }
-            }
+            return result;
         }
 
         private int GetLineNumber(string text, int index)
@@ -271,10 +260,43 @@ namespace GxMcp.Worker.Services
 
         private void CheckNativeSDK(KBObject obj, JArray issues)
         {
-            // Placeholder for deeper SDK integration
+            try
+            {
+                var output = new global::Artech.Common.Diagnostics.OutputMessages();
+                obj.Validate(output);
+
+                foreach (var msg in output.OnlyMessages)
+                {
+                    if (msg is global::Artech.Common.Diagnostics.OutputError error)
+                    {
+                        int line = 1;
+                        int column = 1;
+                        // Determina a part lógica baseada no tipo de objeto
+                        string part = (obj is Procedure) ? "Source" : ((obj is WebPanel) ? "Events" : "Logic");
+
+                        if (error.Position is global::Artech.Common.Location.TextPosition textPos)
+                        {
+                            line = textPos.Line;
+                            column = textPos.Char;
+                        }
+
+                        string severity = "Information";
+                        if (error.Level == global::Artech.Common.Diagnostics.MessageLevel.Error) severity = "Error";
+                        else if (error.Level == global::Artech.Common.Diagnostics.MessageLevel.Warning) severity = "Warning";
+
+                        var issue = CreateIssue(error.ErrorCode, "SDK Validation", severity, error.Text, "", line, part);
+                        issue["column"] = column;
+                        issues.Add(issue);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Native SDK Validation failed: " + ex.Message);
+            }
         }
 
-        private JObject CreateIssue(string id, string title, string severity, string description, string snippet, int line = 0)
+        private JObject CreateIssue(string id, string title, string severity, string description, string snippet, int line, string part)
         {
             var issue = new JObject();
             issue["code"] = id;
@@ -283,11 +305,7 @@ namespace GxMcp.Worker.Services
             issue["description"] = description;
             issue["line"] = line;
             issue["snippet"] = snippet.Length > 200 ? snippet.Substring(0, 197).Trim() + "..." : snippet.Trim();
-            
-            // Tag issues by Part
-            if (id == "GX008") issue["part"] = "Variables";
-            else issue["part"] = "Logic";
-
+            issue["part"] = part;
             return issue;
         }
     }

@@ -16,25 +16,56 @@ export class GxDiagnosticProvider {
 
         try {
             const objName = this.getObjName(document);
+            const currentPart = this.getPartName(document.uri);
+
             const result = await this.callGateway({
                 method: 'execute_command',
-                params: { module: 'Linter', target: objName }
+                params: { 
+                    module: 'Linter', 
+                    target: objName,
+                    part: currentPart 
+                }
             });
 
             if (result && result.issues) {
                 const diagnostics: vscode.Diagnostic[] = [];
-                const currentPart = this.getPartName(document.uri);
 
                 for (const issue of result.issues) {
-                    // Logic filtering: Only show relevant diagnostics for the current part
+                    // FILTRO ELITE: 
+                    // Se estivermos na aba Variables, só mostra erros de Variables.
+                    // Se estivermos em abas de Código (Source/Events/Rules), mostra erros específicos da part OU erros genéricos de 'Logic'.
                     if (currentPart === 'Variables') {
                         if (issue.part !== 'Variables') continue;
-                    } else if (['Source', 'Rules', 'Events'].includes(currentPart)) {
-                        if (issue.part !== 'Logic') continue;
+                    } else {
+                        if (issue.part === 'Variables') continue;
+                        if (issue.part !== currentPart && issue.part !== 'Logic') {
+                            // Fallback: se a part do erro for 'Source' e o editor for 'Procedure' (ou vice-versa), permite.
+                            if (!(currentPart === 'Source' && issue.part === 'Procedure') && 
+                                !(currentPart === 'Procedure' && issue.part === 'Source')) {
+                                continue;
+                            }
+                        }
                     }
 
                     const line = Math.max(0, (issue.line || 1) - 1);
-                    const range = new vscode.Range(line, 0, line, 100); // Default to whole line if range unknown
+                    const col = Math.max(0, (issue.column || 1) - 1);
+                    
+                    // PRECISE RANGE (Word Picker): 
+                    // If we have a snippet, use its length.
+                    // Otherwise, try to find the word at the position in the document.
+                    let range: vscode.Range;
+                    if (issue.snippet && issue.snippet.length > 0) {
+                        range = new vscode.Range(line, col, line, col + issue.snippet.length);
+                    } else {
+                        // Word Picker Fallback
+                        const docLine = document.lineAt(line).text;
+                        const wordRange = document.getWordRangeAtPosition(new vscode.Position(line, col));
+                        if (wordRange) {
+                            range = wordRange;
+                        } else {
+                            range = new vscode.Range(line, col, line, col + 1);
+                        }
+                    }
                     
                     let severity = vscode.DiagnosticSeverity.Information;
                     if (issue.severity === 'Critical' || issue.severity === 'Error') severity = vscode.DiagnosticSeverity.Error;
@@ -42,7 +73,7 @@ export class GxDiagnosticProvider {
 
                     const diagnostic = new vscode.Diagnostic(range, issue.description, severity);
                     diagnostic.code = issue.code;
-                    diagnostic.source = 'GeneXus LSP';
+                    diagnostic.source = 'GeneXus LSP (Elite)';
                     diagnostics.push(diagnostic);
                 }
                 this.diagnosticCollection.set(document.uri, diagnostics);

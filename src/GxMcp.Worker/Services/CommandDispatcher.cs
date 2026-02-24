@@ -141,7 +141,9 @@ namespace GxMcp.Worker.Services
                         case "Wiki": return _wikiService.Generate(target);
                         case "History": return _historyService.Execute(target, action);
                         case "Visualizer": return _visualizerService.GenerateGraph(target);
-                        case "Linter": return _linterService.Lint(target);
+                        case "Linter":
+                            string linterPart = @params["part"] != null ? @params["part"].ToString() : null;
+                            return _linterService.Lint(target, linterPart);
                         case "Health": return _healthService.GetHealthReport();
                         case "Pattern": return _patternService.GetSample(target);
                         case "Patch": return _patchService.ApplyPatch(
