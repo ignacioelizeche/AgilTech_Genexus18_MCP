@@ -132,6 +132,38 @@ namespace GxMcp.Worker.Services
             return firstMatch;
         }
 
+        public string ExtractAllParts(string target, string client = "ide")
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var obj = FindObject(target);
+                if (obj == null) return "{\"error\": \"Object not found: " + target + "\"}";
+
+                var result = new JObject { ["name"] = obj.Name, ["parts"] = new JObject() };
+                string[] partsToFetch = { "Source", "Rules", "Events", "Variables" };
+
+                foreach (var pName in partsToFetch)
+                {
+                    string partJson = ReadObjectSourceInternal(obj, pName, null, null, client);
+                    try {
+                        var pObj = JObject.Parse(partJson);
+                        if (pObj["source"] != null)
+                        {
+                            ((JObject)result["parts"])[pName] = pObj["source"];
+                        }
+                    } catch { }
+                }
+
+                Logger.Info(string.Format("ExtractAllParts for {0} complete in {1}ms", obj.Name, sw.ElapsedMilliseconds));
+                return result.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
         public string ReadObject(string target)
         {
             var obj = FindObject(target);
@@ -161,18 +193,25 @@ namespace GxMcp.Worker.Services
             }.ToString();
         }
 
-        public string ReadObjectSource(string target, string partName, int? offset = null, int? limit = null)
+        public string ReadObjectSource(string target, string partName, int? offset = null, int? limit = null, string client = "ide")
         {
+            var obj = FindObject(target);
+            if (obj == null) return "{\"error\": \"Object not found: " + target + "\"}";
+            return ReadObjectSourceInternal(obj, partName, offset, limit, client);
+        }
+
+        private string ReadObjectSourceInternal(KBObject obj, string partName, int? offset = null, int? limit = null, string client = "ide")
+        {
+            Logger.Info($"ReadObjectSourceInternal: {obj.Name} (Part: {partName}, Client: {client})");
             var sw = Stopwatch.StartNew();
             try
             {
-                var obj = FindObject(target);
-                if (obj == null) return "{\"error\": \"Object not found: " + target + "\"}";
+                string targetName = obj.Name;
 
                 // Special handling for Layout
                 if (partName.Equals("layout", StringComparison.OrdinalIgnoreCase))
                 {
-                    var uiContextJson = _uiService.GetUIContext(target);
+                    var uiContextJson = _uiService.GetUIContext(obj.Name);
                     var uiObj = JObject.Parse(uiContextJson);
                     if (uiObj["html"] != null)
                     {
@@ -225,9 +264,8 @@ namespace GxMcp.Worker.Services
                         (obj is global::Artech.Genexus.Common.Objects.Transaction || obj is global::Artech.Genexus.Common.Objects.Table || obj.TypeDescriptor.Name.Equals("SDT", StringComparison.OrdinalIgnoreCase)))
                 {
                     string structureText = StructureParser.SerializeToText(obj);
-                    result["source"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(structureText));
-                    result["isBase64"] = true;
-                    Logger.Info("ReadSource (Structure DSL as Base64) SUCCESS");
+                    ProcessTextResponse(structureText, result, client);
+                    Logger.Info("ReadSource (Structure DSL) SUCCESS");
                     return result.ToString();
                 }
 
@@ -241,14 +279,13 @@ namespace GxMcp.Worker.Services
                 if (part is global::Artech.Genexus.Common.Parts.VariablesPart varPart)
                 {
                     string varText = VariableInjector.GetVariablesAsText(varPart);
-                    result["source"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(varText));
-                    result["isBase64"] = true;
-                    Logger.Info("ReadSource (Variables as Base64) SUCCESS");
+                    ProcessTextResponse(varText, result, client);
+                    Logger.Info("ReadSource (Variables) SUCCESS");
                 }
                 else if (part is ISource sourcePart)
                 {
                     string content = sourcePart.Source ?? "";
-                    ProcessSourceContent(obj, content, offset, limit, result);
+                    ProcessSourceContent(obj, content, offset, limit, result, client);
                     Logger.Info("ReadSource (ISource) SUCCESS");
                 }
                 else
@@ -260,15 +297,14 @@ namespace GxMcp.Worker.Services
                     if (contentProp != null && contentProp.CanRead && contentProp.PropertyType == typeof(string))
                     {
                         string content = (string)contentProp.GetValue(part) ?? "";
-                        ProcessSourceContent(obj, content, offset, limit, result);
+                        ProcessSourceContent(obj, content, offset, limit, result, client);
                         Logger.Info("ReadSource (Reflection) SUCCESS");
                     }
                     else
                     {
                         string xml = part.SerializeToXml();
-                        result["source"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(xml));
-                        result["isBase64"] = true;
-                        Logger.Info("ReadSource (XML Base64) SUCCESS");
+                        ProcessTextResponse(xml, result, client);
+                        Logger.Info("ReadSource (XML) SUCCESS");
                     }
                 }
 
@@ -280,7 +316,7 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private void ProcessSourceContent(KBObject obj, string content, int? offset, int? limit, JObject result)
+        private void ProcessSourceContent(KBObject obj, string content, int? offset, int? limit, JObject result, string client = "ide")
         {
             if (offset.HasValue || limit.HasValue)
             {
@@ -293,8 +329,7 @@ namespace GxMcp.Worker.Services
                 else if (start + count > lines.Length) count = lines.Length - start;
 
                 string paginatedContent = string.Join(Environment.NewLine, lines.Skip(start).Take(count));
-                result["source"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(paginatedContent));
-                result["isBase64"] = true;
+                ProcessTextResponse(paginatedContent, result, client);
                 result["offset"] = start;
                 result["limit"] = count;
                 result["totalLines"] = lines.Length;
@@ -303,9 +338,24 @@ namespace GxMcp.Worker.Services
             }
             else
             {
-                result["source"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
-                result["isBase64"] = true;
+                ProcessTextResponse(content, result, client);
                 AddVariableMetadata(obj, content, result);
+            }
+        }
+
+        private void ProcessTextResponse(string text, JObject result, string client)
+        {
+            if (client == "mcp")
+            {
+                Logger.Debug("ProcessTextResponse: Using Plain Text for MCP");
+                result["source"] = text;
+                result["isBase64"] = false;
+            }
+            else
+            {
+                Logger.Debug($"ProcessTextResponse: Using Base64 for {client}");
+                result["source"] = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text));
+                result["isBase64"] = true;
             }
         }
 

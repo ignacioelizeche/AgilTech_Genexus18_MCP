@@ -89,10 +89,10 @@ namespace GxMcp.Worker
                         while (true) {
                             string line = reader.ReadLine();
                             if (line == null) break;
-                            if (line.Trim().Equals("ping", StringComparison.OrdinalIgnoreCase))
+                            if (line.Trim().Equals("ping", StringComparison.OrdinalIgnoreCase) || line.Contains("\"method\":\"ping\"") || line.Contains("\"action\":\"Ping\""))
                             {
-                                lock (Console.Out) { Console.WriteLine("{\"jsonrpc\":\"2.0\",\"result\":\"pong\",\"id\":\"heartbeat\"}"); Console.Out.Flush(); }
-                                continue;
+                                lock (Console.Out) { Console.WriteLine("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"Ready\"},\"id\":\"heartbeat\"}"); Console.Out.Flush(); }
+                                if (!line.Contains("\"method\"")) continue; // Only skip if it was a literal ping, leave JSON for full dispatch just in case
                             }
                             if (!string.IsNullOrWhiteSpace(line)) CommandQueue.Add(line);
                         }
@@ -114,7 +114,7 @@ namespace GxMcp.Worker
                 sdkWorker.Start();
 
                 // MAIN DISPATCHER LOOP (Ultra-responsive)
-                while (!CommandQueue.IsCompleted)
+                while (!CommandQueue.IsCompleted || CommandQueue.Count > 0)
                 {
                     if (CommandQueue.TryTake(out string line, 50))
                     {
@@ -139,7 +139,15 @@ namespace GxMcp.Worker
                         }
                     }
                 }
+
+                // Wait for Sdk Worker to finish its queue
+                Logger.Info("Input EOF reached. Waiting for SdkWorker to finish...");
                 SdkCommandQueue.CompleteAdding();
+                while (!SdkCommandQueue.IsCompleted || SdkCommandQueue.Count > 0)
+                {
+                    Thread.Sleep(50);
+                }
+                Logger.Info("Worker shutting down safely.");
             } catch (Exception ex) {
                 Logger.Error($"Main FATAL: {ex.Message}");
             }

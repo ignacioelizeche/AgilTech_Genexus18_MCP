@@ -84,12 +84,21 @@ namespace GxMcp.Worker.Services
             {
                 var request = JObject.Parse(line);
                 string method = request["method"] != null ? request["method"].ToString() : null;
+                
+                // Direct pings are definitely thread-safe
+                if (method == "ping") return true;
+
                 var @params = request["params"] as JObject ?? new JObject();
 
                 if (method == "execute_command")
                 {
                     string module = @params["module"] != null ? @params["module"].ToString() : null;
-                    if (module == "Health" || module == "Search" || module == "ListObjects") return true;
+                    string action = @params["action"] != null ? @params["action"].ToString() : null;
+
+                    // Read-only and metadata operations are generally thread-safe as they don't modify the KB design model.
+                    if (module == "Health" || module == "Search" || module == "ListObjects" || module == "Visualizer") return true;
+                    if (module == "Analyze" || module == "UI" || module == "Structure" || module == "Formatting") return true;
+                    if (module == "Read" && (action == "ExtractSource" || action == "GetAttribute" || action == "GetVariables" || action == "ExtractAllParts")) return true;
                 }
                 return false;
             }
@@ -119,6 +128,7 @@ namespace GxMcp.Worker.Services
                     string action = @params["action"] != null ? @params["action"].ToString() : null;
                     string target = @params["target"] != null ? @params["target"].ToString() : null;
                     string payload = @params["payload"] != null ? @params["payload"].ToString() : null;
+                    string client = @params["client"] != null ? @params["client"].ToString() : "ide";
 
                     switch (module)
                     {
@@ -140,7 +150,8 @@ namespace GxMcp.Worker.Services
                             int searchLimit = @params["limit"] != null ? (int)@params["limit"] : 200;
                             return _searchService.Search(q, null, null, searchLimit);
                         case "Read":
-                            if (action == "ExtractSource") return _objectService.ReadObjectSource(target, @params["part"] != null ? @params["part"].ToString() : "Source");
+                            if (action == "ExtractSource") return _objectService.ReadObjectSource(target, @params["part"] != null ? @params["part"].ToString() : "Source", @params["offset"]?.ToObject<int?>(), @params["limit"]?.ToObject<int?>(), client);
+                            if (action == "ExtractAllParts") return _objectService.ExtractAllParts(target, client);
                             if (action == "GetAttribute") return _analyzeService.GetAttributeMetadata(target);
                             if (action == "GetVariables") return _analyzeService.GetVariables(target);
                             return _objectService.ReadObject(target);

@@ -139,15 +139,16 @@ namespace GxMcp.Gateway
             // Tool Calls
             if (method == "tools/call")
             {
-                var workerCmd = McpRouter.ConvertToolCall(request);
-                if (workerCmd != null)
-                {
-                    string idStr = Guid.NewGuid().ToString();
-                    var tcs = new TaskCompletionSource<string>();
-                    _pendingRequests[idStr] = tcs;
+                    var workerCmd = McpRouter.ConvertToolCall(request) as JObject;
+                    if (workerCmd != null)
+                    {
+                        workerCmd["client"] = "mcp";
+                        string idStr = Guid.NewGuid().ToString();
+                        var tcs = new TaskCompletionSource<string>();
+                        _pendingRequests[idStr] = tcs;
 
-                    var rpcWrapper = new { jsonrpc = "2.0", id = idStr, method = "execute_command", @params = workerCmd };
-                    await _worker!.SendCommandAsync(JsonConvert.SerializeObject(rpcWrapper));
+                        var rpcWrapper = new { jsonrpc = "2.0", id = idStr, method = "execute_command", @params = workerCmd };
+                        await _worker!.SendCommandAsync(JsonConvert.SerializeObject(rpcWrapper));
 
                     var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(600000));
                     if (completedTask == tcs.Task)
@@ -171,8 +172,10 @@ namespace GxMcp.Gateway
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseUrls($"http://*:{config.Server.HttpPort}");
             builder.Logging.ClearProviders();
+            builder.Services.AddResponseCompression(options => { options.EnableForHttps = true; });
             builder.Services.AddCors(options => options.AddPolicy("AllowAll", b => b.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
             var app = builder.Build();
+            app.UseResponseCompression();
             app.UseCors("AllowAll");
 
             app.MapPost("/api/command", async (HttpRequest request) => {
@@ -181,11 +184,14 @@ namespace GxMcp.Gateway
                     Log($"[HTTP] Received command body: {(body.Length > 100 ? body.Substring(0, 100) + "..." : body)}");
                     
                     var requestObj = JsonConvert.DeserializeObject<JObject>(body);
+                    var workerParams = requestObj?["params"] as JObject ?? requestObj;
+                    if (workerParams != null) workerParams["client"] = "ide";
+
                     string requestId = Guid.NewGuid().ToString();
                     var tcs = new TaskCompletionSource<string>();
                     _pendingRequests[requestId] = tcs;
 
-                    var rpcWrapper = new { jsonrpc = "2.0", id = requestId, method = "execute_command", @params = requestObj?["params"] ?? requestObj };
+                    var rpcWrapper = new { jsonrpc = "2.0", id = requestId, method = "execute_command", @params = workerParams };
                     string rpcStr = JsonConvert.SerializeObject(rpcWrapper);
                     Log($"[HTTP] Sending to worker: {(rpcStr.Length > 100 ? rpcStr.Substring(0, 100) + "..." : rpcStr)}");
                     

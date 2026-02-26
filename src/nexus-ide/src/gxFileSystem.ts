@@ -51,6 +51,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     string,
     { entries: [string, vscode.FileType][]; time: number }
   >();
+  private _partsCache = new Map<string, Map<string, Uint8Array>>(); // uri.toString() -> partName -> content
   private _metadataCache = new Map<string, string>(); // Persistent Shadowing for Trn/SDT structures
   private readonly VALID_TYPES = new Set([
     "Procedure",
@@ -317,13 +318,20 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
   async readFile(uri: vscode.Uri): Promise<Uint8Array> {
     const pathStr = decodeURIComponent(uri.path.substring(1));
     const partName = this.getPart(uri);
+    const uriStr = uri.toString();
     const cacheKey = this.getCacheKey(uri, partName);
 
-    const shadowed = this._metadataCache.get(uri.toString() + ":" + partName);
+    // 1. Check current part in parts cache (Instant swap!)
+    const pCache = this._partsCache.get(uriStr);
+    if (pCache && pCache.has(partName)) {
+      return pCache.get(partName)!;
+    }
+
+    const shadowed = this._metadataCache.get(uriStr + ":" + partName);
     if (shadowed) return Buffer.from(shadowed, "utf8");
 
-    if (this._contentCache.has(uri.toString())) {
-      return this._contentCache.get(uri.toString())!;
+    if (this._contentCache.has(uriStr)) {
+      return this._contentCache.get(uriStr)!;
     }
 
     const cached = this._readCache.get(cacheKey);
@@ -346,6 +354,33 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
           : objName;
 
       try {
+        // PERFORMANCE: Fetch all parts in one go to make switching instant
+        const allPartsResult = await this.callGateway({
+          method: "execute_command",
+          params: {
+            module: "Read",
+            action: "ExtractAllParts",
+            target: target,
+          },
+        });
+
+        if (allPartsResult && allPartsResult.parts) {
+          const newPCache = new Map<string, Uint8Array>();
+          for (const [p, content64] of Object.entries(allPartsResult.parts)) {
+            const data = Buffer.from(content64 as string, "base64");
+            newPCache.set(p, data);
+          }
+          this._partsCache.set(uriStr, newPCache);
+
+          if (newPCache.has(partName)) {
+            const data = newPCache.get(partName)!;
+            this._contentCache.set(uriStr, data);
+            this._shadowService?.syncToDisk(uri, data, partName);
+            return data;
+          }
+        }
+
+        // Fallback to single part read if multi-part failed or returned nothing
         const result = await this.callGateway({
           method: "execute_command",
           params: {
@@ -367,25 +402,6 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
             `// Error from Gateway: ${result.error}\n// Target: ${objName}, Part: ${partName}`,
             "utf8",
           );
-        } else if (
-          (partName === "Variables" || partName === "Indexes") &&
-          result &&
-          (result.variables || result.indexes || result.source)
-        ) {
-          if (partName === "Variables" && result.variables) {
-            data = Buffer.from(
-              result.variables
-                .map((v: any) => `&${v.name} : ${v.type}(${v.length})`)
-                .join("\n"),
-              "utf8",
-            );
-          } else {
-            // For Indexes or fallback, use empty or basic info if not using webview
-            data = Buffer.from(
-              `// Part: ${partName}\n// Switch to Visual tab to view detailed information.`,
-              "utf8",
-            );
-          }
         } else {
           data = Buffer.from(
             `// Part not available: ${partName}\n// Object: ${objName}`,
@@ -394,9 +410,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         }
 
         this._readCache.set(cacheKey, { data, time: Date.now() });
-        this._contentCache.set(uri.toString(), data);
-
-        // Shadow Sync (Background) - Transparent to CLI
+        this._contentCache.set(uriStr, data);
         this._shadowService?.syncToDisk(uri, data, partName);
 
         return data;
@@ -416,6 +430,17 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     options: { create: boolean; overwrite: boolean },
   ): Promise<void> {
     return this._writeFile(uri, content, options);
+  }
+
+  async preWarm(uri: vscode.Uri): Promise<void> {
+    const uriStr = uri.toString();
+    if (this._partsCache.has(uriStr) || this._pendingReadRequests.has(uriStr)) {
+      return;
+    }
+
+    console.log(`[Nexus IDE] Pre-warming: ${uri.path}`);
+    // Trigger readFile but don't await it here. This will populate the caches.
+    this.readFile(uri).catch(() => {});
   }
 
   async _writeFile(
@@ -484,6 +509,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
       const cacheKey = this.getCacheKey(uri, partName);
       this._readCache.delete(cacheKey);
+      this._partsCache.delete(uri.toString()); // Invalidate all parts cache on write
 
       // Shadow Sync (Background) - Keep disk in sync with KB
       this._shadowService?.syncToDisk(uri, content, partName);

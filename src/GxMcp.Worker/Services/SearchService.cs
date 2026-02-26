@@ -93,23 +93,42 @@ namespace GxMcp.Worker.Services
                     .OrderByDescending(r => r.Score)
                     .ThenBy(r => r.Entry.Name)
                     .Take(limit)
-                    .ToList(); // Materialize the top XX BEFORE massive projection mapping
+                    .ToList();
 
-                var json = Newtonsoft.Json.JsonConvert.SerializeObject(new { 
-                    count = scoredResults.Count, 
-                    results = scoredResults.Select(r => new {
-                        name = r.Entry.Name,
-                        type = r.Entry.Type,
-                        description = r.Entry.Description,
-                        parm = r.Entry.ParmRule,
-                        snippet = r.Entry.SourceSnippet,
-                        parent = r.Entry.Parent,
-                        dataType = r.Entry.DataType,
-                        length = r.Entry.Length,
-                        decimals = r.Entry.Decimals,
-                        table = r.Entry.RootTable
-                    })
-                });
+                // OPTIMIZATION: If quick mode is requested (e.g. CTRL+P), return only essential fields
+                bool isQuick = false;
+                if (!string.IsNullOrEmpty(query) && query.Contains("@quick")) isQuick = true;
+                
+                string json;
+                if (isQuick)
+                {
+                    json = Newtonsoft.Json.JsonConvert.SerializeObject(new { 
+                        count = scoredResults.Count, 
+                        results = scoredResults.Select(r => new {
+                            name = r.Entry.Name,
+                            type = r.Entry.Type,
+                            parent = r.Entry.Parent
+                        })
+                    });
+                }
+                else
+                {
+                    json = Newtonsoft.Json.JsonConvert.SerializeObject(new { 
+                        count = scoredResults.Count, 
+                        results = scoredResults.Select(r => new {
+                            name = r.Entry.Name,
+                            type = r.Entry.Type,
+                            description = r.Entry.Description,
+                            parm = r.Entry.ParmRule,
+                            snippet = r.Entry.SourceSnippet,
+                            parent = r.Entry.Parent,
+                            dataType = r.Entry.DataType,
+                            length = r.Entry.Length,
+                            decimals = r.Entry.Decimals,
+                            table = r.Entry.RootTable
+                        })
+                    });
+                }
 
                 _queryCache.TryAdd(cacheKey, json);
                 return json;

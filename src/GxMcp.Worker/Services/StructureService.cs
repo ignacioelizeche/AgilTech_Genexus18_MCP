@@ -311,6 +311,16 @@ namespace GxMcp.Worker.Services
                     try {
                         if (attr.Attribute != null) {
                             if (attr.Attribute.Type != null) typeStr = attr.Attribute.Type.ToString();
+                            
+                            // Include Length and Decimals for relevant types
+                            int len = attr.Attribute.Length;
+                            int dec = attr.Attribute.Decimals;
+                            if (len > 0)
+                            {
+                                if (dec > 0) typeStr += $"({len},{dec})";
+                                else typeStr += $"({len})";
+                            }
+
                             desc = attr.Attribute.Description?.ToString() ?? "";
                             formula = attr.Attribute.Formula?.ToString() ?? "";
                         }
@@ -372,6 +382,15 @@ namespace GxMcp.Worker.Services
                             desc = (attr.Attribute.Description != null) ? attr.Attribute.Description.ToString() : "";
                             formula = (attr.Attribute.Formula != null) ? attr.Attribute.Formula.ToString() : "";
                             
+                            // Include Length and Decimals for relevant types
+                            int len = attr.Attribute.Length;
+                            int dec = attr.Attribute.Decimals;
+                            if (len > 0)
+                            {
+                                if (dec > 0) typeStr += $"({len},{dec})";
+                                else typeStr += $"({len})";
+                            }
+
                             // Use the native IsNullable property discovered via reflection
                             try {
                                 int nVal = (int)attr.IsNullable;

@@ -60,6 +60,16 @@ namespace GxMcp.Worker.Helpers
                     try {
                         if (attr.Attribute != null) {
                             if (attr.Attribute.Type != null) typeStr = attr.Attribute.Type.ToString();
+                            
+                            // Include Length and Decimals
+                            int len = attr.Attribute.Length;
+                            int dec = attr.Attribute.Decimals;
+                            if (len > 0)
+                            {
+                                if (dec > 0) typeStr += $"({len},{dec})";
+                                else typeStr += $"({len})";
+                            }
+
                             desc = attr.Attribute.Description?.ToString() ?? "";
                             formula = attr.Attribute.Formula?.ToString() ?? "";
                             
@@ -126,6 +136,19 @@ namespace GxMcp.Worker.Helpers
                                 }
                             } catch { }
                         }
+
+                        // Include Length and Decimals for relevant types
+                        try {
+                            if (attr.Attribute != null) {
+                                int len = attr.Attribute.Length;
+                                int dec = attr.Attribute.Decimals;
+                                if (len > 0)
+                                {
+                                    if (dec > 0) typeStr += $"({len},{dec})";
+                                    else typeStr += $"({len})";
+                                }
+                            }
+                        } catch { }
 
                         string desc = "";
                         string formula = "";

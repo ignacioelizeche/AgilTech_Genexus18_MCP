@@ -82,13 +82,18 @@ class BackendHealthMonitor {
 
   async check() {
     if (this._isRestarting) return;
+
+    // Check if we are in bulk indexing (using a shared variable)
+    const isIndexing = (this.context as any).isBulkIndexing || false;
+    const timeout = isIndexing ? 15000 : 5000;
+
     try {
       const status = await this.provider.callGateway(
         {
           method: "execute_command",
           params: { module: "Health", action: "Ping" },
         },
-        5000,
+        timeout,
       );
       if (status) {
         this._consecutiveFailures = 0;
@@ -96,13 +101,33 @@ class BackendHealthMonitor {
         throw new Error("No response");
       }
     } catch (e) {
+      if (isIndexing) {
+        console.log("[Nexus IDE] Slow ping during indexing. Ignoring.");
+        return;
+      }
+
       this._consecutiveFailures++;
       console.warn(
         `[Nexus IDE] Gateway heartbeat failed (${this._consecutiveFailures}/3)`,
       );
       if (this._consecutiveFailures >= 3) {
-        this.handleCrash();
+        this.showWarning();
       }
+    }
+  }
+
+  private async showWarning() {
+    const selection = await vscode.window.showWarningMessage(
+      "GeneXus MCP Server parou de responder. O SDK pode estar sobrecarregado ou travado.",
+      "Restart Services",
+      "Wait",
+    );
+
+    if (selection === "Restart Services") {
+      this.handleCrash();
+    } else {
+      // User chose to wait, reset counter but keep monitor running
+      this._consecutiveFailures = 0;
     }
   }
 
@@ -209,6 +234,8 @@ export async function activate(context: vscode.ExtensionContext) {
   provider.setShadowService(shadowService);
 
   let isBulkIndexing = false;
+  let activeGxpItem: { uri: vscode.Uri; part: string } | null = null;
+  let statusBarItem: vscode.StatusBarItem;
 
   // CRITICAL: Ensure shadow directory exists for Gemini CLI indexing
   const shadowRoot = shadowService.shadowRoot;
@@ -245,6 +272,9 @@ export async function activate(context: vscode.ExtensionContext) {
     const healthMonitor = new BackendHealthMonitor(provider, context);
     healthMonitor.start();
     context.subscriptions.push({ dispose: () => healthMonitor.stop() });
+
+    // Share indexing state with monitor
+    (context as any).isBulkIndexing = false;
   });
 
   // Custom Tree Provider for the GeneXus Explorer view (icons + ordering)
@@ -257,6 +287,16 @@ export async function activate(context: vscode.ExtensionContext) {
     showCollapseAll: true,
   });
   context.subscriptions.push(treeView);
+
+  // PERFORMANCE: Pre-warm objects when clicked in the tree explorer
+  treeView.onDidChangeSelection((e) => {
+    if (e.selection.length > 0) {
+      const item = e.selection[0];
+      if (item.resourceUri) {
+        provider.preWarm(item.resourceUri);
+      }
+    }
+  });
 
   // Action Center (Elite Edition)
   const actionsProvider = new GxActionsProvider();
@@ -437,6 +477,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
         try {
           isBulkIndexing = true;
+          (context as any).isBulkIndexing = true;
           // Dispara o BulkIndex (que agora também faz o Shadow Sync via Worker)
           await provider.callGateway({
             method: "execute_command",
@@ -471,6 +512,7 @@ export async function activate(context: vscode.ExtensionContext) {
           console.error("[Nexus IDE] Auto-index failed:", e);
         } finally {
           isBulkIndexing = false;
+          (context as any).isBulkIndexing = false;
         }
       }
     })
@@ -481,12 +523,45 @@ export async function activate(context: vscode.ExtensionContext) {
   const webviewPanels = new Map<string, vscode.WebviewPanel>();
 
   // Webview layout preview
-  const showWebviewLayout = async (targetUri: vscode.Uri) => {
-    const path = decodeURIComponent(targetUri.path.substring(1));
+  statusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100,
+  );
+  context.subscriptions.push(statusBarItem);
+
+  const updateActiveContext = (uri?: vscode.Uri) => {
+    if (uri && uri.scheme === "genexus") {
+      const part = provider.getPart(uri);
+      const path = decodeURIComponent(uri.path.substring(1));
+      const objName = path.split("/").pop()!.replace(".gx", "");
+
+      activeGxpItem = { uri, part };
+      vscode.commands.executeCommand("setContext", "genexus.activePart", part);
+
+      statusBarItem.text = `$(file-code) GX: ${objName} > ${part}`;
+      statusBarItem.show();
+    } else {
+      activeGxpItem = null;
+      vscode.commands.executeCommand("setContext", "genexus.activePart", null);
+      statusBarItem.hide();
+    }
+  };
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      updateActiveContext(editor?.document.uri);
+    }),
+  );
+
+  // Initial update
+  updateActiveContext(vscode.window.activeTextEditor?.document.uri);
+
+  const showWebviewLayout = async (uri: vscode.Uri) => {
+    const path = decodeURIComponent(uri.path.substring(1));
     const parts = path.split("/");
     const typeStr = parts.length > 1 ? parts[0] : null;
     const objName = parts.pop()!.replace(".gx", "");
-    const uriKey = targetUri.toString();
+    const uriKey = uri.toString();
     const target = typeStr ? `${typeStr}:${objName}` : objName;
 
     if (webviewPanels.has(uriKey)) {
@@ -555,25 +630,40 @@ export async function activate(context: vscode.ExtensionContext) {
       <html>
       <head>
         <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 0; margin: 0; background-color: #f0f0f0; font-size: 13px; color: #222; }
-          .toolbar { background: #e0e0e0; padding: 10px 15px; border-bottom: 1px solid #777; display: flex; gap: 10px; align-items: center; }
-          .tree-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #777; }
-          .tree-table th { text-align: left; background: #ccc; padding: 10px; border: 1px solid #999; font-weight: bold; color: #000; position: sticky; top: 0; z-index: 10; }
-          .tree-table td { padding: 8px 10px; border: 1px solid #999; vertical-align: top; color: #000; }
-          .index-name { font-weight: bold; color: #007acc; }
-          .primary-key { color: #8b6b00; font-weight: bold; }
+          :root {
+            --bg: var(--vscode-editor-background);
+            --fg: var(--vscode-editor-foreground);
+            --header-bg: var(--vscode-editorWidget-background);
+            --border: var(--vscode-panel-border);
+            --hover-bg: var(--vscode-list-hoverBackground);
+            --accent: var(--vscode-focusBorder);
+          }
+          body { font-family: var(--vscode-font-family); padding: 0; margin: 0; background-color: var(--bg); font-size: 13px; color: var(--fg); overflow: hidden; }
+          .toolbar { background: var(--header-bg); padding: 10px 15px; border-bottom: 1px solid var(--border); font-weight: 600; }
+          
+          .table-container { overflow: auto; height: calc(100vh - 40px); }
+          .tree-table { width: 100%; border-collapse: collapse; }
+          .tree-table th { 
+            text-align: left; background: var(--header-bg); padding: 10px; 
+            border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+            font-weight: 600; position: sticky; top: 0; z-index: 10;
+          }
+          .tree-table td { padding: 10px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); vertical-align: top; }
+          .tree-table tr:hover { background-color: var(--hover-bg); }
+          
+          .index-name { font-weight: bold; display: flex; align-items: center; gap: 8px; }
+          .primary-key { color: #d1b100; }
           .attr-list { margin: 0; padding: 0; list-style: none; }
-          .attr-item { padding: 2px 0; border-bottom: 1px solid #eee; }
+          .attr-item { padding: 4px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
           .attr-item:last-child { border-bottom: none; }
-          .order-tag { font-size: 10px; background: #eee; padding: 1px 4px; border-radius: 3px; margin-left: 5px; color: #666; }
+          .order-tag { font-size: 10px; opacity: 0.6; background: var(--hover-bg); padding: 1px 4px; border-radius: 2px; }
+          .prop-tag { display: inline-block; font-size: 11px; padding: 2px 6px; border-radius: 10px; background: var(--accent); color: #fff; margin-right: 4px; }
         </style>
       </head>
       <body>
-        <div class="toolbar">
-          <div style="font-weight: bold;">Indexes for ${objName}</div>
-        </div>
-        <div id="content" style="overflow: auto; height: calc(100vh - 40px);">
-          Loading Indexes...
+        <div class="toolbar">Indexes for ${objName}</div>
+        <div class="table-container">
+          <div id="content">Loading Indexes...</div>
         </div>
 
         <script>
@@ -584,9 +674,14 @@ export async function activate(context: vscode.ExtensionContext) {
             if (data.type === 'update') {
               renderIndexes(data.data);
             } else if (data.type === 'error') {
-              document.getElementById('content').innerHTML = \`<h2 style="color:red">Error: \${data.message}</h2>\`;
+              document.getElementById('content').innerHTML = \`<h2 style="color:#f44; padding: 20px;">Error: \${data.message}</h2>\`;
             }
           });
+
+          const icons = {
+            key: \`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 1a3.49 3.49 0 0 0-3.3 2.33l-.1.3L1 11.06V15h3.94l1.37-1.37.13-.53-.53-.13L5 13.06V12h1v-1H5v-1h1V9h1v1h1.06l3.11-3.11.3-.1A3.5 3.5 0 1 0 11.5 1zm0 5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>\`,
+            file: \`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.71 4.29l-3-3L10 1H4l-.5.5v13l.5.5h8l.5-.5V5l-.29-.71zM10 5V2.41L12.59 5H10zM4 14V2h5v4h4v8H4z"/></svg>\`
+          };
 
           function renderIndexes(data) {
             if (!data.indexes || data.indexes.length === 0) {
@@ -595,23 +690,23 @@ export async function activate(context: vscode.ExtensionContext) {
             }
 
             let html = '<table class="tree-table"><thead><tr>';
-            html += '<th>Name</th><th>Attributes</th><th>Properties</th>';
+            html += '<th style="width: 30%">Name</th><th style="width: 40%">Attributes</th><th>Properties</th>';
             html += '</tr></thead><tbody>';
 
             data.indexes.forEach(idx => {
               const rowClass = idx.isPrimary ? 'primary-key' : '';
               html += \`<tr>\`;
-              html += \`<td class="index-name \${rowClass}">\${idx.isPrimary ? '🔑 ' : '📄 '}\${idx.name}</td>\`;
+              html += \`<td class="index-name \${rowClass}">\${idx.isPrimary ? icons.key : icons.file} \${idx.name}</td>\`;
               
               html += '<td><ul class="attr-list">';
               idx.attributes.forEach(attr => {
-                html += \`<li class="attr-item">\${attr.name} <span class="order-tag">\${attr.isAscending ? 'ASC' : 'DESC'}</span></li>\`;
+                html += \`<li class="attr-item"><span>\${attr.name}</span> <span class="order-tag">\${attr.isAscending ? 'ASC' : 'DESC'}</span></li>\`;
               });
               html += '</ul></td>';
 
               html += \`<td>\`;
-              if (idx.isPrimary) html += 'Primary Key<br>';
-              if (idx.isUnique) html += 'Unique<br>';
+              if (idx.isPrimary) html += '<span class="prop-tag">Primary</span>';
+              if (idx.isUnique) html += '<span class="prop-tag" style="background: #2da44e">Unique</span>';
               html += \`</td>\`;
 
               html += '</tr>';
@@ -656,6 +751,8 @@ export async function activate(context: vscode.ExtensionContext) {
     const uriKey = targetUri.toString() + ":VisualStructure";
     const target = typeStr ? `${typeStr}:${objName}` : objName;
 
+    const isReadOnly = typeStr === "Table";
+
     if (webviewPanels.has(uriKey)) {
       webviewPanels.get(uriKey)!.reveal(vscode.ViewColumn.Beside);
       return;
@@ -676,75 +773,128 @@ export async function activate(context: vscode.ExtensionContext) {
       <html>
       <head>
         <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 0; margin: 0; background-color: #f0f0f0; font-size: 13px; color: #222; }
-          .toolbar { background: #e0e0e0; padding: 10px 15px; border-bottom: 1px solid #777; display: flex; gap: 10px; align-items: center; }
-          .toolbar button { 
-            background: #fff; border: 1px solid #666; padding: 6px 12px; cursor: pointer; border-radius: 4px; 
-            display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: #111;
+          :root {
+            --bg: var(--vscode-editor-background);
+            --fg: var(--vscode-editor-foreground);
+            --header-bg: var(--vscode-editorWidget-background);
+            --border: var(--vscode-panel-border);
+            --hover-bg: var(--vscode-list-hoverBackground);
+            --accent: var(--vscode-focusBorder);
+            --input-bg: var(--vscode-input-background);
+            --input-fg: var(--vscode-input-foreground);
+            --tree-indent: 20px;
           }
-          .toolbar button:hover { background: #eee; border-color: #000; }
-          .toolbar button.primary { background: #007acc; color: #fff; border-color: #005a9e; }
-          .toolbar button.primary:hover { background: #0062a3; }
+          body { font-family: var(--vscode-font-family); padding: 0; margin: 0; background-color: var(--bg); font-size: 13px; color: var(--fg); overflow: hidden; }
+          .toolbar { 
+            background: var(--header-bg); padding: 8px 12px; border-bottom: 1px solid var(--border); 
+            display: flex; gap: 8px; align-items: center; 
+          }
+          .toolbar button { 
+            background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);
+            border: none; padding: 4px 10px; cursor: pointer; border-radius: 2px; 
+            display: flex; align-items: center; gap: 6px; font-size: 12px;
+          }
+          .toolbar button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+          .toolbar button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+          .toolbar button.primary:hover { background: var(--vscode-button-hoverBackground); }
           
-          .tree-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #777; }
-          .tree-table th { text-align: left; background: #ccc; padding: 10px; border: 1px solid #999; font-weight: bold; color: #000; position: sticky; top: 0; z-index: 10; }
-          .tree-table td { padding: 6px 10px; border: 1px solid #999; vertical-align: middle; white-space: nowrap; outline: none; color: #000; }
-          .tree-table td:focus { background: #fff !important; box-shadow: inset 0 0 0 2px #007acc; }
-          .tree-table tr:hover { background-color: #eef5ff; }
-          .tree-table tr.selected { background-color: #cce4ff; }
+          .search-container { position: relative; flex: 1; max-width: 300px; }
+          .search-input {
+            width: 100%; background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--border);
+            padding: 4px 8px; border-radius: 2px; outline: none; font-size: 12px;
+          }
+          .search-input:focus { border-color: var(--accent); }
 
-          .indent { display: inline-block; width: 18px; }
-          .icon { margin-right: 6px; font-size: 15px; width: 18px; display: inline-block; text-align: center; }
-          .key-icon { color: #8b6b00; font-weight: bold; cursor: pointer; font-size: 14px; }
-          .level-row { font-weight: bold; background: #e0e6ed; }
-          .level-row td { border-bottom: 2px solid #777; }
-          .nullable-yes { color: #000; font-weight: bold; }
-          .formula-text { color: #005500; font-style: italic; font-weight: bold; }
+          .table-container { overflow: auto; height: calc(100vh - 42px); }
+          .tree-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+          .tree-table th { 
+            text-align: left; background: var(--header-bg); padding: 8px 10px; 
+            border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+            font-weight: 600; color: var(--fg); position: sticky; top: 0; z-index: 20; 
+          }
+          .tree-table td { 
+            padding: 4px 10px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+            vertical-align: middle; white-space: nowrap; outline: none; overflow: hidden; text-overflow: ellipsis;
+          }
+          .tree-table tr:hover { background-color: var(--hover-bg); }
+          .tree-table tr.selected { background-color: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+
+          .indent-guide {
+            position: absolute; left: calc(var(--tree-indent) * var(--level) + 18px);
+            top: 0; bottom: 0; width: 1px; background: var(--border); pointer-events: none;
+          }
           
-          .actions-cell { width: 40px; text-align: center; color: #111; }
-          .btn-del { cursor: pointer; color: #b00; opacity: 0.8; font-size: 18px; border: none; background: transparent; font-weight: bold; }
-          .btn-del:hover { opacity: 1; text-shadow: 0 0 2px rgba(0,0,0,0.2); }
+          .item-name-cell { display: flex; align-items: center; position: relative; }
+          .indent { display: inline-block; width: var(--tree-indent); flex-shrink: 0; }
+          .icon { margin-right: 6px; width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
           
-          #status { margin-left: auto; font-size: 13px; color: #333; font-weight: bold; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-          #status.error { color: #c00; background: #fee; padding: 2px 8px; border: 1px solid #c00; border-radius: 3px; }
-          #status.success { color: #060; }
+          .key-icon { color: #d1b100; cursor: pointer; }
+          .attr-icon { color: #51a1ff; }
+          .level-icon { color: #cccccc; }
           
-          .editable { cursor: text; }
+          .level-row { font-weight: 600; background: var(--vscode-sideBar-background); }
+          .formula-text { color: #4ec9b0; font-style: italic; }
+          
+          .actions-cell { width: 30px; text-align: center; border-right: none !important; }
+          .btn-del { 
+            cursor: pointer; color: var(--fg); opacity: 0.4; font-size: 16px; border: none; 
+            background: transparent; padding: 2px; border-radius: 2px;
+          }
+          .btn-del:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); color: #f44; }
+          
+          #status { margin-left: auto; font-size: 11px; opacity: 0.8; }
+          #status.error { color: #f44; }
+          #status.success { color: #4ec9b0; }
+          
+          .editable { cursor: text; transition: background 0.1s; }
+          .editable:focus { background: var(--input-bg) !important; box-shadow: inset 0 0 0 1px var(--accent); }
+          
           select.nullable-select { 
              width: 100%; border: none; background: transparent; font-family: inherit; font-size: inherit; color: inherit; appearance: none;
-             cursor: pointer; font-weight: inherit;
+             cursor: pointer; outline: none;
           }
-          select.nullable-select:focus { outline: none; background: #fff; }
+          .type-input {
+            width: 100%; border: none; background: transparent; font-family: inherit; font-size: inherit; color: inherit; outline: none;
+          }
+          .readonly-badge { 
+            background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
+            padding: 2px 6px; border-radius: 10px; font-size: 10px; margin-left: 10px;
+          }
         </style>
       </head>
       <body>
         <div class="toolbar">
-          <button onclick="addRow(false)">➕ Add Attribute</button>
-          <button onclick="addRow(true)">📁 Add Level</button>
-          <button class="primary" onclick="requestSave()">💾 Save Changes</button>
+          ${
+            !isReadOnly
+              ? `
+            <button onclick="addRow(false)"><span>➕</span> Attr</button>
+            <button onclick="addRow(true)"><span>📁</span> Level</button>
+          `
+              : `<span class="readonly-badge">READ-ONLY (Edit in Transaction)</span>`
+          }
+          <div class="search-container">
+            <input type="text" class="search-input" placeholder="Filter..." oninput="filterRows(this.value)">
+          </div>
+          ${!isReadOnly ? `<button class="primary" onclick="requestSave()"><span>💾</span> Save</button>` : ""}
           <div id="status">Ready</div>
         </div>
+        
         <datalist id="gx-types">
-          <option value="Numeric"></option>
-          <option value="Character"></option>
-          <option value="VarChar"></option>
-          <option value="LongVarChar"></option>
-          <option value="Date"></option>
-          <option value="DateTime"></option>
-          <option value="Boolean"></option>
-          <option value="GUID"></option>
-          <option value="Image"></option>
-          <option value="Audio"></option>
-          <option value="Video"></option>
-          <option value="Blob"></option>
+          <option value="NUMERIC"></option><option value="CHARACTER"></option><option value="VARCHAR"></option>
+          <option value="LONGVARCHAR"></option><option value="DATE"></option><option value="DATETIME"></option>
+          <option value="BOOLEAN"></option><option value="GUID"></option><option value="IMAGE"></option>
+          <option value="BLOB"></option><option value="VIDEO"></option><option value="AUDIO"></option>
         </datalist>
-        <div id="content" style="overflow: auto; height: calc(100vh - 50px);">
-          Loading Structure...
+
+        <div class="table-container">
+          <div id="content">Loading Structure...</div>
         </div>
 
         <script>
           const vscode = acquireVsCodeApi();
+          const isReadOnly = ${isReadOnly};
           let currentData = null;
+          let filterText = "";
           
           function setStatus(text, type = '') {
             const el = document.getElementById('status');
@@ -756,59 +906,80 @@ export async function activate(context: vscode.ExtensionContext) {
             const data = event.data;
             if (data.type === 'update') {
               currentData = data.structure;
-              renderStructure(currentData);
-              setStatus('Loaded successfully', 'success');
+              renderStructure();
+              setStatus('Loaded', 'success');
             } else if (data.type === 'error') {
-              setStatus(data.message.includes('Error:') ? data.message : 'Error: ' + data.message, 'error');
-              console.error('GX Error:', data.message);
+              setStatus('Error', 'error');
+              console.error('Error:', data.message);
             } else if (data.type === 'success') {
-              setStatus('Saved successfully', 'success');
+              setStatus('Saved', 'success');
             }
           });
 
-          function renderStructure(trn) {
-            let html = '<table class="tree-table" id="struct-table"><thead><tr>';
-            html += '<th style="width: 250px">Name</th><th style="width: 150px">Type</th><th>Description</th><th>Formula</th><th style="width: 100px">Nullable</th><th class="actions-cell"></th>';
+          function filterRows(text) {
+            filterText = text.toLowerCase();
+            renderStructure();
+          }
+
+          const icons = {
+            key: \`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 1a3.49 3.49 0 0 0-3.3 2.33l-.1.3L1 11.06V15h3.94l1.37-1.37.13-.53-.53-.13L5 13.06V12h1v-1H5v-1h1V9h1v1h1.06l3.11-3.11.3-.1A3.5 3.5 0 1 0 11.5 1zm0 5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>\`,
+            attr: \`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2v12h14V2H1zm13 11H2V3h12v10zM4 5h8v1H4V5zm0 3h8v1H4V8zm0 3h5v1H4v-1z"/></svg>\`,
+            level: \`<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M14.5 3H7.71l-2-2H1.5l-.5.5v11l.5.5h13l.5-.5v-9l-.5-.5zM14 12H2V2h3.29l2 2H14v8z"/></svg>\`
+          };
+
+          function renderStructure() {
+            if (!currentData) return;
+            let html = '<table class="tree-table"><thead><tr>';
+            html += '<th style="width: 40%">Name</th><th style="width: 20%">Type</th><th style="width: 20%">Description</th><th style="width: 15%">Formula</th><th style="width: 80px">Null</th><th class="actions-cell"></th>';
             html += '</tr></thead><tbody>';
             
             function renderLevel(items, levelNum, parentId) {
               items.forEach((item, index) => {
                 const id = (parentId ? parentId + '-' : '') + index;
+                if (filterText && !item.name.toLowerCase().includes(filterText)) {
+                   if (item.children) renderLevel(item.children, levelNum + 1, id);
+                   return;
+                }
+
                 const indentSpace = '<span class="indent"></span>'.repeat(levelNum);
                 const rowClass = item.isLevel ? 'level-row' : '';
                 
-                html += \`<tr class="\${rowClass}" data-id="\${id}" data-level="\${levelNum}">\`;
+                html += \`<tr class="\${rowClass}" data-id="\${id}">\`;
                 
                 // Name Column
-                let icon = item.isLevel ? '📁' : '📄';
-                if (item.isKey) icon = '<span class="key-icon" onclick="toggleKey(this)">🔑</span>';
-                else if (!item.isLevel) icon = '<span class="key-icon" style="color:#aaa" onclick="toggleKey(this)">📄</span>';
+                let iconHtml = item.isLevel ? icons.level : (item.isKey ? icons.key : icons.attr);
+                let iconClass = item.isLevel ? 'level-icon' : (item.isKey ? 'key-icon' : 'attr-icon');
 
-                html += \`<td class="editable" contenteditable="true" onblur="updateLocalData('\${id}', 'name', this.innerText)">\${indentSpace}\${icon} \${item.name}</td>\`;
+                const nameEditable = !isReadOnly ? 'contenteditable="true"' : '';
+                html += \`<td class="item-name-cell">\${indentSpace}<span class="icon \${iconClass}" onclick="toggleKey('\${id}')">\${iconHtml}</span><span class="editable" \${nameEditable} onblur="updateLocalData('\${id}', 'name', this.innerText)">\${item.name}</span></td>\`;
                 
-                // Type, Desc, Formula
-                let typeReadonly = item.isLevel ? "readonly" : "";
-                html += \`<td class="\${item.isLevel ? '' : 'editable'}"><input type="text" list="gx-types" class="type-input" value="\${item.type || ''}" onchange="updateLocalData('\${id}', 'type', this.value)" style="width:100%; border:none; background:transparent; font-family:inherit; font-size:inherit; color:inherit; outline:none;" \${typeReadonly}/></td>\`;
-                html += \`<td class="editable" contenteditable="\${!item.isLevel}" onblur="updateLocalData('\${id}', 'description', this.innerText)">\${item.description || ''}</td>\`;
-                html += \`<td class="editable formula-text" contenteditable="\${!item.isLevel}" onblur="updateLocalData('\${id}', 'formula', this.innerText)">\${item.formula || ''}</td>\`;
+                // Type
+                const typeDisabled = isReadOnly || item.isLevel ? "readonly" : "";
+                html += \`<td style="position: relative"><input type="text" list="gx-types" class="type-input" value="\${item.type || ''}" onchange="updateLocalData('\${id}', 'type', this.value)" \${typeDisabled} autocomplete="off"/></td>\`;
                 
-                // Nullable Dropdown
+                // Desc
+                const descEditable = !isReadOnly && !item.isLevel;
+                html += \`<td class="editable" contenteditable="\${descEditable}" onblur="updateLocalData('\${id}', 'description', this.innerText)">\${item.description || ''}</td>\`;
+                
+                // Formula
+                const formulaEditable = !isReadOnly && !item.isLevel;
+                html += \`<td class="editable formula-text" contenteditable="\${formulaEditable}" onblur="updateLocalData('\${id}', 'formula', this.innerText)">\${item.formula || ''}</td>\`;
+                
+                // Nullable
                 if (item.isLevel) {
                   html += '<td></td>';
                 } else {
                   const val = item.nullable || 'No';
                   html += \`<td>
-                    <select class="nullable-select" onchange="updateLocalData('\${id}', 'nullable', this.value)">
+                    <select class="nullable-select" \${isReadOnly ? 'disabled' : ''} onchange="updateLocalData('\${id}', 'nullable', this.value)">
                       <option value="No" \${val === 'No' ? 'selected' : ''}>No</option>
                       <option value="Yes" \${val === 'Yes' ? 'selected' : ''}>Yes</option>
-                      <option value="Managed" \${val === 'Managed' || val === 'Compatible' ? 'selected' : ''}>Managed</option>
+                      <option value="Managed" \${val === 'Managed' || val === 'Compatible' ? 'selected' : ''}>Mng</option>
                     </select>
                   </td>\`;
                 }
                 
-                // Actions
-                html += \`<td class="actions-cell"><button class="btn-del" onclick="deleteRow('\${id}')">×</button></td>\`;
-                
+                html += \`<td class="actions-cell">\${!isReadOnly ? \`<button class="btn-del" onclick="deleteRow('\${id}')">×</button>\` : ''}</td>\`;
                 html += '</tr>';
                 
                 if (item.children && item.children.length > 0) {
@@ -817,7 +988,7 @@ export async function activate(context: vscode.ExtensionContext) {
               });
             }
 
-            renderLevel(trn.children, 0, "");
+            renderLevel(currentData.children, 0, "");
             html += '</tbody></table>';
             document.getElementById('content').innerHTML = html;
           }
@@ -834,57 +1005,47 @@ export async function activate(context: vscode.ExtensionContext) {
           }
 
           function updateLocalData(id, field, value) {
+            if (isReadOnly) return;
             const item = getItemById(id);
-            if (item) {
-                item[field] = value;
-                if (field === 'nullable') {
-                   // Refresh data but no need to full render if we just changed internal state
-                }
-            }
+            if (item) item[field] = value;
           }
 
-          function toggleKey(el) {
-            const row = el.closest('tr');
-            const id = row.getAttribute('data-id');
+          function toggleKey(id) {
+            if (isReadOnly) return;
             const item = getItemById(id);
-            if (item) {
+            if (item && !item.isLevel) {
               item.isKey = !item.isKey;
-              el.innerHTML = item.isKey ? '🔑' : '📄';
-              el.style.color = item.isKey ? '#8b6b00' : '#aaa';
+              renderStructure();
             }
           }
 
           function addRow(isLevel) {
+            if (isReadOnly) return;
             const newItem = {
               name: isLevel ? 'NewLevel' : 'NewAttribute',
-              isLevel: isLevel,
-              isKey: false,
+              isLevel: isLevel, isKey: false,
               type: isLevel ? '' : 'Character(20)',
-              description: '',
-              formula: '',
-              nullable: 'No',
-              children: []
+              description: '', formula: '', nullable: 'No', children: []
             };
             currentData.children.push(newItem);
-            renderStructure(currentData);
+            renderStructure();
           }
 
           function deleteRow(id) {
+            if (isReadOnly) return;
             const parts = id.split('-').map(Number);
             let current = currentData.children;
             for (let i = 0; i < parts.length - 1; i++) {
               current = current[parts[i]].children;
             }
             current.splice(parts[parts.length - 1], 1);
-            renderStructure(currentData);
+            renderStructure();
           }
 
           function requestSave() {
+            if (isReadOnly) return;
             setStatus('Saving...', '');
-            vscode.postMessage({
-              command: 'save',
-              structure: currentData
-            });
+            vscode.postMessage({ command: 'save', structure: currentData });
           }
         </script>
       </body>
@@ -992,41 +1153,54 @@ export async function activate(context: vscode.ExtensionContext) {
     });
 
     vscode.window.setStatusBarMessage(`Switched to ${partName}`, 2000);
+    updateActiveContext(targetUri);
   };
 
   context.subscriptions.push(
     vscode.commands.registerCommand("nexus-ide.switchPart.Source", (u) =>
       switchPart("Source", u),
     ),
-  );
-  context.subscriptions.push(
+    vscode.commands.registerCommand("nexus-ide.switchPart.Source.active", (u) =>
+      switchPart("Source", u),
+    ),
     vscode.commands.registerCommand("nexus-ide.switchPart.Rules", (u) =>
       switchPart("Rules", u),
     ),
-  );
-  context.subscriptions.push(
+    vscode.commands.registerCommand("nexus-ide.switchPart.Rules.active", (u) =>
+      switchPart("Rules", u),
+    ),
     vscode.commands.registerCommand("nexus-ide.switchPart.Events", (u) =>
       switchPart("Events", u),
     ),
-  );
-  context.subscriptions.push(
+    vscode.commands.registerCommand("nexus-ide.switchPart.Events.active", (u) =>
+      switchPart("Events", u),
+    ),
     vscode.commands.registerCommand("nexus-ide.switchPart.Variables", (u) =>
       switchPart("Variables", u),
     ),
-  );
-  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "nexus-ide.switchPart.Variables.active",
+      (u) => switchPart("Variables", u),
+    ),
     vscode.commands.registerCommand("nexus-ide.switchPart.Structure", (u) =>
       switchPart("Structure", u),
     ),
-  );
-  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "nexus-ide.switchPart.Structure.active",
+      (u) => switchPart("Structure", u),
+    ),
     vscode.commands.registerCommand("nexus-ide.switchPart.Layout", (u) =>
       switchPart("Layout", u),
     ),
-  );
-  context.subscriptions.push(
+    vscode.commands.registerCommand("nexus-ide.switchPart.Layout.active", (u) =>
+      switchPart("Layout", u),
+    ),
     vscode.commands.registerCommand("nexus-ide.switchPart.Indexes", (u) =>
       switchPart("Indexes", u),
+    ),
+    vscode.commands.registerCommand(
+      "nexus-ide.switchPart.Indexes.active",
+      (u) => switchPart("Indexes", u),
     ),
   );
 
@@ -1297,19 +1471,29 @@ export async function activate(context: vscode.ExtensionContext) {
         _options: any,
         token: vscode.CancellationToken,
       ): Promise<vscode.Uri[]> => {
+        console.log(
+          `[Nexus IDE] Global search triggered with pattern: "${query.pattern}"`,
+        );
         try {
           const pattern = query.pattern || "";
           if (pattern.length < 2) return [];
 
-          // Directly call the gateway without artificial delay
+          // Directly call the gateway with @quick optimization for CTRL+P
           const result = await provider.callGateway({
             method: "execute_command",
-            params: { module: "Search", target: pattern, limit: 1000 },
+            params: {
+              module: "Search",
+              target: pattern + " @quick",
+              limit: 100,
+            },
           });
 
           if (token.isCancellationRequested) return [];
 
           if (result && result.results) {
+            console.log(
+              `[Nexus IDE] Global search found ${result.results.length} results`,
+            );
             return result.results.map((obj: any) =>
               vscode.Uri.parse(`genexus:/${obj.type}/${obj.name}.gx`),
             );
@@ -1859,47 +2043,6 @@ export async function activate(context: vscode.ExtensionContext) {
       );
     }),
   );
-
-  // --- ACTIVE HEALTH CHECK (HEARTBEAT) ---
-  // Monitora a saúde do Gateway a cada 20 segundos
-  let failedPings = 0;
-  setInterval(async () => {
-    try {
-      // Se estivermos em BulkIndex, aumentamos drasticamente o tempo de tolerância
-      const timeout = isBulkIndexing ? 15000 : 5000;
-      const res = await provider.callGateway({ method: "ping" }, timeout);
-      if (res) {
-        failedPings = 0; // Gateway is healthy
-      }
-    } catch (e) {
-      // Ignora falhas se soubermos que o Worker está ocupado processando a KB
-      if (isBulkIndexing) return;
-
-      failedPings++;
-      if (failedPings >= 3) {
-        // Tolerância de 3 falhas consecutivas
-        vscode.window
-          .showWarningMessage(
-            "GeneXus MCP Server parou de responder. O SDK pode estar sobrecarregado ou travado.",
-            "Restart Services",
-            "Wait",
-          )
-          .then((selection) => {
-            if (selection === "Restart Services") {
-              vscode.window.setStatusBarMessage(
-                "$(sync~spin) Reiniciando GeneXus MCP...",
-                5000,
-              );
-              if (backendProcess && !backendProcess.killed) {
-                backendProcess.kill();
-              }
-              startBackend(context);
-              failedPings = 0;
-            }
-          });
-      }
-    }
-  }, 20000);
 }
 
 export function deactivate() {
