@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using Newtonsoft.Json;
+using System.Threading;
 
 namespace GxMcp.Gateway
 {
@@ -19,42 +20,86 @@ namespace GxMcp.Gateway
         [JsonProperty("Environment")]
         public EnvironmentConfig? Environment { get; set; }
 
+        public static string? CurrentConfigPath { get; private set; }
+        private static FileSystemWatcher? _watcher;
+        public static event Action<Configuration>? OnConfigurationChanged;
+
         public static Configuration Load()
         {
-            // Reliable path discovery: look for config.json starting from .exe up to root
-            string? currentDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-            string? configPath = null;
+            if (CurrentConfigPath == null)
+            {
+                // Reliable path discovery: look for config.json starting from .exe up to root
+                string? currentDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
-            while (currentDir != null)
-            {
-                string check = Path.Combine(currentDir, "config.json");
-                if (File.Exists(check)) { configPath = check; break; }
-                currentDir = Path.GetDirectoryName(currentDir);
+                while (currentDir != null)
+                {
+                    string check = Path.Combine(currentDir, "config.json");
+                    if (File.Exists(check)) { CurrentConfigPath = check; break; }
+                    currentDir = Path.GetDirectoryName(currentDir);
+                }
+
+                if (CurrentConfigPath == null)
+                {
+                    if (File.Exists("config.json")) CurrentConfigPath = Path.GetFullPath("config.json");
+                    else throw new FileNotFoundException("Could not find config.json in any parent directory.");
+                }
             }
 
-            if (configPath == null)
-            {
-                if (File.Exists("config.json")) configPath = Path.GetFullPath("config.json");
-                else throw new FileNotFoundException("Could not find config.json in any parent directory.");
-            }
+            Console.Error.WriteLine($"[Gateway] Loading config from: {CurrentConfigPath}");
+            var config = ParseConfig(CurrentConfigPath);
 
-            Console.Error.WriteLine($"[Gateway] Loading config from: {configPath}");
-            string json = File.ReadAllText(configPath);
-            var config = JsonConvert.DeserializeObject<Configuration>(json);
-            
-            if (config == null) throw new Exception("Failed to parse config.json");
-            
-            // Critical Validation
-            if (string.IsNullOrEmpty(config.Environment?.KBPath))
-            {
-                Console.Error.WriteLine("[Gateway] WARNING: Environment.KBPath is missing in config.json!");
-            }
-            else 
-            {
-                Console.Error.WriteLine($"[Gateway] KB Path configured: {config.Environment.KBPath}");
-            }
+            SetupWatcher(CurrentConfigPath);
 
             return config;
+        }
+
+        private static Configuration ParseConfig(string path)
+        {
+            // Retry logic for file locks
+            for (int i = 0; i < 3; i++)
+            {
+                try
+                {
+                    string json = File.ReadAllText(path);
+                    var config = JsonConvert.DeserializeObject<Configuration>(json);
+                    if (config == null) throw new Exception("Failed to parse config.json");
+                    
+                    if (string.IsNullOrEmpty(config.Environment?.KBPath))
+                        Console.Error.WriteLine("[Gateway] WARNING: Environment.KBPath is missing in config.json!");
+                    else 
+                        Console.Error.WriteLine($"[Gateway] KB Path configured: {config.Environment.KBPath}");
+                        
+                    return config;
+                }
+                catch (IOException)
+                {
+                    Thread.Sleep(100);
+                }
+            }
+            throw new Exception("Could not read config.json after multiple attempts.");
+        }
+
+        private static void SetupWatcher(string path)
+        {
+            if (_watcher != null) return;
+
+            string dir = Path.GetDirectoryName(path)!;
+            string file = Path.GetFileName(path);
+
+            _watcher = new FileSystemWatcher(dir, file);
+            _watcher.NotifyFilter = NotifyFilters.LastWrite;
+            _watcher.Changed += (s, e) => {
+                Console.Error.WriteLine($"[Gateway] Configuration file changed: {e.FullPath}");
+                // Add a small delay to ensure writing process has released the lock
+                Thread.Sleep(200);
+                try {
+                    var newConfig = ParseConfig(path);
+                    OnConfigurationChanged?.Invoke(newConfig);
+                } catch (Exception ex) {
+                    Console.Error.WriteLine($"[Gateway] Failed to reload configuration: {ex.Message}");
+                }
+            };
+            _watcher.EnableRaisingEvents = true;
         }
     }
 

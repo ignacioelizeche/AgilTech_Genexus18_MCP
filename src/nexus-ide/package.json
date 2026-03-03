@@ -2,20 +2,41 @@
   "name": "nexus-ide",
   "displayName": "Nexus IDE (GeneXus)",
   "description": "Lightweight GeneXus IDE for VS Code powered by MCP",
-  "version": "0.0.1",
   "publisher": "lennix1337",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lennix1337/Genexus18MCP.git"
+  },
+  "homepage": "https://github.com/lennix1337/Genexus18MCP",
+  "bugs": {
+    "url": "https://github.com/lennix1337/Genexus18MCP/issues"
+  },
+  "keywords": [
+    "GeneXus",
+    "IDE",
+    "MCP",
+    "Low-code"
+  ],
   "engines": {
-    "vscode": "^1.104.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
+    "Programming Languages",
+    "Linters",
     "Other"
+  ],
+  "files": [
+    "out",
+    "backend",
+    "resources",
+    "syntaxes",
+    "themes",
+    "genexus-icons.json",
+    "language-configuration.json"
   ],
   "activationEvents": [
     "onFileSystem:gxkb18"
-  ],
-  "enabledApiProposals": [
-    "fileSearchProvider",
-    "textSearchProvider"
   ],
   "capabilities": {
     "virtualWorkspaces": true,

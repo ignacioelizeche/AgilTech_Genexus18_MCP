@@ -15,13 +15,24 @@ export class BackendManager {
     const autoStart = config.get("genexus.autoStartBackend");
     if (!autoStart) return;
 
-    const backendDir = path.join(this.context.extensionPath, "backend");
-    const gatewayExe = path.join(backendDir, "GxMcp.Gateway.exe");
+    let backendDir = path.join(this.context.extensionPath, "backend");
+    let gatewayExe = path.join(backendDir, "GxMcp.Gateway.exe");
+
+    // Development Fallback: Check project root publish folder
+    if (!fs.existsSync(gatewayExe)) {
+      const devPath = path.join(this.context.extensionPath, "..", "..", "publish");
+      if (fs.existsSync(path.join(devPath, "GxMcp.Gateway.exe"))) {
+        backendDir = devPath;
+        gatewayExe = path.join(backendDir, "GxMcp.Gateway.exe");
+        console.log(`[BackendManager] Using Development backend at: ${backendDir}`);
+      }
+    }
+
     const configFile = path.join(backendDir, "config.json");
 
     if (!fs.existsSync(gatewayExe)) {
-      console.log(
-        "[BackendManager] Backend executable not found. Skipping auto-start.",
+      vscode.window.showErrorMessage(
+        "GeneXus MCP Gateway not found. Please build the project or check installation.",
       );
       return;
     }
@@ -103,27 +114,13 @@ export class BackendManager {
       console.error("[BackendManager] Error in findFiles:", e);
     }
 
-    // Fallback for current project
-    const defaultKb = "C:\\KBs\\academicoLocal";
-    if (fs.existsSync(defaultKb)) return defaultKb;
-
+    // Use configuration or empty string, no hardcoded defaults
     return "";
   }
 
   private findBestInstallationPath(): string {
     const config = vscode.workspace.getConfiguration();
     const currentPath = config.get<string>("genexus.installationPath", "");
-
-    if (
-      !currentPath ||
-      currentPath === "C:\\Program Files (x86)\\GeneXus\\GeneXus18"
-    ) {
-      const defaultPath = "C:\\Program Files (x86)\\GeneXus\\GeneXus18";
-      if (fs.existsSync(path.join(defaultPath, "GeneXus.exe"))) {
-        return defaultPath;
-      }
-    }
-
     return currentPath;
   }
 

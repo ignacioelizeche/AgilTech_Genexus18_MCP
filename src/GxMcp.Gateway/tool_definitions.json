@@ -1,0 +1,200 @@
+[
+  {
+    "name": "genexus_query",
+    "description": "Semantic search for objects, references, and snippets. Supports prefixes like 'usedby:Name', 'type:Type', and 'description:Text'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "The search query." },
+        "limit": { "type": "integer", "description": "Max results (default 50).", "default": 50 }
+      },
+      "required": ["query"]
+    }
+  },
+  {
+    "name": "genexus_read",
+    "description": "Reads source code from specific object parts (Source, Rules, Events). Supports pagination.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Object name." },
+        "part": { "type": "string", "description": "Part (Source, Rules, Events).", "default": "Source" },
+        "offset": { "type": "integer", "description": "Start line for pagination." },
+        "limit": { "type": "integer", "description": "Lines to read." }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "genexus_edit",
+    "description": "Updates object source code. Use 'mode=full' for complete overwrite or 'mode=patch' for surgical changes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Object name." },
+        "part": { "type": "string", "description": "Part name (e.g. Source, Rules).", "default": "Source" },
+        "mode": { "type": "string", "enum": ["full", "patch"], "description": "Edit mode." },
+        "content": { "type": "string", "description": "New code or patch content." },
+        "context": { "type": "string", "description": "For patch mode: The exact text (old_string) to replace." },
+        "operation": { "type": "string", "enum": ["Replace", "Insert_After", "Append"], "description": "For patch mode: Operation to perform." },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "part": { "type": "string" },
+              "mode": { "type": "string", "enum": ["full", "patch"] },
+              "content": { "type": "string" },
+              "context": { "type": "string" },
+              "operation": { "type": "string", "enum": ["Replace", "Insert_After", "Append"] }
+            },
+            "required": ["content"]
+          },
+          "description": "Batch of changes to apply to this object."
+        }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "genexus_batch_edit",
+    "description": "Applies edits across multiple objects in a single call. Each item specifies a target object and an array of changes (patch or full). More efficient than multiple genexus_edit calls.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "Target object name." },
+              "changes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "part": { "type": "string", "description": "Part name (Source, Rules, Events).", "default": "Source" },
+                    "mode": { "type": "string", "enum": ["full", "patch"], "description": "Edit mode.", "default": "patch" },
+                    "content": { "type": "string", "description": "New code or patch content." },
+                    "context": { "type": "string", "description": "For patch mode: exact text to replace." },
+                    "operation": { "type": "string", "enum": ["Replace", "Insert_After", "Append"], "description": "Patch operation.", "default": "Replace" }
+                  },
+                  "required": ["content"]
+                },
+                "description": "Changes to apply to this object."
+              }
+            },
+            "required": ["name", "changes"]
+          },
+          "description": "Array of objects to edit, each with its own changes."
+        }
+      },
+      "required": ["items"]
+    }
+  },
+  {
+    "name": "genexus_inspect",
+    "description": "Comprehensive object inspection. Returns metadata, variables, structure, and signature in a single call.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Object name." },
+        "include": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["metadata", "variables", "signature", "structure"] },
+          "description": "Specific parts to include (defaults to all)."
+        }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "genexus_analyze",
+    "description": "Deep semantic and structural analysis using various specialized engines.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Object name." },
+        "mode": {
+          "type": "string",
+          "enum": ["linter", "navigation", "hierarchy", "impact", "data_context", "ui_context", "pattern_metadata"],
+          "description": "The type of analysis to perform."
+        }
+      },
+      "required": ["name", "mode"]
+    }
+  },
+  {
+    "name": "genexus_summarize",
+    "description": "Creates a semantically compressed summary of a GeneXus object to save tokens.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Object name." }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "genexus_inject_context",
+    "description": "Automates dependency discovery. Injects SDT structures and Procedure signatures of called objects into context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Object name." },
+        "recursive": { "type": "boolean", "description": "Whether to discover dependencies of dependencies (default: false).", "default": false }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "genexus_lifecycle",
+    "description": "KB state management: build, validate, sync, and indexing.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["build", "rebuild", "validate", "sync", "index", "status"], "description": "Lifecycle action." },
+        "target": { "type": "string", "description": "Object or environment name." },
+        "code": { "type": "string", "description": "For validation: the code to check." }
+      },
+      "required": ["action"]
+    }
+  },
+  {
+    "name": "genexus_forge",
+    "description": "Generation of new code and structures from templates or translations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["scaffold", "translate", "sample"], "description": "Generation action." },
+        "type": { "type": "string", "description": "Object type (e.g. Prc, Trn)." },
+        "name": { "type": "string", "description": "Object name." },
+        "content": { "type": "string", "description": "Initial code or target language." }
+      },
+      "required": ["action"]
+    }
+  },
+  {
+    "name": "genexus_test",
+    "description": "Execution of native GeneXus tests (GXtest).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Test object name." }
+      },
+      "required": ["name"]
+    }
+  },
+  {
+    "name": "genexus_doc",
+    "description": "Knowledge extraction and documentation generation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["wiki", "visualize", "health"], "description": "Documentation action." },
+        "target": { "type": "string", "description": "Object or domain name." }
+      },
+      "required": ["action"]
+    }
+  }
+]

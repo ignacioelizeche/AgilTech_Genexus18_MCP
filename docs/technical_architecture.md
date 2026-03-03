@@ -1,18 +1,34 @@
-# Arquitetura Técnica GeneXus MCP Nirvana (v19.0)
+# Arquitetura Técnica GeneXus 18 MCP (v1.0.0)
 
-Este documento detalha as soluções de engenharia implementadas para estabilizar a ponte de IA em Knowledge Bases de grande escala (30k+ objetos).
+Este documento detalha as soluções de engenharia implementadas para estabilizar a ponte de IA em Knowledge Bases de grande escala.
 
-## 1. Integridade de Dados: O Protocolo Base64
+## 1. Desacoplamento e Configuração Dinâmica
 
 ### Problema
-O GeneXus armazena código em **Windows-1252 (ANSI)**, enquanto o VS Code e ferramentas modernas de IA utilizam **UTF-8**. A transmissão de caracteres acentuados (`á`, `é`, `ç`) através dos pipes de console do Windows e do PowerShell causava corrupção sistemática (diamantes pretos ou caracteres estranhos).
+O uso de caminhos hardcoded (`C:\Program Files...`) e fallbacks estáticos dificultava a portabilidade e causava erros de carregamento de Assembly em ambientes diferentes.
+
+### Solução (v1.0.0)
+- **Zero Hardcoding**: O Worker e scripts de pesquisa resolvem caminhos via `GX_PROGRAM_DIR` e `GX_KB_PATH`.
+- **Hot Reload (Configuration Watcher)**: O Gateway utiliza um `FileSystemWatcher` no `config.json`. Alterações salvas pela Nexus-IDE disparam o reinício automático do Worker, garantindo que o MCP sempre aponte para a KB ativa sem intervenção manual.
+
+## 2. Tool Registry Dinâmico (Single Source of Truth)
+
+### Problema
+As definições de ferramentas MCP estavam duplicadas em strings C# nos Routers do Gateway, dificultando a manutenção e sincronização com a IDE.
 
 ### Solução
-Implementamos uma ponte binária bidirecional:
-- **Escrita (VS Code → KB)**: O código-fonte é convertido em string **Base64** na extensão (TypeScript) antes de ser enviado no JSON de comando. O Worker decodifica o Base64 diretamente para uma string nativa .NET (`UTF-16`), que o SDK da GeneXus mapeia corretamente para a KB.
-- **Leitura (KB → VS Code)**: O Worker recebe a string do SDK, converte-a para **Base64** e envia no JSON de resposta. A extensão decodifica o Base64 de volta para um buffer UTF-8.
+- **`tool_definitions.json`**: Todas as ferramentas, descrições e schemas JSON residem em um único arquivo.
+- **Roteamento Inteligente**: O Gateway carrega o JSON e delega a execução para o Worker. Isso permite adicionar ferramentas novas apenas editando o JSON, sem necessidade de recompilar a lógica de "discovery" do Gateway.
 
-**Resultado**: 100% de imunidade contra configurações de encoding do sistema operacional.
+## 3. Abstração de Objetos
+
+### Problema
+Cada serviço implementava sua própria lógica para encontrar partes de objetos (Source, Rules, etc), gerando centenas de linhas de `if/else` e mapeamentos de GUIDs espalhados.
+
+### Solução
+- **`PartAccessor.cs`**: Uma camada de abstração que entende a topologia de qualquer objeto GeneXus. Se você pede "Source", o `PartAccessor` sabe se deve buscar no `ProcedurePart` ou no `EventsPart` dependendo do tipo do objeto.
+- **Padronização de DTOs (`McpResponse`)**: Todas as respostas do Worker seguem um contrato estrito, facilitando o consumo pela IA.
+
 
 ## 2. Performance: Indexação em Duas Etapas
 
@@ -44,5 +60,5 @@ Para que ferramentas como **Gemini CLI** e **Antigravity** funcionem nativamente
 - Atualizado automaticamente sempre que um objeto é aberto ou indexado no Nexus IDE.
 
 ---
-**Autor**: Gemini CLI (Engineering Task v19.0)  
-**Data**: 23 de Fevereiro de 2026
+**Autor**: Gemini CLI (Engineering Task v19.3)  
+**Data**: 3 de Março de 2026

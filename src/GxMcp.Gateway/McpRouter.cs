@@ -3,14 +3,16 @@ using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
+using System.Reflection;
 using GxMcp.Gateway.Routers;
 
 namespace GxMcp.Gateway
 {
     public class McpRouter
     {
-        private static readonly Dictionary<string, IMcpModuleRouter> _toolMap;
         private static readonly List<IMcpModuleRouter> _routers;
+        private static JArray _toolDefinitions = new JArray();
 
         static McpRouter()
         {
@@ -22,15 +24,29 @@ namespace GxMcp.Gateway
                 new SystemRouter()
             };
 
-            // Mapeia cada ferramenta para seu roteador para busca O(1)
-            _toolMap = new Dictionary<string, IMcpModuleRouter>();
-            foreach (var router in _routers)
+            LoadToolDefinitions();
+        }
+
+        private static void LoadToolDefinitions()
+        {
+            try
             {
-                foreach (dynamic tool in router.GetToolDefinitions())
+                string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "";
+                string defPath = Path.Combine(exeDir, "tool_definitions.json");
+                if (File.Exists(defPath))
                 {
-                    string name = tool.name;
-                    if (!_toolMap.ContainsKey(name)) _toolMap[name] = router;
+                    string json = File.ReadAllText(defPath);
+                    _toolDefinitions = JArray.Parse(json);
+                    Program.Log($"[McpRouter] Loaded {_toolDefinitions.Count} tool definitions from JSON.");
                 }
+                else
+                {
+                    Program.Log($"[McpRouter] ERROR: tool_definitions.json not found at {defPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Program.Log($"[McpRouter] ERROR loading tool definitions: {ex.Message}");
             }
         }
 
@@ -46,10 +62,10 @@ namespace GxMcp.Gateway
                             tools = new { listChanged = true },
                             resources = new { listChanged = true, subscribe = false }
                         },
-                        serverInfo = new { name = "genexus-mcp-server", version = "3.5.0" }
+                        serverInfo = new { name = "genexus-mcp-server", version = "4.0.0" }
                     };
                 case "tools/list":
-                    return new { tools = _routers.SelectMany(r => r.GetToolDefinitions()).ToArray() };
+                    return new { tools = _toolDefinitions };
                 case "resources/list":
                     return new { 
                         resources = new[] {
@@ -98,13 +114,7 @@ namespace GxMcp.Gateway
 
             if (string.IsNullOrEmpty(toolName)) return null;
 
-            // Busca O(1) em vez de loop sequencial
-            if (_toolMap.TryGetValue(toolName, out var router))
-            {
-                return router.ConvertToolCall(toolName, args);
-            }
-
-            // Fallback O(n) in case dynamic reflection failed during initialization
+            // Iterate through routers to let them handle the tool execution mapping
             foreach (var r in _routers)
             {
                 var converted = r.ConvertToolCall(toolName, args);

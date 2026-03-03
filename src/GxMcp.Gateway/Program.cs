@@ -79,24 +79,20 @@ namespace GxMcp.Gateway
             Console.Error.WriteLine("=== Gateway starting (Stdio Mode) ===");
             
             var config = Configuration.Load();
-            _worker = new WorkerProcess(config);
-            _worker.OnRpcResponse += HandleWorkerResponse;
-            _worker.OnWorkerExited += () => {
-                Log("Worker Process Exited. Notifying all pending requests...");
-                foreach (var id in _pendingRequests.Keys)
-                {
-                    if (_pendingRequests.TryRemove(id, out var tcs))
-                    {
-                        var errorJson = JsonConvert.SerializeObject(new { 
-                            jsonrpc = "2.0", 
-                            id = id, 
-                            error = new { code = -32603, message = "GeneXus MCP Worker crashed/exited." } 
-                        });
-                        tcs.TrySetResult(errorJson);
-                    }
+            
+            // Subscribing to Configuration Changes
+            Configuration.OnConfigurationChanged += (newConfig) => {
+                if (newConfig.Environment?.KBPath != config.Environment?.KBPath || 
+                    newConfig.GeneXus?.InstallationPath != config.GeneXus?.InstallationPath) {
+                    Log($"[Gateway] Core configuration changed! Restarting Worker process...");
+                    config = newConfig; // Update reference
+                    RestartWorker(config);
+                } else {
+                    Log($"[Gateway] Minor configuration changed. Ignoring.");
                 }
             };
-            _worker.Start();
+
+            StartWorker(config);
 
             // HTTP Server in background
             if (config.Server?.HttpPort > 0)
@@ -135,6 +131,39 @@ namespace GxMcp.Gateway
                     } catch (Exception ex) { Log("MCP Error: " + ex.Message); }
                 }
             }
+        }
+
+        private static void StartWorker(Configuration config)
+        {
+            _worker = new WorkerProcess(config);
+            _worker.OnRpcResponse += HandleWorkerResponse;
+            _worker.OnWorkerExited += () => {
+                Log("Worker Process Exited. Notifying all pending requests...");
+                foreach (var id in _pendingRequests.Keys)
+                {
+                    if (_pendingRequests.TryRemove(id, out var tcs))
+                    {
+                        var errorJson = JsonConvert.SerializeObject(new { 
+                            jsonrpc = "2.0", 
+                            id = id, 
+                            error = new { code = -32603, message = "GeneXus MCP Worker crashed/exited." } 
+                        });
+                        tcs.TrySetResult(errorJson);
+                    }
+                }
+            };
+            _worker.Start();
+        }
+
+        private static void RestartWorker(Configuration config)
+        {
+            if (_worker != null)
+            {
+                try { _worker.Stop(); } catch { }
+            }
+            // Clear cache on KB change
+            _semanticCache.Clear();
+            StartWorker(config);
         }
 
         private static void HandleWorkerResponse(string json)

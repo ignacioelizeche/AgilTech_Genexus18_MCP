@@ -4,9 +4,17 @@ import os
 import time
 import threading
 
-worker_path = r"C:\Projetos\GenexusMCP\src\GxMcp.Worker\bin\Release\GxMcp.Worker.exe"
-kb_path = r"C:\KBs\academicoLocal"
-gx_dir = r"C:\Program Files (x86)\GeneXus\GeneXus18"
+def load_config():
+    config_path = os.path.join(os.path.dirname(__file__), "..", "src", "nexus-ide", "backend", "config.json")
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            return json.load(f)
+    return {}
+
+config = load_config()
+worker_path = os.environ.get("GX_WORKER_EXE") or config.get("WorkerExecutable") or r"C:\Projetos\GenexusMCP\src\GxMcp.Worker\bin\Release\GxMcp.Worker.exe"
+kb_path = os.environ.get("GX_KB_PATH") or config.get("KBPath")
+gx_dir = os.environ.get("GX_PROGRAM_DIR") or config.get("InstallationPath")
 
 def run_validation():
     env = os.environ.copy()

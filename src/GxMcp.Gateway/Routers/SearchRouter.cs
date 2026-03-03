@@ -7,25 +7,6 @@ namespace GxMcp.Gateway.Routers
     {
         public string ModuleName => "Search";
 
-        public object[] GetToolDefinitions()
-        {
-            return new object[]
-            {
-                new {
-                    name = "genexus_query",
-                    description = "Semantic search for objects, references, and snippets. Supports prefixes like 'usedby:Name', 'type:Type', and 'description:Text'.",
-                    inputSchema = new {
-                        type = "object",
-                        properties = new {
-                            query = new { type = "string", description = "The search query." },
-                            limit = new { type = "integer", description = "Max results (default 50).", @default = 50 }
-                        },
-                        required = new[] { "query" }
-                    }
-                }
-            };
-        }
-
         public object ConvertToolCall(string toolName, JObject args)
         {
             switch (toolName)

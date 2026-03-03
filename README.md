@@ -1,35 +1,33 @@
-# GeneXus 18 MCP Server (Genexus18MCP)
+# GeneXus 18 MCP Server (Genexus18MCP) - v1.0.0
 
-A high-performance **Model Context Protocol (MCP)** server for GeneXus 18, enabling AI agents (like Claude, Cursor, Antigravity) to interact directly with your GeneXus Knowledge Base using the **Native GeneXus SDK**.
+A high-performance **Model Context Protocol (MCP)** server for GeneXus 18, enabling AI agents (like Gemini, Claude, Cursor) to interact directly with your GeneXus Knowledge Base using the **Native GeneXus SDK**.
 
 ---
 
-## [Main] Key Features
+## [Main] Key Features (v1.0.0)
 
 - **Native SDK Integration**: Interacts directly with the GeneXus Object Model (Artech.\* DLLs) for deep analysis and manipulation.
-- **Unified Discovery Engine**:
-  - **Instant Search**: Local index-based search for KBs with 30,000+ objects.
-  - **Direct GUID Access**: Bypasses slow UI lazy-loading, making code reading 100x faster.
-  - **Semantic Ranking**: Results ranked by authority (most called) and relevance.
-- **Bilingual Part Mapping**: Understands part names in both English and Portuguese (Source/Procedimento, Rules/Regras).
+- **Dynamic Infrastructure**:
+  - **Hot Reload (Config Watcher)**: The Gateway monitors `config.json` in real-time. Changing your KB in VS Code automatically restarts the Worker.
+  - **Zero Hardcoding**: 100% path resolution via environment variables or dynamic config.
+  - **Tool Registry Dinâmico**: Tool definitions reside in `tool_definitions.json`. The Gateway and AI share a single source of truth.
+- **Intelligence & Context**:
+  - **Recursive Context Injection**: Injects dependencies of dependencies (Procedures -> SDTs -> Domains) for complete AI reasoning.
+  - **Business Component (BC) Awareness**: Automatically extracts BC structures during analysis.
 - **Dual Process Stability**:
-  - **Gateway (.NET 8)**: Handles MCP protocol and stdio communication.
-  - **Worker (.NET 4.8 x86)**: Runs in **STA Single-Thread Mode** for maximum SDK compatibility.
-  - **Minified JSON Protocol**: Robust single-line communication to prevent pipe deadlocks.
+  - **Gateway (.NET 8)**: Handles protocol, hot-reloading, and stdio communication.
+  - **Worker (.NET 4.8 x86)**: Runs in **STA Single-Thread Mode** for 100% SDK compatibility.
 
 ---
 
 ## [IDE] Nexus-IDE (Mini GeneXus IDE for VS Code)
 
-The project now includes **Nexus-IDE**, a lightweight VS Code extension that transforms VS Code into a mini GeneXus IDE by leveraging the MCP server.
+The project includes **Nexus-IDE**, a lightweight VS Code extension that transforms VS Code into a mini GeneXus IDE by leveraging the MCP server.
 
 - **Virtual File System**: Edit GeneXus objects directly in VS Code using the `genexus://` protocol.
-- **KB Explorer**: Browse your Knowledge Base hierarchy (Folders, Modules, Objects) directly from the Activity Bar.
-- **Multi-Part Editing**: Seamlessly switch between **Source**, **Rules**, **Events**, and **Variables** using dedicated editor actions.
-- **Real-time Indexing**: Powered by the same high-performance engine as the MCP server for instant search and navigation.
-- **Deep Integration**: Built-in support for Symbols, Search (Ctrl+P), and professional GeneXus icons.
-- **Auto-Start & Config Sync**: Automatic backend management and settings synchronization.
-- **AI Agent-Ready**: Built-in command to export MCP configuration for external tools (Copilot/Claude).
+- **KB Explorer**: Browse your Knowledge Base hierarchy directly from the Activity Bar.
+- **Multi-Part Editing**: Seamlessly switch between **Source**, **Rules**, **Events**, and **Variables**.
+- **Real-time Indexing**: Powered by the same high-performance engine as the MCP server.
 
 ---
 
@@ -37,35 +35,19 @@ The project now includes **Nexus-IDE**, a lightweight VS Code extension that tra
 
 ### For Users (Recommended)
 
-If you received a `.vsix` file:
-
-1. Install it in VS Code via **Extensions -> Install from VSIX**.
+1. Install the `.vsix` in VS Code via **Extensions -> Install from VSIX**.
 2. **Open your KB folder** in VS Code (where the `.gxw` file is).
-3. The extension will **auto-discover** your Knowledge Base and GeneXus installation.
-4. The backend starts automatically!
-
-For manual configuration or troubleshooting, see the [Sharing Guide](file:///c:/Projetos/GenexusMCP/docs/SHARING_GUIDE.md).
+3. The extension will **auto-discover** your KB and start the backend!
 
 ### For Developers (Build from Source)
 
-#### Prerequisites
-
-- Windows 10/11.
-- **GeneXus 18** (Tested with Upgrade 7+).
-- **.NET 8 SDK** and **.NET Framework 4.8**.
-
 #### 1. Build the Project
-
-Run the included build script to compile and prepare the binaries:
-
 ```powershell
 .\build.ps1
 ```
 
-#### 2. Local Configuration
-
-Edit `publish\config.json` (for standalone MCP usage):
-
+#### 2. Configuration (`config.json`)
+The system is now configuration-driven. Edit the `config.json` in the backend folder:
 ```json
 {
   "GeneXus": {
@@ -73,21 +55,24 @@ Edit `publish\config.json` (for standalone MCP usage):
     "WorkerExecutable": "worker\\GxMcp.Worker.exe"
   },
   "Environment": {
-    "KBPath": "C:\\KBs\\YourKnowledgeBase"
+    "KBPath": "C:\\KBs\\YourKB"
   }
 }
 ```
 
 ---
 
-## [Tools] Available Tools
+## [Tools] Elite Toolset
 
-Detailed tool definitions are available in `GEMINI.md`.
+Full documentation in `GEMINI.md`.
 
-- **Discovery**: `genexus_list_objects`, `genexus_search`, `genexus_bulk_index`
-- **Reader**: `genexus_read_source`, `genexus_read_object`, `genexus_analyze`
-- **Writer**: `genexus_write_object`, `genexus_create_object`
-- **DevOps**: `genexus_build`, `genexus_history`, `genexus_visualize`
+- **`genexus_query`**: Semantic search for objects and references (supports `usedby:`).
+- **`genexus_read`**: Paginated source code reading (Base64 protected).
+- **`genexus_edit`**: Surgical patching or full overwrite.
+- **`genexus_batch_edit`**: Multi-object atomic edits.
+- **`genexus_inject_context`**: Dynamic dependency injection (supports `recursive: true`).
+- **`genexus_analyze`**: Navigation analysis, Linter, and Data Schema extraction.
+- **`genexus_test`**: Execute GXtest unit tests and get real-time results.
 
 ---
 
@@ -96,8 +81,11 @@ Detailed tool definitions are available in `GEMINI.md`.
 ```mermaid
 graph LR
     A[AI Agent] --MCP Protocol--> B[Gateway .NET 8]
+    B --Config Watcher--> B
     B --Single-Line JSON--> C[Worker .NET 4.8 STA]
-    C --Native SDK--> D[GeneXus 18 KB]
+    C --PartAccessor--> D[GeneXus 18 KB]
 ```
 
-For more technical details on how the SDK integration was stabilized, see [docs/sdk_gx18_discovery.md](docs/sdk_gx18_discovery.md).
+---
+**Current Version**: v1.0.0 (Official Release)  
+**Status**: Stable & Deployment Ready

@@ -5,7 +5,11 @@ using System.Linq;
 
 public class Finder {
     public static void Main() {
-        string gxPath = @"C:\Program Files (x86)\GeneXus\GeneXus18";
+        string gxPath = Environment.GetEnvironmentVariable("GX_PROGRAM_DIR");
+        if (string.IsNullOrEmpty(gxPath)) {
+            Console.WriteLine("ERROR: GX_PROGRAM_DIR env var not set.");
+            return;
+        }
         var dlls = Directory.GetFiles(gxPath, "Artech.*.dll");
         foreach (var dll in dlls) {
             try {

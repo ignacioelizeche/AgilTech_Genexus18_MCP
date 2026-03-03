@@ -45,8 +45,23 @@ namespace GxMcp.Worker
                 Console.WriteLine("WORKER_HANDSHAKE_START");
                 Logger.Info("Worker process started (STA Mode).");
 
-                string gxPath = Environment.GetEnvironmentVariable("GX_PROGRAM_DIR") ?? @"C:\Program Files (x86)\GeneXus\GeneXus18";
-                
+                // ELITE: Configuration Resolve Logic (Env > Local Config > Error)
+                string gxPath = Environment.GetEnvironmentVariable("GX_PROGRAM_DIR");
+                string kbPath = Environment.GetEnvironmentVariable("GX_KB_PATH");
+
+                if (string.IsNullOrEmpty(gxPath) || string.IsNullOrEmpty(kbPath))
+                {
+                    var config = LoadLocalConfig();
+                    if (config != null)
+                    {
+                        if (string.IsNullOrEmpty(gxPath)) gxPath = config["InstallationPath"]?.ToString();
+                        if (string.IsNullOrEmpty(kbPath)) kbPath = config["KBPath"]?.ToString();
+                    }
+                }
+
+                if (string.IsNullOrEmpty(gxPath)) 
+                    throw new Exception("GX_PROGRAM_DIR not specified in environment or local config.json.");
+
                 AppDomain.CurrentDomain.AssemblyResolve += (sender, resolveArgs) => {
                     try {
                         string assemblyName = new AssemblyName(resolveArgs.Name).Name + ".dll";
@@ -58,9 +73,6 @@ namespace GxMcp.Worker
 
                 InitializeSdk(gxPath);
                 _dispatcher = CommandDispatcher.Instance;
-                
-                // Explicitly open KB if path is provided in environment or arguments
-                string kbPath = Environment.GetEnvironmentVariable("GX_KB_PATH");
                 
                 // Check command line arguments for --kb
                 for (int i = 0; i < args.Length; i++)
@@ -260,6 +272,21 @@ namespace GxMcp.Worker
                     Console.Out.Flush(); 
                 }
             } catch (Exception ex) { Logger.Error("SendResponse Error: " + ex.Message); }
+        }
+
+        private static JObject LoadLocalConfig()
+        {
+            try
+            {
+                string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                string configPath = Path.Combine(exeDir, "config.json");
+                if (File.Exists(configPath))
+                {
+                    return JObject.Parse(File.ReadAllText(configPath));
+                }
+            }
+            catch { }
+            return null;
         }
     }
 }

@@ -7,61 +7,6 @@ namespace GxMcp.Gateway.Routers
     {
         public string ModuleName => "System";
 
-        public object[] GetToolDefinitions()
-        {
-            return new object[]
-            {
-                new {
-                    name = "genexus_lifecycle",
-                    description = "KB state management: build, validate, sync, and indexing.",
-                    inputSchema = new {
-                        type = "object",
-                        properties = new {
-                            action = new { type = "string", @enum = new[] { "build", "rebuild", "validate", "sync", "index", "status" }, description = "Lifecycle action." },
-                            target = new { type = "string", description = "Object or environment name." },
-                            code = new { type = "string", description = "For validation: the code to check." }
-                        },
-                        required = new[] { "action" }
-                    }
-                },
-                new {
-                    name = "genexus_forge",
-                    description = "Generation of new code and structures from templates or translations.",
-                    inputSchema = new {
-                        type = "object",
-                        properties = new {
-                            action = new { type = "string", @enum = new[] { "scaffold", "translate", "sample" }, description = "Generation action." },
-                            type = new { type = "string", description = "Object type (e.g. Prc, Trn)." },
-                            name = new { type = "string", description = "Object name." },
-                            content = new { type = "string", description = "Initial code or target language." }
-                        },
-                        required = new[] { "action" }
-                    }
-                },
-                new {
-                    name = "genexus_test",
-                    description = "Execution of native GeneXus tests (GXtest).",
-                    inputSchema = new {
-                        type = "object",
-                        properties = new { name = new { type = "string", description = "Test object name." } },
-                        required = new[] { "name" }
-                    }
-                },
-                new {
-                    name = "genexus_doc",
-                    description = "Knowledge extraction and documentation generation.",
-                    inputSchema = new {
-                        type = "object",
-                        properties = new {
-                            action = new { type = "string", @enum = new[] { "wiki", "visualize", "health" }, description = "Documentation action." },
-                            target = new { type = "string", description = "Object or domain name." }
-                        },
-                        required = new[] { "action" }
-                    }
-                }
-            };
-        }
-
         public object ConvertToolCall(string toolName, JObject args)
         {
             string action = args?["action"]?.ToString();

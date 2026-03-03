@@ -115,35 +115,17 @@ namespace GxMcp.Worker.Services
                 var obj = _objectService.FindObject(target);
                 if (obj == null) {
                     Logger.Error("[DEBUG-SAVE] Object NOT FOUND: " + target);
-                    return "{\"error\": \"Object not found\"}";
+                    return Models.McpResponse.Error("Object not found", target);
                 }
 
                 Logger.Debug(string.Format("[DEBUG-SAVE] Object Found: {0} ({1})", obj.Name, obj.TypeDescriptor.Name));
 
                 // ... (rest of the log)
-                Guid partGuid = MapLogicalPartToGuid(obj.TypeDescriptor.Name, partName);
-                global::Artech.Architecture.Common.Objects.KBObjectPart part = null;
-                
-                // Strategy 1: Map by logical GUID
-                if (partGuid != Guid.Empty) {
-                    part = obj.Parts.Cast<global::Artech.Architecture.Common.Objects.KBObjectPart>().FirstOrDefault(p => p.Type == partGuid);
-                }
-
-                // Strategy 2: Fallback to name-based or interface-based matching
-                if (part == null)
-                {
-                    string pName = partName.ToLower();
-                    foreach (global::Artech.Architecture.Common.Objects.KBObjectPart p in obj.Parts)
-                    {
-                        if (pName == "variables" && p is global::Artech.Genexus.Common.Parts.VariablesPart) { part = p; break; }
-                        if ((pName == "source" || pName == "code" || pName == "events") && p is global::Artech.Architecture.Common.Objects.ISource) { part = p; break; }
-                        if (pName == "structure" && (p.GetType().Name.Contains("Structure") || p.TypeDescriptor.Name.Equals("Structure", StringComparison.OrdinalIgnoreCase))) { part = p; break; }
-                    }
-                }
+                global::Artech.Architecture.Common.Objects.KBObjectPart part = GxMcp.Worker.Structure.PartAccessor.GetPart(obj, partName);
 
                 if (part == null) {
                     Logger.Error("[DEBUG-SAVE] Part NOT FOUND in object: " + partName);
-                    return "{\"error\": \"Part not found in " + obj.TypeDescriptor.Name + "\"}";
+                    return Models.McpResponse.Error($"Part not found in {obj.TypeDescriptor.Name}", target);
                 }
 
                 // 1. SET CONTENT
@@ -159,7 +141,7 @@ namespace GxMcp.Worker.Services
                     if (sourcePart.Source == decodedCode)
                     {
                         Logger.Info("[DEBUG-SAVE] Content is identical. Skipping Save.");
-                        return "{\"status\": \"Success\", \"details\": \"No change\"}";
+                        return Models.McpResponse.Success("Write", target, new JObject { ["details"] = "No change" });
                     }
 
                     sourcePart.Source = decodedCode;
@@ -185,7 +167,7 @@ namespace GxMcp.Worker.Services
                     catch (Exception ex)
                     {
                         Logger.Error("[DEBUG-SAVE] Error parsing Structure DSL: " + ex.Message);
-                        return "{\"error\": \"Invalid Structure Syntax: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                        return Models.McpResponse.Error($"Invalid Structure Syntax: {ex.Message}", target);
                     }
                 }
                 else
@@ -286,7 +268,7 @@ namespace GxMcp.Worker.Services
                     ScheduleFlush();
 
                     Logger.Info("[DEBUG-SAVE] SAVE & COMMIT COMPLETE.");
-                    return "{\"status\": \"Success\"}";
+                    return Models.McpResponse.Success("Write", target);
                 }
                 catch (Exception saveEx)
                 {
@@ -361,52 +343,5 @@ namespace GxMcp.Worker.Services
                 return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
-
-        private Guid MapLogicalPartToGuid(string objType, string logicalPart)
-        {
-            string p = logicalPart.ToLower();
-            
-            // GUIDs Oficiais GeneXus 18
-            if (objType.Equals("Procedure", StringComparison.OrdinalIgnoreCase))
-            {
-                if (p == "source" || p == "code") return Guid.Parse("c5f0ef88-9ef8-4218-bf76-915024b3c48f");
-                if (p == "rules") return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
-                if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
-                if (p == "help") return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
-            }
-            
-            if (objType.Equals("WebPanel", StringComparison.OrdinalIgnoreCase))
-            {
-                if (p == "events" || p == "source" || p == "code") return Guid.Parse("c44bd5ff-f918-415b-98e6-aca44fed84fa");
-                if (p == "rules") return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
-                if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
-                if (p == "layout") return Guid.Parse("ad3ca970-19d0-44e1-a7b7-db05556e820c");
-                if (p == "webform") return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
-            }
-
-            if (objType.Equals("Transaction", StringComparison.OrdinalIgnoreCase))
-            {
-                if (p == "structure") return Guid.Parse("1608677c-a7a2-4a00-8809-6d2466085a5a");
-                if (p == "events" || p == "source" || p == "code") return Guid.Parse("c44bd5ff-f918-415b-98e6-aca44fed84fa");
-                if (p == "rules") return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
-                if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
-                if (p == "webform") return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
-            }
-
-            if (objType.Equals("DataProvider", StringComparison.OrdinalIgnoreCase))
-            {
-                if (p == "source" || p == "code") return Guid.Parse("91705646-6086-4f32-8871-08149817e754");
-                if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
-                if (p == "help") return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
-            }
-
-            if (objType.Equals("SDT", StringComparison.OrdinalIgnoreCase) || objType.Equals("StructuredDataType", StringComparison.OrdinalIgnoreCase))
-            {
-                if (p == "structure" || p == "source") return Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3");
-            }
-
-            return ObjectService.GetPartGuid(p);
-        }
-
     }
 }

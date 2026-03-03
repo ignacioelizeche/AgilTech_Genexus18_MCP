@@ -1,0 +1,1055 @@
+{
+  "ConsultaBoletosPagosBradesco": {
+    "inject_recursive": {
+      "jsonrpc": "2.0",
+      "result": "# Context for Procedure ConsultaBoletosPagosBradesco\r\n\r\n## Signature\r\n```\r\nparm(in:&Request,out: &BoletosPagos);\r\n```\r\n\r\n## Dependencies\r\n### DataProvider: DPParametros\r\n```\r\nParm(in:&Paramcod, in:&Parcharcod, in:&Parnumcod, in:&Parclobcod, in:&Pardatecod);\r\n  in Paramcod : Unknown\r\n  in Parcharcod : Unknown\r\n  in Parnumcod : Unknown\r\n  in Parclobcod : Unknown\r\n  in Pardatecod : Unknown\r\n```\r\n\r\n### Procedure: BuscaAmbiente\r\n```\r\nparm(out:&ParAmbient);\r\n  out ParAmbient : Unknown\r\n```\r\n\r\n### Procedure: ATULOGSDT\r\n```\r\nparm(&UsuCod, &AluLogSDT);\r\n  in UsuCod : Unknown\r\n  in AluLogSDT : Unknown\r\n```\r\n\r\n### SDT: SDTLgtTiTul\r\n```\r\nLgttitano : NUMERIC\r\nLgtTitsem : NUMERIC\r\nLgttitseq : NUMERIC\r\nLgtCodTip : NUMERIC\r\nLgtDathora : DATETIME\r\nLgtQtdCred : NUMERIC\r\nLgtTipoMat : NUMERIC\r\nLgtusuario : CHARACTER\r\nLgtProgra : CHARACTER\r\nLgtaluResC : NUMERIC\r\nLgtalutipD : NUMERIC\r\nLgtDsc : CHARACTER\r\nLgtUsuPesCod : NUMERIC\r\nLgtDscXml : LONGVARCHAR\r\n```\r\n\r\n### Procedure: EncryptDecrypt\r\n```\r\nParm(In: &Tipo, In: &String, Out: &Retorno);\r\n  in Tipo : Unknown\r\n  in String : Unknown\r\n  out Retorno : Unknown\r\n```\r\n\r\n### Procedure: UrlEncodeDecode\r\n```\r\nparm(in:&Tipo, in:&In, out:&Out);\r\n  in Tipo : Unknown\r\n  in In : Unknown\r\n  out Out : Unknown\r\n```\r\n\r\n### Procedure: RetTokenApiCobrancaBdc\r\n```\r\nparm(in: &TitAnoEmi, in: &TitSemEmi, in: &TitSeqEmi, out:&Token);\r\n  in TitAnoEmi : Unknown\r\n  in TitSemEmi : Unknown\r\n  in TitSeqEmi : Unknown\r\n  out Token : Unknown\r\n```\r\n\r\n### SDT: Sdt_TokenOauthBB\r\n```\r\naccess_token : CHARACTER\r\ntoken_type : CHARACTER\r\nexpires_in : NUMERIC\r\nrefresh_token : CHARACTER\r\n```\r\n\r\n### SDT: SdtConsultaBoletosSantander\r\n```\r\npageable\r\n{\r\n    limit : NUMERIC\r\n    offset : NUMERIC\r\n    pageNumber : NUMERIC\r\n    pageElements : NUMERIC Collection\r\n    totalPages : NUMERIC\r\n    totalElements : NUMERIC\r\n}\r\ncontent Collection\r\n{\r\n    nsuCode : CHARACTER\r\n    nsuDate : CHARACTER\r\n    status : CHARACTER\r\n    statusComplement : CHARACTER\r\n    payer\r\n    {\r\n        name : CHARACTER\r\n        documentType : CHARACTER\r\n        documentNumber : CHARACTER\r\n        address : CHARACTER\r\n        neighborhood : CHARACTER\r\n        city : CHARACTER\r\n        state : CHARACTER\r\n        zipCode : CHARACTER\r\n    }\r\n    beneficiary\r\n    {\r\n        name : CHARACTER\r\n        documentType : CHARACTER\r\n        documentNumber : CHARACTER\r\n    }\r\n    bankNumber : CHARACTER\r\n    covenantCode : CHARACTER\r\n    clientNumber : CHARACTER\r\n    issueDate : CHARACTER\r\n    dueDate : CHARACTER\r\n    finePercentage : CHARACTER\r\n    fineQuantityDays : CHARACTER\r\n    nominalValue : CHARACTER\r\n    interestPercentage : CHARACTER\r\n    dedictionValue : CHARACTER\r\n    paymentType : CHARACTER\r\n    protestQuantityDays : CHARACTER\r\n    parcelsQuantity : CHARACTER\r\n    iofPercentage : CHARACTER\r\n    barcode : VARCHAR\r\n    minValueOrPercentage : CHARACTER\r\n    entryDate : CHARACTER\r\n    digitableLine : VARCHAR\r\n    protestType : CHARACTER\r\n    payment\r\n    {\r\n        paidValue : CHARACTER\r\n        interestValue : CHARACTER\r\n        fineValue : CHARACTER\r\n        deductionValue : CHARACTER\r\n        rebateValue : CHARACTER\r\n        iofValue : CHARACTER\r\n        date : CHARACTER\r\n        type : CHARACTER\r\n        bankCode : CHARACTER\r\n        channel : CHARACTER\r\n        kind : VARCHAR\r\n        txId : VARCHAR\r\n    }\r\n    discount\r\n    {\r\n        type : CHARACTER\r\n        discountOne\r\n        {\r\n            value : CHARACTER\r\n            limitDate : CHARACTER\r\n        }\r\n        discountTwo\r\n        {\r\n            value : CHARACTER\r\n            limitDate : CHARACTER\r\n        }\r\n        discountThree\r\n        {\r\n            value : CHARACTER\r\n            limitDate : CHARACTER\r\n        }\r\n    }\r\n}\r\nerro\r\n{\r\n    Code : NUMERIC\r\n    Message : VARCHAR\r\n}\r\n```\r\n\r\n### SDT: SdtConsultaBoletosPagosBdc\r\n```\r\nstatus : NUMERIC\r\ntransacao : CHARACTER\r\nmensagem : VARCHAR\r\nCausa : VARCHAR\r\nvtotTitulos : NUMERIC\r\nvtotPag : NUMERIC\r\nvtotOscila : NUMERIC\r\nvtotOscilaS : CHARACTER\r\nvtotCheque : NUMERIC\r\nvtotDinheiro : NUMERIC\r\ndifMaior : NUMERIC\r\ndifMenor : NUMERIC\r\nPagina : NUMERIC\r\nindMaisPagina : CHARACTER\r\nqtdeTitulos : NUMERIC\r\nqtdeOcorr : NUMERIC\r\nErro\r\n{\r\n    Code : NUMERIC\r\n    Message : VARCHAR\r\n}\r\ntitulos Collection\r\n{\r\n    bancoRecebedor : NUMERIC\r\n    agenciaRecebedora : NUMERIC\r\n    nossoNumero : NUMERIC\r\n    digitoNossoNumero : CHARACTER\r\n    tipoRegistro : CHARACTER\r\n    seuNumero : VARCHAR\r\n    dataVencimento : NUMERIC\r\n    dataPagamento : NUMERIC\r\n    dataMovimento : NUMERIC\r\n    nomePagador : VARCHAR\r\n    valorTitulo : NUMERIC\r\n    valorPagamento : NUMERIC\r\n    valorOscilacao : NUMERIC\r\n    sinalValorOscilacao : CHARACTER\r\n    numeroSequenciaTitulo : NUMERIC\r\n    numeroSequenciaPagamento : NUMERIC\r\n    codigoFormaCredito : NUMERIC\r\n    descricaoFormaCredito : VARCHAR\r\n    indicadorPagoCartorio : CHARACTER\r\n}\r\n```\r\n\r\n### SDT: RequestConsultaBoletosPagosBdc\r\n```\r\ncpfCnpj\r\n{\r\n    cpfCnpj : NUMERIC\r\n    filial : NUMERIC\r\n    controle : NUMERIC\r\n}\r\nproduto : NUMERIC\r\nnegociacao : NUMERIC\r\ndataMovimentoDe : NUMERIC\r\ndataMovimentoAte : NUMERIC\r\ndataPagamentoDe : NUMERIC\r\ndataPagamentoAte : NUMERIC\r\norigemPagamento : NUMERIC\r\nvalorTituloDe : NUMERIC\r\nvalorTituloAte : NUMERIC\r\npaginaAnterior : NUMERIC\r\n```\r\n\r\n",
+      "id": "1772559979515"
+    },
+    "inspect": {
+      "jsonrpc": "2.0",
+      "result": {
+        "name": "ConsultaBoletosPagosBradesco",
+        "type": "Procedure",
+        "description": "Consulta Boletos Pagos Bradesco",
+        "parmRule": "parm(in:&Request,out: &BoletosPagos);",
+        "parameters": [
+          {
+            "name": "Request",
+            "accessor": "in",
+            "type": "Unknown"
+          },
+          {
+            "name": "BoletosPagos",
+            "accessor": "out",
+            "type": "Unknown"
+          }
+        ],
+        "variables": [
+          {
+            "name": "Parametros",
+            "type": "GX_BUSCOMP",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "DataFim",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "DataInicio",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "HttpClient",
+            "type": "GX_USRDEFTYP",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "Request",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "Response",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "accessToken",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0
+          },
+          {
+            "name": "bankSlips",
+            "type": "VARCHAR",
+            "length": 40,
+            "decimals": 0
+          },
+          {
+            "name": "BaseUrl",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0
+          },
+          {
+            "name": "CaminhoCertificado",
+            "type": "VARCHAR",
+            "length": 100,
+            "decimals": 0
+          },
+          {
+            "name": "ClientId",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 5
+          },
+          {
+            "name": "ClientIdSecret64",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0
+          },
+          {
+            "name": "dataFim1",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "dataInicio1",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "endpoint",
+            "type": "VARCHAR",
+            "length": 40,
+            "decimals": 0
+          },
+          {
+            "name": "endPointCompleto",
+            "type": "VARCHAR",
+            "length": 500,
+            "decimals": 0
+          },
+          {
+            "name": "Host",
+            "type": "VARCHAR",
+            "length": 100,
+            "decimals": 0
+          },
+          {
+            "name": "HttpClient1",
+            "type": "GX_USRDEFTYP",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "LgtCodTip",
+            "type": "NUMERIC",
+            "length": 3,
+            "decimals": 0
+          },
+          {
+            "name": "LgtDsc",
+            "type": "CHARACTER",
+            "length": 200,
+            "decimals": 0
+          },
+          {
+            "name": "LgtDscXml",
+            "type": "LONGVARCHAR",
+            "length": 2097152,
+            "decimals": 0
+          },
+          {
+            "name": "ParAmbiente",
+            "type": "CHARACTER",
+            "length": 50,
+            "decimals": 0
+          },
+          {
+            "name": "Parametros1",
+            "type": "GX_BUSCOMP",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "paymentDateFinal",
+            "type": "CHARACTER",
+            "length": 10,
+            "decimals": 0
+          },
+          {
+            "name": "paymentDateInitial",
+            "type": "CHARACTER",
+            "length": 10,
+            "decimals": 0
+          },
+          {
+            "name": "Response1",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "SDTLgtTiTul",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "SDTLgtTiTulItem",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "senha",
+            "type": "VARCHAR",
+            "length": 100,
+            "decimals": 0
+          },
+          {
+            "name": "senhaCript",
+            "type": "VARCHAR",
+            "length": 200,
+            "decimals": 0
+          },
+          {
+            "name": "token",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0
+          },
+          {
+            "name": "WorkspaceId",
+            "type": "VARCHAR",
+            "length": 99,
+            "decimals": 5
+          },
+          {
+            "name": "ClientSecret",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0
+          },
+          {
+            "name": "TitAnoEmi",
+            "type": "NUMERIC",
+            "length": 2,
+            "decimals": 0
+          },
+          {
+            "name": "TitSemEmi",
+            "type": "NUMERIC",
+            "length": 1,
+            "decimals": 0
+          },
+          {
+            "name": "TitSeqEmi",
+            "type": "NUMERIC",
+            "length": 5,
+            "decimals": 0
+          },
+          {
+            "name": "AceParNro",
+            "type": "NUMERIC",
+            "length": 2,
+            "decimals": 0
+          },
+          {
+            "name": "AceNro",
+            "type": "NUMERIC",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "IndicadorMaisPaginas",
+            "type": "CHARACTER",
+            "length": 1,
+            "decimals": 0
+          },
+          {
+            "name": "BoletosPagos",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "item",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "Today",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "Time",
+            "type": "CHARACTER",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "Pgmname",
+            "type": "CHARACTER",
+            "length": 128,
+            "decimals": 0
+          },
+          {
+            "name": "Pgmdesc",
+            "type": "CHARACTER",
+            "length": 256,
+            "decimals": 0
+          },
+          {
+            "name": "Page",
+            "type": "NUMERIC",
+            "length": 6,
+            "decimals": 0
+          },
+          {
+            "name": "Line",
+            "type": "NUMERIC",
+            "length": 6,
+            "decimals": 0
+          },
+          {
+            "name": "Output",
+            "type": "CHARACTER",
+            "length": 3,
+            "decimals": 0
+          }
+        ],
+        "rules": "parm(in:&Request,out: &BoletosPagos);\n",
+        "conditions": "",
+        "uiStructure": {},
+        "wwpMetadata": {
+          "isWorkWithPlusAware": false
+        },
+        "domains": [],
+        "summary": "Procedure ConsultaBoletosPagosBradesco: Consulta Boletos Pagos Bradesco. Accepts 2 parameters. Uses 48 local variables. Has a user interface. Uses WorkWithPlus patterns."
+      },
+      "id": "1772559985255"
+    },
+    "data_ctx": {
+      "jsonrpc": "2.0",
+      "result": {
+        "objectName": "ConsultaBoletosPagosBradesco",
+        "objectType": "Procedure",
+        "dataSchema": {},
+        "variables": [
+          {
+            "name": "Parametros",
+            "type": "GX_BUSCOMP",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "DataFim",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "DataInicio",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "HttpClient",
+            "type": "GX_USRDEFTYP",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Request",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Response",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "accessToken",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "bankSlips",
+            "type": "VARCHAR",
+            "length": 40,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "BaseUrl",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "CaminhoCertificado",
+            "type": "VARCHAR",
+            "length": 100,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "ClientId",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 5,
+            "isCollection": false
+          },
+          {
+            "name": "ClientIdSecret64",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "dataFim1",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "dataInicio1",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "endpoint",
+            "type": "VARCHAR",
+            "length": 40,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "endPointCompleto",
+            "type": "VARCHAR",
+            "length": 500,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Host",
+            "type": "VARCHAR",
+            "length": 100,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "HttpClient1",
+            "type": "GX_USRDEFTYP",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "LgtCodTip",
+            "type": "NUMERIC",
+            "length": 3,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "LgtDsc",
+            "type": "CHARACTER",
+            "length": 200,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "LgtDscXml",
+            "type": "LONGVARCHAR",
+            "length": 2097152,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "ParAmbiente",
+            "type": "CHARACTER",
+            "length": 50,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Parametros1",
+            "type": "GX_BUSCOMP",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "paymentDateFinal",
+            "type": "CHARACTER",
+            "length": 10,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "paymentDateInitial",
+            "type": "CHARACTER",
+            "length": 10,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Response1",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "SDTLgtTiTul",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "SDTLgtTiTulItem",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "senha",
+            "type": "VARCHAR",
+            "length": 100,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "senhaCript",
+            "type": "VARCHAR",
+            "length": 200,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "token",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "WorkspaceId",
+            "type": "VARCHAR",
+            "length": 99,
+            "decimals": 5,
+            "isCollection": false
+          },
+          {
+            "name": "ClientSecret",
+            "type": "VARCHAR",
+            "length": 1000,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "TitAnoEmi",
+            "type": "NUMERIC",
+            "length": 2,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "TitSemEmi",
+            "type": "NUMERIC",
+            "length": 1,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "TitSeqEmi",
+            "type": "NUMERIC",
+            "length": 5,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "AceParNro",
+            "type": "NUMERIC",
+            "length": 2,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "AceNro",
+            "type": "NUMERIC",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "IndicadorMaisPaginas",
+            "type": "CHARACTER",
+            "length": 1,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "BoletosPagos",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "item",
+            "type": "GX_SDT",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Today",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Time",
+            "type": "CHARACTER",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Pgmname",
+            "type": "CHARACTER",
+            "length": 128,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Pgmdesc",
+            "type": "CHARACTER",
+            "length": 256,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Page",
+            "type": "NUMERIC",
+            "length": 6,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Line",
+            "type": "NUMERIC",
+            "length": 6,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Output",
+            "type": "CHARACTER",
+            "length": 3,
+            "decimals": 0,
+            "isCollection": false
+          }
+        ]
+      },
+      "id": "1772559985382"
+    }
+  },
+  "SdtUsuario": {
+    "inject_recursive": {
+      "jsonrpc": "2.0",
+      "result": "# Context for SDT SdtUsuario\r\n\r\n",
+      "id": "1772559985480"
+    },
+    "inspect": {
+      "jsonrpc": "2.0",
+      "result": {
+        "name": "SdtUsuario",
+        "type": "SDT",
+        "description": "Sdt com dados de Usu\u00e1rio",
+        "parameters": [],
+        "variables": [],
+        "rules": null,
+        "uiStructure": {},
+        "wwpMetadata": {
+          "isWorkWithPlusAware": false
+        },
+        "domains": [],
+        "summary": "SDT SdtUsuario: Sdt com dados de Usu\u00e1rio. Has a user interface. Uses WorkWithPlus patterns."
+      },
+      "id": "1772559985497"
+    },
+    "data_ctx": {
+      "jsonrpc": "2.0",
+      "result": {
+        "objectName": "SdtUsuario",
+        "objectType": "SDT",
+        "dataSchema": {},
+        "variables": []
+      },
+      "id": "1772559985513"
+    }
+  },
+  "VTipoPessoa": {
+    "inject_recursive": {
+      "jsonrpc": "2.0",
+      "result": "# Context for Transaction VTipoPessoa\r\n\r\n## Dependencies\r\n### Procedure: RedIntranet\r\n```\r\nParm(in:&LogPesCod, in:&LogPesObs);\r\n  in LogPesCod : Unknown\r\n  in LogPesObs : Unknown\r\n```\r\n\r\n### Procedure: GrvLogPessoa\r\n```\r\nparm(in:&TipTabLogC,in:&PesCod, &LogPesObs);\r\n  in TipTabLogC : Unknown\r\n  in PesCod : Unknown\r\n  in LogPesObs : Unknown\r\n```\r\n\r\n### Procedure: BusPar\r\n```\r\nParm(in:ParCod, out:&Parametro);\r\n  in ParCod : Unknown\r\n  out Parametro : Unknown\r\n```\r\n\r\n### SDT: SdtParametro\r\n```\r\nParCod : NUMERIC\r\nParAmbient : CHARACTER\r\n```\r\n\r\n",
+      "id": "1772559986184"
+    },
+    "inspect": {
+      "jsonrpc": "2.0",
+      "result": {
+        "name": "VTipoPessoa",
+        "type": "Transaction",
+        "description": "Tipo Pessoa",
+        "parameters": [],
+        "variables": [
+          {
+            "name": "MsgErro",
+            "type": "CHARACTER",
+            "length": 80,
+            "decimals": 0
+          },
+          {
+            "name": "Alu1AnoCad",
+            "type": "NUMERIC",
+            "length": 2,
+            "decimals": 0
+          },
+          {
+            "name": "Alu1SemCad",
+            "type": "NUMERIC",
+            "length": 1,
+            "decimals": 0
+          },
+          {
+            "name": "Alu1SeqCad",
+            "type": "NUMERIC",
+            "length": 4,
+            "decimals": 0
+          },
+          {
+            "name": "Alu1PesCod",
+            "type": "NUMERIC",
+            "length": 10,
+            "decimals": 0
+          },
+          {
+            "name": "FlagOK",
+            "type": "CHARACTER",
+            "length": 1,
+            "decimals": 0
+          },
+          {
+            "name": "UsuCod",
+            "type": "CHARACTER",
+            "length": 10,
+            "decimals": 0
+          },
+          {
+            "name": "Today",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "Time",
+            "type": "CHARACTER",
+            "length": 8,
+            "decimals": 0
+          },
+          {
+            "name": "Pgmname",
+            "type": "CHARACTER",
+            "length": 128,
+            "decimals": 0
+          },
+          {
+            "name": "Pgmdesc",
+            "type": "CHARACTER",
+            "length": 256,
+            "decimals": 0
+          },
+          {
+            "name": "GxRemove",
+            "type": "NUMERIC",
+            "length": 1,
+            "decimals": 0
+          },
+          {
+            "name": "Mode",
+            "type": "CHARACTER",
+            "length": 3,
+            "decimals": 0
+          }
+        ],
+        "rules": "",
+        "events": "Event Start\n\t// N\u00e3o permite acessar a transa\u00e7\u00e3o via URL por quest\u00e3o de seguran\u00e7a\n\tRedIntranet.Call()\n\t\n//   btn_Cancel.TooltipText = 'Fechar'\n//   btn_Delete.TooltipText = 'Apagar'\n//   btn_Enter.TooltipText  = 'Confirmar'\n//   btn_First.TooltipText  = 'Primeiro Registro'\n//   btn_Help.TooltipText   = 'Ajuda'\n//   btn_Last.TooltipText   = '\u00daltimo Registro'\n//   btn_Next.TooltipText   = 'Pr\u00f3ximo Registro'\n//   btn_Previo.TooltipText = 'Registro Anterior'\n//   btn_Select.TooltipText = 'Selecionar Registro'\n//   nomepgm.Caption = &Pgmname\n//   Titulo.Caption  = &Pgmdesc\nEndEvent\n",
+        "uiStructure": {
+          "type": "Body",
+          "children": [
+            {
+              "type": "TagElement"
+            },
+            {
+              "type": "TagElement",
+              "children": [
+                {
+                  "type": "Unknown"
+                },
+                {
+                  "type": "Table",
+                  "children": [
+                    {
+                      "type": "TagElement",
+                      "children": [
+                        {
+                          "type": "TableRow",
+                          "children": [
+                            {
+                              "type": "TableCell",
+                              "children": [
+                                {
+                                  "type": "TextBlock",
+                                  "caption": "Codigo do Tipo",
+                                  "class": "TextBlock"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "TableCell",
+                              "children": [
+                                {
+                                  "type": "Attribute",
+                                  "name": "VTipPesCod",
+                                  "class": "Attribute"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "TableRow",
+                          "children": [
+                            {
+                              "type": "TableCell",
+                              "children": [
+                                {
+                                  "type": "TextBlock",
+                                  "caption": "Descri\u00e7\u00e3o",
+                                  "class": "TextBlock"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "TableCell",
+                              "children": [
+                                {
+                                  "type": "Attribute",
+                                  "name": "VTipPesNom",
+                                  "class": "Attribute"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "TableRow",
+                          "children": [
+                            {
+                              "type": "TableCell",
+                              "children": [
+                                {
+                                  "type": "TextBlock",
+                                  "caption": "Prioridade",
+                                  "class": "TextBlock"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "TableCell",
+                              "children": [
+                                {
+                                  "type": "Attribute",
+                                  "name": "VTipPesPrior",
+                                  "class": "Attribute"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "TableRow",
+                          "children": [
+                            {
+                              "type": "TableCell",
+                              "children": [
+                                {
+                                  "type": "TextBlock",
+                                  "caption": "Grupo do Tipo de Pessoa",
+                                  "class": "TextBlock"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "TableCell",
+                              "children": [
+                                {
+                                  "type": "Attribute",
+                                  "name": "VTipPesGrp",
+                                  "class": "Attribute"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "Button",
+              "name": "Button1",
+              "caption": "GX_BtnEnter",
+              "class": "Button"
+            }
+          ]
+        },
+        "wwpMetadata": {
+          "masterPage": "Artech.Genexus.Common.CustomTypes.WebPanelReference",
+          "isWorkWithPlusAware": false
+        },
+        "domains": [],
+        "summary": "Transaction VTipoPessoa: Tipo Pessoa. Uses 13 local variables. Has a user interface. Uses WorkWithPlus patterns."
+      },
+      "id": "1772559986406"
+    },
+    "data_ctx": {
+      "jsonrpc": "2.0",
+      "result": {
+        "objectName": "VTipoPessoa",
+        "objectType": "Transaction",
+        "dataSchema": {},
+        "variables": [
+          {
+            "name": "MsgErro",
+            "type": "CHARACTER",
+            "length": 80,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Alu1AnoCad",
+            "type": "NUMERIC",
+            "length": 2,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Alu1SemCad",
+            "type": "NUMERIC",
+            "length": 1,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Alu1SeqCad",
+            "type": "NUMERIC",
+            "length": 4,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Alu1PesCod",
+            "type": "NUMERIC",
+            "length": 10,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "FlagOK",
+            "type": "CHARACTER",
+            "length": 1,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "UsuCod",
+            "type": "CHARACTER",
+            "length": 10,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Today",
+            "type": "DATE",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Time",
+            "type": "CHARACTER",
+            "length": 8,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Pgmname",
+            "type": "CHARACTER",
+            "length": 128,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Pgmdesc",
+            "type": "CHARACTER",
+            "length": 256,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "GxRemove",
+            "type": "NUMERIC",
+            "length": 1,
+            "decimals": 0,
+            "isCollection": false
+          },
+          {
+            "name": "Mode",
+            "type": "CHARACTER",
+            "length": 3,
+            "decimals": 0,
+            "isCollection": false
+          }
+        ]
+      },
+      "id": "1772559995108"
+    }
+  },
+  "BC_Test": {
+    "jsonrpc": "2.0",
+    "result": "# Context for Transaction DVT0001\r\n\r\n## Dependencies\r\n### Procedure: RedIntranet\r\n```\r\nParm(in:&LogPesCod, in:&LogPesObs);\r\n  in LogPesCod : Unknown\r\n  in LogPesObs : Unknown\r\n```\r\n\r\n### SDT: SdtDvResponsavel\r\n```\r\nDVAl2Rescpfcgcn : NUMERIC\r\nDvResNom : CHARACTER\r\nDvResEnd : CHARACTER\r\nDvResBai : CHARACTER\r\nDvResCid : CHARACTER\r\nDvResCep : NUMERIC\r\nDvResEst : CHARACTER\r\nDvResFoRes : CHARACTER\r\nDvResFonCom : CHARACTER\r\nDvResFonRec : CHARACTER\r\nDvResSex : NUMERIC\r\nDvResNroIde : CHARACTER\r\nDvResDatNas : DATE\r\nDvResEmail : CHARACTER\r\nDvResNomMae : CHARACTER\r\nDVPesCod : NUMERIC\r\n```\r\n\r\n",
+    "id": "1772559998090"
+  }
+}
