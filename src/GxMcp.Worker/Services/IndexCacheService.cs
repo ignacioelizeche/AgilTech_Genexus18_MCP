@@ -20,6 +20,7 @@ namespace GxMcp.Worker.Services
         private string _lastSavedJsonHash = null;
         private DateTime _lastFlushTime = DateTime.MinValue;
         private bool _savingInProgress = false;
+        private readonly VectorService _vectorService = new VectorService();
 
         public IndexCacheService()
         {
@@ -236,12 +237,18 @@ namespace GxMcp.Worker.Services
             else if (obj is global::Artech.Genexus.Common.Objects.SDT sdt)
             {
                 try {
-                    var sdtService = new global::GxMcp.Worker.Services.SDTService(new global::GxMcp.Worker.Services.ObjectService(_buildService.KbService, _buildService));
-                    entry.SourceSnippet = sdtService.GetSDTStructure(sdt.Name);
-                } catch { }
+                    entry.SourceSnippet = StructureParser.SerializeToText(obj);
+                } catch (Exception ex) {
+                    Logger.Error($"SDT index snippet failed for {obj.Name}: {ex.Message}");
+                }
             }
 
             string key = string.Format("{0}:{1}", entry.Type, entry.Name);
+            
+            // Compute Embedding
+            string semanticText = $"{entry.Name} {entry.Type} {entry.Description} {entry.RootTable} {entry.ParmRule}";
+            entry.Embedding = _vectorService.ComputeEmbedding(semanticText);
+
             // Atomic update using ConcurrentDictionary
             index.Objects.AddOrUpdate(key, entry, (k, existing) => entry);
 

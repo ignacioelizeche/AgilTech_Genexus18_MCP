@@ -11,6 +11,7 @@ namespace GxMcp.Worker.Services
     {
         private BuildService _buildService;
         private readonly IndexCacheService _indexCacheService;
+        private readonly VectorService _vectorService = new VectorService();
 
         // Progress Tracking
         private static int _processedCount = 0;
@@ -156,6 +157,11 @@ namespace GxMcp.Worker.Services
                     Description = data.Description, Parent = data.Parent, Module = data.Module,
                     Calls = data.Calls
                 };
+                
+                // Compute Embedding for Semantic Search
+                string semanticText = $"{entry.Name} {entry.Type} {entry.Description}";
+                entry.Embedding = _vectorService.ComputeEmbedding(semanticText);
+
                 index.Objects[string.Format("{0}:{1}", entry.Type, entry.Name)] = entry;
             }
 

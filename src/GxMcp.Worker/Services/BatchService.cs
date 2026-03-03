@@ -87,5 +87,47 @@ namespace GxMcp.Worker.Services
         }
 
         private class BatchItem { public string Name; public string Code; }
+
+        public string MultiEdit(JArray items)
+        {
+            try
+            {
+                if (items == null || items.Count == 0)
+                    return "{\"error\":\"No items provided\"}";
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var allResults = new JArray();
+                int totalChanges = 0;
+
+                foreach (var item in items)
+                {
+                    string name = item["name"]?.ToString();
+                    var changes = item["changes"] as JArray;
+                    if (string.IsNullOrEmpty(name) || changes == null) continue;
+
+                    string result = BatchEdit(name, changes);
+                    try {
+                        var parsed = JObject.Parse(result);
+                        parsed["object"] = name;
+                        allResults.Add(parsed);
+                        totalChanges += parsed["count"]?.ToObject<int>() ?? 0;
+                    } catch {
+                        allResults.Add(new JObject { ["object"] = name, ["error"] = result });
+                    }
+                }
+
+                return new JObject {
+                    ["status"] = "Success",
+                    ["objectCount"] = items.Count,
+                    ["totalChanges"] = totalChanges,
+                    ["results"] = allResults,
+                    ["duration"] = sw.ElapsedMilliseconds
+                }.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\":\"MultiEdit failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
     }
 }

@@ -42,6 +42,8 @@ namespace GxMcp.Worker.Services
         private readonly SelfTestService _selfTestService;
         private readonly PatternAnalysisService _patternAnalysisService;
         private readonly DataInsightService _dataInsightService;
+        private readonly SummarizeService _summarizeService;
+        private readonly InjectionService _injectionService;
 
         private CommandDispatcher()
         {
@@ -54,6 +56,8 @@ namespace GxMcp.Worker.Services
             _formatService = new FormatService();
             _objectService = new ObjectService(_kbService, _buildService);
             _navigationService = new NavigationService(_kbService);
+            _summarizeService = new SummarizeService(_kbService, _objectService);
+            _injectionService = new InjectionService(_kbService, _objectService, _analyzeService);
             _patternAnalysisService = new PatternAnalysisService(_objectService);
             _validationService = new ValidationService(_kbService);
             _searchService = new SearchService(_indexCacheService);
@@ -144,6 +148,7 @@ namespace GxMcp.Worker.Services
                         break;
                     case "batch":
                         if (action == "BatchEdit") return _batchService.BatchEdit(target, args?["changes"] as JArray);
+                        if (action == "MultiEdit") return _batchService.MultiEdit(args?["items"] as JArray);
                         if (action == "Process") return _batchService.ProcessBatch(args?["batchAction"]?.ToString(), target, payload);
                         break;
                     case "search":
@@ -170,6 +175,8 @@ namespace GxMcp.Worker.Services
                         if (action == "GetDataContext") return _dataInsightService.GetDataContext(target);
                         if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target);
                         if (action == "GetPatternMetadata") return _patternAnalysisService.GetWWPStructure(target);
+                        if (action == "Summarize") return _summarizeService.Summarize(target);
+                        if (action == "InjectContext") return _injectionService.InjectContext(target);
                         return _analyzeService.Analyze(target);
                     case "linter":
                         return _linterService.Lint(target);

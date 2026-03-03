@@ -16,10 +16,46 @@ namespace GxMcp.Worker.Parsers
             if (obj.TypeDescriptor.Name.Equals("SDT", StringComparison.OrdinalIgnoreCase))
             {
                 dynamic sdt = obj;
-                dynamic structure = sdt.Parts.Get(SDT_STRUCTURE_PART);
+                dynamic structure = null;
+                
+                // Find structure part: match by descriptor name, class name, or GUID
+                foreach (dynamic part in sdt.Parts)
+                {
+                    try {
+                        string descName = part.TypeDescriptor?.Name ?? "";
+                        string className = part.GetType().Name;
+                        if (descName.IndexOf("SDTStructure", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            descName.Equals("Structure", StringComparison.OrdinalIgnoreCase) ||
+                            className.IndexOf("SDTStructure", StringComparison.OrdinalIgnoreCase) >= 0)
+                        { structure = part; break; }
+                    } catch { }
+                }
+                
+                // Fallback: Parts.Get with known GUID
+                if (structure == null)
+                {
+                    try { structure = sdt.Parts.Get(SDT_STRUCTURE_PART); } catch { }
+                }
+                
+                // Fallback: duck typing - any part with Root.Children
+                if (structure == null)
+                {
+                    foreach (dynamic part in sdt.Parts)
+                    {
+                        try {
+                            if (part.Root != null && part.Root.Children != null)
+                            { structure = part; break; }
+                        } catch { }
+                    }
+                }
+
                 if (structure != null && structure.Root != null)
                 {
-                    foreach (dynamic child in structure.Root.Children) SerializeLevel(child, sb, 0);
+                    foreach (dynamic child in structure.Root.Items) SerializeLevel(child, sb, 0);
+                }
+                else
+                {
+                    Logger.Error($"SdtDslParser: Could not find structure part for SDT {obj.Name}");
                 }
             }
         }
@@ -44,17 +80,23 @@ namespace GxMcp.Worker.Parsers
         private void SerializeLevel(dynamic level, StringBuilder sb, int indent)
         {
             string indentStr = new string(' ', indent * 4);
-            string collectionMarker = level.IsCollection ? " Collection" : "";
-            if (level.IsCompound)
+            string collectionMarker = "";
+            try { collectionMarker = level.IsCollection ? " Collection" : ""; } catch { }
+            
+            bool isLeaf = true;
+            try { isLeaf = level.IsLeafItem; } catch { }
+            
+            if (!isLeaf)
             {
                 sb.AppendLine($"{indentStr}{level.Name}{collectionMarker}");
                 sb.AppendLine($"{indentStr}{{");
-                foreach (dynamic child in level.Children) SerializeLevel(child, sb, indent + 1);
+                try { foreach (dynamic child in level.Items) SerializeLevel(child, sb, indent + 1); } catch { }
                 sb.AppendLine($"{indentStr}}}");
             }
             else
             {
-                string typeStr = level.Type != null ? level.Type.ToString() : "Unknown";
+                string typeStr = "Unknown";
+                try { typeStr = level.Type != null ? level.Type.ToString() : "Unknown"; } catch { }
                 sb.AppendLine($"{indentStr}{level.Name} : {typeStr}{collectionMarker}");
             }
         }

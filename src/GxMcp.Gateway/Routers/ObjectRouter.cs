@@ -55,6 +55,42 @@ namespace GxMcp.Gateway.Routers
                         },
                         required = new[] { "name" }
                     }
+                },
+                new {
+                    name = "genexus_batch_edit",
+                    description = "Applies edits across multiple objects in a single call. Each item specifies a target object and an array of changes (patch or full). More efficient than multiple genexus_edit calls.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new {
+                            items = new {
+                                type = "array",
+                                items = new {
+                                    type = "object",
+                                    properties = new {
+                                        name = new { type = "string", description = "Target object name." },
+                                        changes = new {
+                                            type = "array",
+                                            items = new {
+                                                type = "object",
+                                                properties = new {
+                                                    part = new { type = "string", description = "Part name (Source, Rules, Events).", @default = "Source" },
+                                                    mode = new { type = "string", @enum = new[] { "full", "patch" }, description = "Edit mode.", @default = "patch" },
+                                                    content = new { type = "string", description = "New code or patch content." },
+                                                    context = new { type = "string", description = "For patch mode: exact text to replace." },
+                                                    operation = new { type = "string", @enum = new[] { "Replace", "Insert_After", "Append" }, description = "Patch operation.", @default = "Replace" }
+                                                },
+                                                required = new[] { "content" }
+                                            },
+                                            description = "Changes to apply to this object."
+                                        }
+                                    },
+                                    required = new[] { "name", "changes" }
+                                },
+                                description = "Array of objects to edit, each with its own changes."
+                            }
+                        },
+                        required = new[] { "items" }
+                    }
                 }
             };
         }
@@ -119,6 +155,9 @@ namespace GxMcp.Gateway.Routers
                     return new { module = "Read", action = "GetAttribute", target = target };
                 case "genexus_get_properties":
                     return new { module = "Property", action = "Get", target = target, control = args?["control"]?.ToString() };
+
+                case "genexus_batch_edit":
+                    return new { module = "Batch", action = "MultiEdit", items = args?["items"] };
 
                 default:
                     return null;

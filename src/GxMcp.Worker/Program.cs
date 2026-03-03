@@ -141,7 +141,22 @@ namespace GxMcp.Worker
                 }
 
                 // Wait for Sdk Worker to finish its queue
-                Logger.Info("Input EOF reached. Waiting for SdkWorker to finish...");
+                Logger.Info("Input EOF reached. Waiting for Background tasks and SdkWorker to finish...");
+                
+                // Drain background queue first (since it might add to Sdk queue)
+                while (BackgroundQueue.Count > 0 || (bool)(_dispatcher.GetKbService().GetType().GetField("_isIndexing", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) ?? false))
+                {
+                    if (BackgroundQueue.TryDequeue(out var action))
+                    {
+                        try { action(); }
+                        catch (Exception ex) { Logger.Error("Shutdown Background Task Error: " + ex.Message); }
+                    }
+                    else
+                    {
+                        Thread.Sleep(100);
+                    }
+                }
+
                 SdkCommandQueue.CompleteAdding();
                 while (!SdkCommandQueue.IsCompleted || SdkCommandQueue.Count > 0)
                 {

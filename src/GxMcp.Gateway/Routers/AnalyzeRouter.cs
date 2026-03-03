@@ -44,6 +44,29 @@ namespace GxMcp.Gateway.Routers
                         },
                         required = new[] { "name", "mode" }
                     }
+                },
+                new {
+                    name = "genexus_summarize",
+                    description = "Creates a semantically compressed summary of a GeneXus object to save tokens.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { 
+                            name = new { type = "string", description = "Object name." }
+                        },
+                        required = new[] { "name" }
+                    }
+                },
+                new {
+                    name = "genexus_inject_context",
+                    description = "Automates dependency discovery. Injects SDT structures and Procedure signatures of called objects into context.",
+                    inputSchema = new {
+                        type = "object",
+                        properties = new { 
+                            name = new { type = "string", description = "Object name." },
+                            recursive = new { type = "boolean", description = "Whether to discover dependencies of dependencies (default: false).", @default = false }
+                        },
+                        required = new[] { "name" }
+                    }
                 }
             };
         }
@@ -58,6 +81,12 @@ namespace GxMcp.Gateway.Routers
                     // Por padrão, se não especificar, o GetConversionContext já traz quase tudo.
                     // Para manter a compatibilidade interna, usamos o module Analyze.
                     return new { module = "Analyze", action = "GetConversionContext", target = target };
+
+                case "genexus_summarize":
+                    return new { module = "Analyze", action = "Summarize", target = target };
+                
+                case "genexus_inject_context":
+                    return new { module = "Analyze", action = "InjectContext", target = target };
 
                 case "genexus_analyze":
                     string mode = args?["mode"]?.ToString();

@@ -218,7 +218,7 @@ namespace GxMcp.Gateway
                 var args = paramsObj?["arguments"] as JObject;
                 
                 // 1. CACHE INVALIDATION: If it's a write operation or a re-index, clear the cache
-                if (toolName.Contains("write") || toolName.Contains("patch") || toolName.Contains("bulk_index"))
+                if (toolName.Contains("write") || toolName.Contains("patch") || toolName.Contains("bulk_index") || toolName.Contains("batch_edit"))
                 {
                     Log($"[Cache] Invalidation triggered by {toolName}");
                     _semanticCache.Clear();

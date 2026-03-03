@@ -11,6 +11,7 @@ namespace GxMcp.Worker.Services
     public class SearchService
     {
         private readonly IndexCacheService _indexCacheService;
+        private readonly VectorService _vectorService = new VectorService();
         private static readonly ConcurrentDictionary<string, string> _queryCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static DateTime _lastIndexTime = DateTime.MinValue;
 
@@ -83,16 +84,27 @@ namespace GxMcp.Worker.Services
                     );
                 }
 
+                var queryEmbedding = _vectorService.ComputeEmbedding(query);
+
                 var scoredResults = queryResults
                     .Select(entry => {
                         int score = 0;
+                        float vectorScore = 0;
+                        if (entry.Embedding != null && queryEmbedding != null)
+                        {
+                            vectorScore = _vectorService.CosineSimilarity(queryEmbedding, entry.Embedding);
+                        }
+
                         if (criteria.Terms.Count > 0) {
                             score = CalculateSemanticScore(entry, criteria.Terms);
-                            if (score <= 0) return new RankedResult { Score = -1 };
+                            if (score <= 0 && vectorScore < 0.5f) return new RankedResult { Score = -1 };
                         } else {
                             score = (entry.Type == "Folder" || entry.Type == "Module") ? 1000 : 1;
                         }
-                        return new RankedResult { Entry = entry, Score = score };
+
+                        // Combine traditional + vector score (vector is 0-1, we scale it)
+                        int finalScore = score + (int)(vectorScore * 1000);
+                        return new RankedResult { Entry = entry, Score = finalScore, VectorSimilarity = vectorScore };
                     })
                     .Where(r => r.Score > 0)
                     .OrderByDescending(r => r.Score)
@@ -131,7 +143,8 @@ namespace GxMcp.Worker.Services
                             dataType = r.Entry.DataType,
                             length = r.Entry.Length,
                             decimals = r.Entry.Decimals,
-                            table = r.Entry.RootTable
+                            table = r.Entry.RootTable,
+                            similarity = r.VectorSimilarity
                         })
                     });
                 }
@@ -237,7 +250,7 @@ namespace GxMcp.Worker.Services
             return c;
         }
 
-        private class RankedResult { public SearchIndex.IndexEntry Entry { get; set; } public int Score { get; set; } }
+        private class RankedResult { public SearchIndex.IndexEntry Entry { get; set; } public int Score { get; set; } public float VectorSimilarity { get; set; } }
         private class SearchCriteria { 
             public string TypeFilter { get; set; } public string ParentFilter { get; set; } 
             public string UsedByFilter { get; set; } public string DomainFilter { get; set; } 

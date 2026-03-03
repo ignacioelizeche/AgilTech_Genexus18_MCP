@@ -31,14 +31,14 @@ namespace GxMcp.Worker.Services
                     var result = new JObject();
                     result["name"] = sdt.Name;
                     result["type"] = "SDT";
-                    result["isCollection"] = sdt.IsCollection;
+                    try { result["isCollection"] = sdt.IsCollection; } catch { result["isCollection"] = false; }
                     
                     var children = new JArray();
-                    // Part GUID for SDT Structure is 8597371d-1941-4c12-9c17-48df9911e2f3
-                    dynamic structure = sdt.Parts.Get(Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3")); 
+                    dynamic structure = FindStructurePart(sdt);
+                    
                     if (structure != null && structure.Root != null)
                     {
-                        foreach (dynamic child in structure.Root.Children)
+                        foreach (dynamic child in structure.Root.Items)
                         {
                             children.Add(MapLevelToResult(child));
                         }
@@ -56,26 +56,69 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        /// <summary>
+        /// Finds the SDT Structure Part using multiple strategies.
+        /// In GX18 SDK, the part has TypeDescriptor.Name="SDTStructure" and class SDTStructurePart.
+        /// </summary>
+        private dynamic FindStructurePart(dynamic sdt)
+        {
+            // Strategy 1: Iterate parts matching by TypeDescriptor name or class name
+            foreach (dynamic part in sdt.Parts)
+            {
+                try {
+                    string descName = part.TypeDescriptor?.Name ?? "";
+                    string className = part.GetType().Name;
+                    if (descName.IndexOf("SDTStructure", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        descName.Equals("Structure", StringComparison.OrdinalIgnoreCase) ||
+                        className.IndexOf("SDTStructure", StringComparison.OrdinalIgnoreCase) >= 0)
+                    { return part; }
+                } catch { }
+            }
+            
+            // Strategy 2: Parts.Get with known GUID
+            try {
+                var part = sdt.Parts.Get(Guid.Parse("8597371d-1941-4c12-9c17-48df9911e2f3"));
+                if (part != null) return part;
+            } catch { }
+            
+            // Strategy 3: Duck typing - any part with Root.Items
+            foreach (dynamic part in sdt.Parts)
+            {
+                try {
+                    if (part.Root != null && part.Root.Items != null) return part;
+                } catch { }
+            }
+            
+            return null;
+        }
+
         private JObject MapLevelToResult(dynamic level)
         {
             var res = new JObject();
-            res["name"] = level.Name;
-            res["isLevel"] = level.IsCompound;
-            res["isCollection"] = level.IsCollection;
+            try { res["name"] = (string)level.Name; } catch { res["name"] = "?"; }
             
-            if (level.IsCompound)
+            bool isLeaf = true;
+            try { isLeaf = level.IsLeafItem; } catch { }
+            
+            try { res["isCollection"] = (bool)level.IsCollection; } catch { res["isCollection"] = false; }
+            
+            if (!isLeaf)
             {
+                res["isLevel"] = true;
                 var children = new JArray();
-                foreach (var child in level.Children)
-                {
-                    children.Add(MapLevelToResult(child));
-                }
+                try {
+                    foreach (dynamic child in level.Items)
+                    {
+                        children.Add(MapLevelToResult(child));
+                    }
+                } catch { }
                 res["children"] = children;
                 res["type"] = "Compound";
             }
             else
             {
-                res["type"] = level.Type.ToString();
+                res["isLevel"] = false;
+                try { res["type"] = level.Type.ToString(); } catch { res["type"] = "Unknown"; }
             }
             return res;
         }
