@@ -9,13 +9,15 @@ namespace GxMcp.Worker.Services
         private readonly KbService _kbService;
         private readonly WriteService _writeService;
         private readonly PatchService _patchService;
+        private readonly ObjectService _objectService;
         private readonly List<BatchItem> _buffer = new List<BatchItem>();
 
-        public BatchService(KbService kbService, WriteService writeService, PatchService patchService)
+        public BatchService(KbService kbService, WriteService writeService, PatchService patchService, ObjectService objectService)
         {
             _kbService = kbService;
             _writeService = writeService;
             _patchService = patchService;
+            _objectService = objectService;
         }
 
         public string BatchEdit(string target, JArray changes)
@@ -127,6 +129,43 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 return "{\"error\":\"MultiEdit failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+        public string BatchRead(JArray items)
+        {
+            try
+            {
+                if (items == null || items.Count == 0) return "{\"error\":\"No items provided\"}";
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var results = new JArray();
+
+                foreach (var item in items)
+                {
+                    string name = item["name"]?.ToString();
+                    string part = item["part"]?.ToString() ?? "Source";
+                    if (string.IsNullOrEmpty(name)) continue;
+
+                    string readResult = _objectService.ReadObjectSource(name, part, null, null, "mcp");
+                    try {
+                        var parsed = JObject.Parse(readResult);
+                        parsed["object"] = name;
+                        results.Add(parsed);
+                    } catch {
+                        results.Add(new JObject { ["object"] = name, ["error"] = readResult });
+                    }
+                }
+
+                return new JObject {
+                    ["status"] = "Success",
+                    ["count"] = results.Count,
+                    ["results"] = results,
+                    ["duration"] = sw.ElapsedMilliseconds
+                }.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "{\"error\":\"BatchRead failed: " + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
     }

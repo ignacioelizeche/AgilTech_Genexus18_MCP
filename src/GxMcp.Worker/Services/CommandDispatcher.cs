@@ -68,7 +68,7 @@ namespace GxMcp.Worker.Services
             _writeService = new WriteService(_objectService);
             _refactorService = new RefactorService(_kbService, _objectService, _indexCacheService);
             _patchService = new PatchService(_objectService, _writeService);
-            _batchService = new BatchService(_kbService, _writeService, _patchService);
+            _batchService = new BatchService(_kbService, _writeService, _patchService, _objectService);
             _forgeService = new ForgeService(_kbService);
             _testService = new TestService(_kbService, _buildService);
             _wikiService = new WikiService(_objectService, _searchService);

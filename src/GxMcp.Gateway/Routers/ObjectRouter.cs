@@ -71,6 +71,9 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_batch_edit":
                     return new { module = "Batch", action = "MultiEdit", items = args?["items"] };
 
+                case "genexus_batch_read":
+                    return new { module = "Batch", action = "BatchRead", items = args?["items"] };
+
                 default:
                     return null;
             }
