@@ -22,6 +22,7 @@ namespace GxMcp.Worker.Services
         {
             _objectService = objectService;
             InitializeFlushTimer();
+            AppDomain.CurrentDomain.ProcessExit += (s, e) => FlushBackground();
         }
 
         public void SetValidationService(ValidationService vs) { _validationService = vs; }

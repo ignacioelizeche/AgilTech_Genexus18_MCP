@@ -37,12 +37,11 @@ namespace GxMcp.Gateway
                 {
                     if (_process != null && !_process.HasExited)
                     {
-                        // Check for deadlock: No response for more than 45 seconds while we are trying to ping
+                        // Check for long operation: No response for more than 45 seconds
                         if ((DateTime.Now - _lastResponse).TotalSeconds > 45)
                         {
-                            Console.Error.WriteLine("[Gateway] Worker DEADLOCK detected (no response for 45s). Restarting...");
-                            StopProcess();
-                            Start();
+                            Console.Error.WriteLine("[Gateway] Warning: Worker unresponsive for 45s. It may be processing a heavy load or a long KB operation.");
+                            // Removed forced restart to prevent aborting heavy operations like Full Indexing
                         }
                         else
                         {

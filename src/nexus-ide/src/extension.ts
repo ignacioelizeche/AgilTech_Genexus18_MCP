@@ -79,31 +79,39 @@ export function activate(context: vscode.ExtensionContext) {
   // Auto-add folder will now happen inside initializeExtension or on command
 }
 
-export async function addKbFolder(context: vscode.ExtensionContext) {
+export async function addKbFolder(context: vscode.ExtensionContext, maxRetries = 5, delayMs = 2000) {
   const folders = vscode.workspace.workspaceFolders || [];
   const hasGxFolder = folders.some((f) => f.uri.scheme === SCHEME);
   if (!hasGxFolder) {
     console.log(`[Nexus IDE] Checking if KB is accessible for auto-mount...`);
-    try {
-      // Double check if we can actually reach the pseudo-root to avoid ghost folders
-      await vscode.workspace.fs.stat(
-        vscode.Uri.from({ scheme: SCHEME, path: "/" }),
-      );
 
-      console.log(`[Nexus IDE] Adding workspace folder: ${SCHEME}:/`);
-      vscode.workspace.updateWorkspaceFolders(folders.length, 0, {
-        uri: vscode.Uri.from({ scheme: SCHEME, path: "/" }),
-        name: "GeneXus KB",
-      });
-      context.globalState.update(STATE_KEY_FOLDER_ADDED, true);
-    } catch (e) {
-      console.warn(
-        "[Nexus IDE] KB mount point not ready yet. Auto-mount skipped.",
-      );
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Double check if we can actually reach the pseudo-root to avoid ghost folders
+        await vscode.workspace.fs.stat(
+          vscode.Uri.from({ scheme: SCHEME, path: "/" }),
+        );
+
+        console.log(`[Nexus IDE] Adding workspace folder: ${SCHEME}:/ on attempt ${attempt}`);
+        vscode.workspace.updateWorkspaceFolders(folders.length, 0, {
+          uri: vscode.Uri.from({ scheme: SCHEME, path: "/" }),
+          name: "GeneXus KB",
+        });
+        context.globalState.update(STATE_KEY_FOLDER_ADDED, true);
+        return; // Success, exit retry loop
+      } catch (e) {
+        console.warn(
+          `[Nexus IDE] KB mount point not ready yet (Attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`,
+        );
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        } else {
+          console.error("[Nexus IDE] Auto-mount failed after maximum retries.");
+        }
+      }
     }
   }
 }
-
 function initializeExtension(
   context: vscode.ExtensionContext,
   provider: GxFileSystemProvider,
