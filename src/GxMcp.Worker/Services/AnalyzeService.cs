@@ -394,7 +394,8 @@ namespace GxMcp.Worker.Services
                         }
                     }
                 } catch {}
-                result["domains"] = domains;
+
+                if (domains.Count > 0) result["domains"] = domains;
 
                 // 7. Generate Semantic Summary
                 result["summary"] = GenerateSummary(obj, result);

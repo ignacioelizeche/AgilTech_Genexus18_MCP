@@ -125,15 +125,13 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
 
         // SDT / Transaction Structure Completion
         if (
-          type !== "Character" &&
-          type !== "Numeric" &&
-          type !== "Date" &&
-          type !== "DateTime" &&
-          type !== "Boolean"
+          !["Character", "Numeric", "Date", "DateTime", "Boolean", "Collection"].includes(type) &&
+          !type.startsWith("Character") &&
+          !type.startsWith("Numeric") &&
+          !type.startsWith("VarChar")
         ) {
           try {
             const structure = await this.callGateway({
-              method: "execute_command",
               params: { module: "Structure", action: "Get", target: type },
             });
             if (structure && structure.fields) {

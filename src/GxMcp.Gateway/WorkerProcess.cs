@@ -47,18 +47,25 @@ namespace GxMcp.Gateway
                         {
                             // Send a ping
                             Program.Log("[Health] Sending Ping to Worker...");
-                            var ping = new { jsonrpc = "2.0", id = "heartbeat", method = "ping" };
-                            await SendCommandAsync(JsonConvert.SerializeObject(ping));
-                            }
-                            }
-                            }
-                            catch (Exception ex)
+                            try
                             {
-                            Program.Log($"[Health] Error during ping: {ex.Message}");
+                                var ping = new { jsonrpc = "2.0", id = "heartbeat", method = "ping" };
+                                await SendCommandAsync(JsonConvert.SerializeObject(ping));
                             }
-                            await Task.Delay(15000, ct);
+                            catch (Exception exPing)
+                            {
+                                Program.Log($"[Health] Error sending ping: {exPing.Message}");
                             }
-                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Program.Log($"[Health] Error during health check loop: {ex.Message}");
+                }
+                await Task.Delay(15000, ct);
+            }
+        }
 
         private async Task ProcessQueueAsync()
         {

@@ -26,11 +26,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("nexus-ide.openKb", () => {
       console.log("[Nexus IDE] Command 'nexus-ide.openKb' triggered.");
-      addKbFolder(context);
+      addKbFolder(context, 5, 2000, provider);
     }),
     vscode.commands.registerCommand("nexus-ide.addKbFolder", () => {
       console.log("[Nexus IDE] Manual 'nexus-ide.addKbFolder' triggered.");
-      addKbFolder(context);
+      addKbFolder(context, 5, 2000, provider);
     }),
     vscode.commands.registerCommand("nexus-ide.refreshFilesystem", () => {
       console.log(
@@ -79,7 +79,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Auto-add folder will now happen inside initializeExtension or on command
 }
 
-export async function addKbFolder(context: vscode.ExtensionContext, maxRetries = 5, delayMs = 2000) {
+export async function addKbFolder(context: vscode.ExtensionContext, maxRetries = 5, delayMs = 2000, provider?: any) {
   const folders = vscode.workspace.workspaceFolders || [];
   const hasGxFolder = folders.some((f) => f.uri.scheme === SCHEME);
   if (!hasGxFolder) {
@@ -87,6 +87,10 @@ export async function addKbFolder(context: vscode.ExtensionContext, maxRetries =
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        if (provider) {
+          await provider.initKb();
+        }
+
         // Double check if we can actually reach the pseudo-root to avoid ghost folders
         await vscode.workspace.fs.stat(
           vscode.Uri.from({ scheme: SCHEME, path: "/" }),
@@ -107,6 +111,7 @@ export async function addKbFolder(context: vscode.ExtensionContext, maxRetries =
           await new Promise(resolve => setTimeout(resolve, delayMs));
         } else {
           console.error("[Nexus IDE] Auto-mount failed after maximum retries.");
+          vscode.window.showWarningMessage("Failed to connect to GeneXus KB MCP Server. You can try reconnecting manually from the Command Palette.");
         }
       }
     }
@@ -275,7 +280,7 @@ function initializeExtension(
 
   // Final check to add the virtual folder if missing
   setTimeout(() => {
-    addKbFolder(context);
+    addKbFolder(context, 5, 2000, provider);
   }, 2000);
 }
 

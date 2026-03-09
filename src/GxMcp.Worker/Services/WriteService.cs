@@ -266,7 +266,9 @@ namespace GxMcp.Worker.Services
                     });
                     
                     // Final persistence in background for "Fast Save"
-                    ScheduleFlush();
+                    // Replace ScheduleFlush with explicit force commit to guarantee safety
+                    _pendingCommit = true;
+                    FlushBackground();
 
                     Logger.Info("[DEBUG-SAVE] SAVE & COMMIT COMPLETE.");
                     return Models.McpResponse.Success("Write", target);
@@ -335,7 +337,8 @@ namespace GxMcp.Worker.Services
                 }
 
                 obj.EnsureSave();
-                ScheduleFlush();
+                // ScheduleFlush(); // Previous behavior
+                FlushBackground(); // Explicit commit right away for safety
                 
                 return "{\"status\": \"Success\"}";
             }
