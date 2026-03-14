@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import { nativeFunctions } from './gxNativeFunctions';
 import { GxUriParser } from './utils/GxUriParser';
+import { GxFileSystemProvider } from './gxFileSystem';
 
 export class GxHoverProvider implements vscode.HoverProvider {
     private _cache = new Map<string, { hover: vscode.Hover, expires: number }>();
     private readonly CACHE_TTL = 30000; // 30 seconds
 
-    constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
+    constructor(private readonly provider: GxFileSystemProvider) {}
 
     async provideHover(
         document: vscode.TextDocument,
@@ -67,10 +68,7 @@ export class GxHoverProvider implements vscode.HoverProvider {
             const varName = word.substring(1).toLowerCase();
             try {
                 const objName = GxUriParser.getObjectName(document.uri);
-                const variables = await this.callGateway({
-                    method: "execute_command",
-                    params: { module: 'Read', action: 'GetVariables', target: objName }
-                });
+                const variables = await this.provider.readObjectVariables(objName, 15000);
                 
                 if (Array.isArray(variables)) {
                     const variable = variables.find(v => v.name.toLowerCase() === varName);
@@ -89,10 +87,7 @@ export class GxHoverProvider implements vscode.HoverProvider {
         if (!hover) {
             try {
                 // 3. Check if word is an Attribute (using specific Read:GetAttribute for rich data)
-                const attrData = await this.callGateway({
-                    method: 'execute_command',
-                    params: { module: 'Read', action: 'GetAttribute', target: word }
-                });
+                const attrData = await this.provider.readAttributeMetadata(word, 15000);
 
                 if (attrData && !attrData.error) {
                     const markdown = new vscode.MarkdownString();
@@ -107,10 +102,7 @@ export class GxHoverProvider implements vscode.HoverProvider {
 
                 // 4. Fallback: Search for the object in the index (Remote)
                 if (!hover) {
-                    const result = await this.callGateway({
-                        method: 'execute_command',
-                        params: { module: 'Search', query: word, limit: 1 }
-                    });
+                    const result = await this.provider.queryObjects(word, 1, 15000);
 
                     if (result && result.results && result.results.length > 0) {
                         const obj = result.results[0];

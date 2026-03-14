@@ -49,13 +49,9 @@ export class DiagramView {
     panel.webview.html = `<h1>Gerando Diagrama para ${objName}...</h1>`;
 
     try {
-      const result = await provider.callGateway({
-        method: "execute_command",
-        params: {
-          module: "Visualizer",
-          action: "GenerateGraph",
-          target: objName,
-        },
+      const result = await provider.callMcpTool("genexus_doc", {
+        action: "visualize",
+        target: objName,
       });
 
       if (result && result.mermaid) {

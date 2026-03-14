@@ -1,15 +1,13 @@
 using Newtonsoft.Json.Linq;
-using System;
-
 namespace GxMcp.Gateway.Routers
 {
     public class ObjectRouter : IMcpModuleRouter
     {
         public string ModuleName => "Object";
 
-        public object ConvertToolCall(string toolName, JObject args)
+        public object? ConvertToolCall(string toolName, JObject? args)
         {
-            string target = args?["name"]?.ToString();
+            string? target = args?["name"]?.ToString();
             string part = args?["part"]?.ToString() ?? "Source";
 
             switch (toolName)
@@ -35,7 +33,7 @@ namespace GxMcp.Gateway.Routers
                         };
                     }
 
-                    string mode = args?["mode"]?.ToString();
+                    string? mode = args?["mode"]?.ToString();
                     if (mode == "patch")
                     {
                         return new { 

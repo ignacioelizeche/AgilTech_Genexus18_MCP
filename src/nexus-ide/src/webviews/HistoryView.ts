@@ -43,9 +43,9 @@ export class HistoryView {
     panel.webview.html = `<h1>Carregando Histórico de ${objName}...</h1>`;
 
     try {
-      const result = await provider.callGateway({
-        method: "execute_command",
-        params: { module: "History", action: "List", target: objName },
+      const result = await provider.callMcpTool("genexus_history", {
+        action: "list",
+        name: objName,
       });
 
       if (result && result.history) {
@@ -78,14 +78,10 @@ export class HistoryView {
               3000,
             );
             try {
-              const codeResult = await provider.callGateway({
-                method: "execute_command",
-                params: {
-                  module: "History",
-                  action: "get_source",
-                  target: message.objName,
-                  versionId: message.versionId,
-                },
+              const codeResult = await provider.callMcpTool("genexus_history", {
+                action: "get_source",
+                name: message.objName,
+                versionId: message.versionId,
               });
 
               if (codeResult && codeResult.source) {

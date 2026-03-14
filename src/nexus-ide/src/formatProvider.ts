@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
+import { GxFileSystemProvider } from './gxFileSystem';
 
 export class GxFormatProvider implements vscode.DocumentFormattingEditProvider {
-    constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
+    constructor(private readonly provider: GxFileSystemProvider) {}
+
+    private static readonly FORMAT_TIMEOUT_MS = 5000;
 
     async provideDocumentFormattingEdits(
         document: vscode.TextDocument,
@@ -10,14 +13,10 @@ export class GxFormatProvider implements vscode.DocumentFormattingEditProvider {
     ): Promise<vscode.TextEdit[]> {
         try {
             const content = document.getText();
-            const result = await this.callGateway({
-                method: 'execute_command',
-                params: {
-                    module: 'Formatting',
-                    action: 'Format',
-                    payload: content
-                }
-            });
+            const result = await this.provider.formatCode(
+                content,
+                GxFormatProvider.FORMAT_TIMEOUT_MS,
+            );
 
             if (result && result.formatted) {
                 const fullRange = new vscode.Range(
@@ -28,7 +27,10 @@ export class GxFormatProvider implements vscode.DocumentFormattingEditProvider {
             }
         } catch (e) {
             console.error("[Nexus IDE] Formatting error:", e);
-            vscode.window.showErrorMessage("Formatting failed: " + e);
+            vscode.window.setStatusBarMessage(
+                "$(warning) GeneXus formatting skipped",
+                3000,
+            );
         }
 
         return [];

@@ -1,51 +1,72 @@
 ---
 name: GeneXus MCP Mastery
-description: Optimized protocols and best practices for interacting with the GeneXus 18 Knowledge Base via Elite v19.0 MCP.
+description: Current MCP-first usage guide for the GeneXus gateway, worker, resources, prompts, and editing workflows.
 ---
 
-# 🎓 GeneXus MCP Mastery (Elite Edition v19.0)
+# GeneXus MCP Mastery
 
-This skill provides the definitive guide for using the **Genexus18MCP** server at its peak performance. It focuses on surgical precision, token efficiency, and instant KB interaction.
+Use this skill when interacting with the GeneXus KB through the MCP server in this repository.
 
-## 🚀 Elite Tool Selection
+## Transport baseline
 
-| Tool                   | Best Use Case                                                            | Performance                               |
-| :--------------------- | :----------------------------------------------------------------------- | :---------------------------------------- |
-| `genexus_patch`        | **PRIMARY EDIT TOOL.** Surgical line-by-line replacement using context.  | Instant (Background Flush).               |
-| `genexus_search`       | Find objects AND their signatures (`parm`). Supports `usedby:TableName`. | Zero-Latency (Super Cache).               |
-| `genexus_read_source`  | Token-efficient reading via `offset` and `limit`. Includes variable meta.| Optimized (Smart Read).                   |
-| `genexus_validate`     | **Pre-save check.** Runs native SDK syntax diagnostics.                  | SDK Native.                               |
-| `genexus_test`         | Executes GXtest Unit Tests and captures real results.                    | MSBuild Integration.                      |
+- Official transports: stdio MCP and HTTP MCP at `/mcp`.
+- HTTP clients must `initialize` first, send `MCP-Protocol-Version: 2025-06-18`, and persist the returned `MCP-Session-Id`.
+- The gateway is MCP-only. Use `/mcp`.
 
-## 🏎️ Performance Protocols
+## Primary tools
 
-1.  **Background Flushing**: Changes to the cache are saved asynchronously. You do not need to wait for disk I/O after a `patch` or `write`.
-2.  **Super Cache**: The search index contains `parm` rules and code snippets. Always check search results before calling `read_source`.
-3.  **Smart Read**: Reading source code automatically injects definitions for local variables used in that snippet.
+| Tool | Use |
+| --- | --- |
+| `genexus_query` | Find objects, references, signatures, and entry points. Supports optional `typeFilter` and `domainFilter` |
+| `genexus_read` | Read one part with pagination |
+| `genexus_batch_read` | Fetch coordinated context across several parts or objects |
+| `genexus_edit` | Apply a focused edit or overwrite one part |
+| `genexus_batch_edit` | Commit multiple edits atomically |
+| `genexus_analyze` | Run navigation, lint, UI, or summary analysis |
+| `genexus_inspect` | Get structured object or conversion context |
+| `genexus_lifecycle` | Build, validate, reindex, and KB operations |
+| `genexus_refactor` | Use supported rename or extraction flows |
+| `genexus_format` | Format code through the worker formatter |
+| `genexus_properties` | Read or update properties |
+| `genexus_history` | Read or restore versions |
+| `genexus_structure` | Read or update logical and visual structure |
 
-## 💉 Surgical Editing (`genexus_patch`)
+## Preferred workflow
 
-Always prefer `genexus_patch` over `genexus_write_object` for existing code.
-- **Precision**: Provide at least 2-3 lines of `context` (old_string) to ensure unique matching.
-- **Safety**: The tool will fail if the context is ambiguous, preventing accidental double-edits.
-- **Efficiency**: Saves thousands of tokens by not sending the full object body back and forth.
+1. Discover capabilities with `tools/list`, `resources/list`, and `prompts/list`.
+2. Search with `genexus_query`.
+3. Read only the needed parts with `genexus_read` or `resources/read`.
+4. If a change spans several files or parts, switch to `genexus_batch_edit`.
+5. Validate with `genexus_lifecycle` or the specific build/test command that matches the task.
 
-## 🔄 The Elite Workflow
+## Reading rules
 
-```mermaid
-graph TD
-    A[Search Object & Parm] --> B{Need more context?}
-    B -- Yes --> C[Read Source snippet offset/limit]
-    B -- No --> D[Apply Surgical Patch]
-    C --> D
-    D --> E[Validate Syntax]
-    E -- Success --> F[Run Unit Test]
-    E -- Fail --> G[Fix Patch]
-    G --> D
-```
+- Prefer paginated `genexus_read` calls for large procedures and transactions.
+- Use `genexus_batch_read` when the task requires source, rules, events, or variables together.
+- Prefer resources for stable context panes and browsable metadata:
+  - `genexus://objects/{name}/part/{part}`
+  - `genexus://objects/{name}/variables`
+  - `genexus://objects/{name}/navigation`
+  - `genexus://objects/{name}/indexes`
+  - `genexus://objects/{name}/logic-structure`
+  - `genexus://attributes/{name}`
 
-## 🧠 Intelligence: Smart Variable Injection
+## Editing rules
 
-The MCP automatically handles variable definitions in `genexus_write_object` and `genexus_patch`. 
-- If you use `&CustomerId` and `CustomerId` is an attribute, the MCP copies its definition.
-- **Rule**: Do not waste time manually adding variables to the `Variables` part if they follow attribute naming or common patterns (Date, Boolean, Numeric).
+- Use `genexus_edit` for a single object part.
+- Use `genexus_batch_edit` for atomic multi-object work.
+- Use `genexus_add_variable` when the intent is explicit variable creation instead of free-form source mutation.
+- Use `genexus_format` after material source changes when formatting matters.
+- Do not rely on retired names such as `genexus_patch`, `genexus_read_source`, or `genexus_write_object`.
+
+## Refactor and structure rules
+
+- For renames and extraction flows, prefer `genexus_refactor` over manual text edits.
+- For transactions and visual designers, use `genexus_structure` instead of custom editor payloads.
+- For metadata changes, use `genexus_properties`.
+
+## Anti-patterns
+
+- Do not hardcode tool availability. Discovery is live.
+- Do not treat hidden transport adapters as the contract.
+- Do not fetch full object bodies when a paginated or resource-based read is enough.

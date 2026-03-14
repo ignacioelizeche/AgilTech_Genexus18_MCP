@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using Newtonsoft.Json;
 using System.Threading;
+using System.Collections.Generic;
 
 namespace GxMcp.Gateway
 {
@@ -113,6 +114,9 @@ namespace GxMcp.Gateway
     {
         public int HttpPort { get; set; } = 5000;
         public bool McpStdio { get; set; } = true;
+        public string BindAddress { get; set; } = "127.0.0.1";
+        public List<string> AllowedOrigins { get; set; } = new List<string>();
+        public int SessionIdleTimeoutMinutes { get; set; } = 10;
     }
 
     public class LoggingConfig

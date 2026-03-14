@@ -17,7 +17,6 @@ namespace GxMcp.Gateway
         private Task? _healthCheckTask;
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private DateTime _lastResponse = DateTime.Now;
-        private bool _isPinging = false;
 
         public event Action<string>? OnRpcResponse;
         public event Action? OnWorkerExited;

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "genexus": {
+      "type": "http",
+      "url": "http://127.0.0.1:5000/mcp",
+      "name": "GeneXus MCP Server",
+      "version": "1.0.0",
+      "capabilities": [
+        "tools",
+        "resources",
+        "prompts",
+        "completion"
+      ]
+    }
+  }
+}

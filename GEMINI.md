@@ -1,51 +1,57 @@
-# Protocolo GeneXus 18 MCP (v1.0.0)
+# GeneXus MCP Protocol Guide
 
-> [!IMPORTANT]
-> **Skills Required**: Before performing ANY task in this repo, the agent MUST load and follow:
+> Required repo skills before editing KB logic:
 >
-> 1. `[GeneXus MCP Mastery](file:///.gemini/skills/genexus-mastery/SKILL.md)` - For tool performance and cache usage.
-> 2. `[GeneXus 18 Guidelines](file:///.gemini/skills/genexus18-guidelines/SKILL.md)` - For official GeneXus development rules.
+> 1. [GeneXus MCP Mastery](./.gemini/skills/genexus-mastery/SKILL.md)
+> 2. [GeneXus 18 Guidelines](./.gemini/skills/genexus18-guidelines/SKILL.md)
 
-## 🏎️ Performance & Infrastructure (v1.0.0)
+This repository is MCP-first. The official transport is MCP over stdio or HTTP at `/mcp`. The old `/api/command` endpoint is no longer part of the gateway surface.
 
-O MCP opera com arquitetura desacoplada e alta performance:
+## Correct MCP flow
 
-1.  **Zero Hardcoding**: Caminhos de instalação (`GX_PROGRAM_DIR`) e KBs (`GX_KB_PATH`) são resolvidos via Variáveis de Ambiente ou `config.json`.
-2.  **Hot Reload (Config Watcher)**: O Gateway monitora o `config.json`. Alterações na KB ou caminhos reiniciam o Worker automaticamente.
-3.  **Tool Registry Dinâmico**: As definições de ferramentas residem em `tool_definitions.json`.
-4.  **PartAccessor (Standard)**: Acesso padronizado a partes de objetos (Source, Rules, Variables) via `PartAccessor.cs`.
-5.  **Base64 Pipeline**: Transporte binário 100% imune a encoding/acentuação.
+1. Initialize the session with `initialize`.
+2. Discover the live surface with `tools/list`, `resources/list`, `resources/templates/list`, `prompts/list`, and `completion/complete` when needed.
+3. Execute work with `tools/call`, `resources/read`, and `prompts/get`.
+4. For HTTP MCP, send `MCP-Protocol-Version: 2025-06-18` and reuse the returned `MCP-Session-Id`.
 
-## 🔍 Intelligence: Contexto Profundo
+## Recommended tool usage
 
-1.  **Injeção Recursiva**: `genexus_inject_context(recursive: true)` identifica dependências de dependências (ex: Procedures -> SDTs -> Domínios), injetando o grafo completo no contexto da IA.
-2.  **Extração de Domínios/Enums**: O sistema resolve Domínios e Enums automaticamente, permitindo que a IA entenda constantes do negócio.
-3.  **Business Components (BC)**: Injeção automática da estrutura de BCs ao analisar transações.
-4.  **Fallback Discovery**: Identificação de tabelas e referências via nomes e padrões quando a navegação nativa não está disponível.
+- `genexus_query`: find objects, references, signatures, and dependency entry points. Supports optional `typeFilter` and `domainFilter` for server-side narrowing.
+- `genexus_read`: read object parts with pagination. Prefer this over large bulk reads.
+- `genexus_batch_read`: fetch multiple parts when a workflow needs coordinated context.
+- `genexus_edit`: apply focused edits to a part or replace content through the MCP write path.
+- `genexus_batch_edit`: update multiple objects atomically.
+- `genexus_inspect`: get structured conversion or object context.
+- `genexus_analyze`: navigation, lint, UI, and summary analysis modes.
+- `genexus_lifecycle`: build, validate, index, and KB lifecycle operations.
+- `genexus_get_sql`: extract DDL and SQL-oriented schema insights.
+- `genexus_create_object`: create new KB objects.
+- `genexus_refactor`: supported rename and extraction refactors.
+- `genexus_add_variable`: add variables through the worker contract.
+- `genexus_format`: format source through the worker formatter.
+- `genexus_properties`: get or set object properties.
+- `genexus_history`: list, read, save, and restore object history.
+- `genexus_structure`: read or update logical and visual structure.
+- `genexus_doc`: access documentation, health, and visualization flows.
 
-## 🛠️ Integrated Experience: Nexus-IDE (VS Code)
+## Resource-first patterns
 
-1.  **Sincronização Ativa**: A IDE e o MCP compartilham o mesmo `config.json`.
-2.  **Virtual FS**: Acesso via `genexus:/[Type]/[Name]` em VS Code.
-3.  **ALWAYS COMPILE**: Após qualquer mudança em C#, execute `.\build.ps1`.
+Prefer resources when the data is naturally browsable or cacheable:
 
-## [Tools] Elite Tool Usage Guide
+- `genexus://objects/{name}/part/{part}`
+- `genexus://objects/{name}/variables`
+- `genexus://objects/{name}/navigation`
+- `genexus://objects/{name}/summary`
+- `genexus://objects/{name}/indexes`
+- `genexus://objects/{name}/logic-structure`
+- `genexus://attributes/{name}`
+- `genexus://kb/index-status`
+- `genexus://kb/health`
 
-### 1. `genexus_patch` (Surgical Edit) - **PREFER THIS**
-Surgical line-by-line replacement using context. Preserva indentação e whitespace.
+## Operating rules
 
-### 2. `genexus_inject_context` (Deep Context)
-**CRITICAL**: Use antes de implementar lógica complexa para garantir que todas as dependências (SDTs, Procedures chamadas) estejam no contexto.
-
-### 3. `genexus_analyze(mode="navigation")`
-Obtém o plano de execução nativo da GeneXus (Tabelas, Índices, Filtros).
-
----
-
-## ⌨️ Shell & Automation: Anti-Mistake Protocol (v19.1)
-
-> [!IMPORTANT]
-> **CRITICAL RULE**: NEVER use the `cd` command within a `run_command` string. Always use the `Cwd` parameter.
-
-1.  **Command Separators**: No Windows (PowerShell), use `;` em vez de `&&`.
-2.  **Build Verification**: Após alterações estruturais, rode `.\build.ps1` e verifique se há 0 erros.
+- Do not design new features around non-MCP transport contracts.
+- Do not use retired tool names such as `genexus_patch`, `genexus_read_source`, or `genexus_write_object`.
+- Read first, then edit. Use paginated reads for large objects.
+- Prefer MCP discovery over hardcoded assumptions about available tools or resources.
+- After C# changes, run `.\build.ps1`. For current validation commands, follow the README.

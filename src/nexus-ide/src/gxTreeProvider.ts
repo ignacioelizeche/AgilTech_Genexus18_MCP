@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { TYPE_SUFFIX } from "./gxFileSystem";
-import { GX_SCHEME } from "./constants";
+import { GX_SCHEME, ROOT_PARENT_NAME } from "./constants";
+import { GxFileSystemProvider } from "./gxFileSystem";
 
 // Sort priority inside any folder: Module → Folder → everything else (alphabetical within groups)
 const TYPE_ORDER: Record<string, number> = {
@@ -85,7 +86,7 @@ export class GxTreeProvider implements vscode.TreeDataProvider<GxTreeItem> {
   private _cache = new Map<string, { items: GxTreeItem[]; time: number }>();
 
   constructor(
-    private readonly callGateway: (cmd: any) => Promise<any>,
+    private readonly provider: GxFileSystemProvider,
     private readonly extensionUri: vscode.Uri,
   ) {}
 
@@ -119,19 +120,14 @@ export class GxTreeProvider implements vscode.TreeDataProvider<GxTreeItem> {
 
     try {
       console.log(`[GxTree] getChildren for: "${parentName}"`);
-      const result = await this.callGateway({
-        module: "Search",
-        action: "Query",
-        target: `parent:"${parentName}"`,
-        limit: 100000,
-      });
-
-      console.log(
-        `[GxTree] Result for "${parentName}": ${result?.results?.length || 0} objects`,
+      const effectiveParent = parentName || ROOT_PARENT_NAME;
+      const objects: GxObject[] = await this.provider.browseObjects(
+        effectiveParent,
       );
 
-      const objects: GxObject[] =
-        result.results || (Array.isArray(result) ? result : []);
+      console.log(
+        `[GxTree] Result for "${effectiveParent}": ${objects.length || 0} objects`,
+      );
 
       // Sort: Module (0) → Folder (1) → Files (2), alphabetical within each group
       objects.sort((a, b) => {
@@ -155,52 +151,6 @@ export class GxTreeProvider implements vscode.TreeDataProvider<GxTreeItem> {
       });
 
       this._cache.set(cacheKey, { items, time: Date.now() });
-
-      // --- ELITE BACKGROUND PRE-FETCH ---
-      // If we just loaded the root, pre-fetch more folders to ensure instant navigation
-      if (parentName === "") {
-        const containers = items.filter(
-          (i) => i.gxType === "Folder" || i.gxType === "Module",
-        );
-        // Pre-fetch first 10 containers sequentially in background to not choke the gateway
-        (async () => {
-          for (const folder of containers.slice(0, 10)) {
-            try {
-              // Only 1 level deep for auto-prefetch
-              const result = await this.callGateway({
-                module: "Search",
-                action: "Query",
-                target: `parent:"${folder.gxName}"`,
-                limit: 50,
-              });
-              // Store in cache directly without full getChildren recursion
-              const subObjects: GxObject[] =
-                result.results || (Array.isArray(result) ? result : []);
-              if (subObjects.length > 0) {
-                const subItems = subObjects.map((obj) => {
-                  const isSubContainer =
-                    obj.type === "Module" || obj.type === "Folder";
-                  return new GxTreeItem(
-                    obj.name,
-                    obj.type,
-                    (folder.gxParentPath ? folder.gxParentPath + "/" : "") +
-                      folder.gxName,
-                    isSubContainer
-                      ? vscode.TreeItemCollapsibleState.Collapsed
-                      : vscode.TreeItemCollapsibleState.None,
-                    this.extensionUri,
-                  );
-                });
-                this._cache.set(folder.gxName, {
-                  items: subItems,
-                  time: Date.now(),
-                });
-              }
-            } catch {}
-            await new Promise((r) => setTimeout(r, 200));
-          }
-        })();
-      }
 
       return items;
     } catch (e) {

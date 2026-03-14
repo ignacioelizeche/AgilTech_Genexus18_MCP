@@ -1,65 +1,59 @@
-# GeneXus 18 MCP Server (Genexus18MCP) - v1.0.0
+# GeneXus 18 MCP Server (Genexus18MCP)
 
-A high-performance **Model Context Protocol (MCP)** server for GeneXus 18, enabling AI agents (like Gemini, Claude, Cursor) to interact directly with your GeneXus Knowledge Base using the **Native GeneXus SDK**.
+A Model Context Protocol (MCP) server for GeneXus 18 with a .NET 8 gateway, a .NET Framework 4.8 worker, and a VS Code extension that operates directly against the MCP surface.
 
----
+## Key Features
 
-## [Main] Key Features (v1.0.0)
+- Native GeneXus SDK integration through the worker process.
+- MCP over stdio and HTTP at `/mcp`.
+- MCP-first Nexus-IDE runtime for discovery, VFS, providers, commands, and shadow sync.
+- Dynamic tool registry in `src/GxMcp.Gateway/tool_definitions.json`.
+- HTTP session handling with protocol-version negotiation and SSE support.
 
-- **Native SDK Integration**: Interacts directly with the GeneXus Object Model (Artech.\* DLLs) for deep analysis and manipulation.
-- **Dynamic Infrastructure**:
-  - **Hot Reload (Config Watcher)**: The Gateway monitors `config.json` in real-time. Changing your KB in VS Code automatically restarts the Worker.
-  - **Zero Hardcoding**: 100% path resolution via environment variables or dynamic config.
-  - **Tool Registry Dinâmico**: Tool definitions reside in `tool_definitions.json`. The Gateway and AI share a single source of truth.
-- **Intelligence & Context**:
-  - **Recursive Context Injection**: Injects dependencies of dependencies (Procedures -> SDTs -> Domains) for complete AI reasoning.
-  - **Business Component (BC) Awareness**: Automatically extracts BC structures during analysis.
-- **Dual Process Stability**:
-  - **Gateway (.NET 8)**: Handles protocol, hot-reloading, and stdio communication.
-  - **Worker (.NET 4.8 x86)**: Runs in **STA Single-Thread Mode** for 100% SDK compatibility.
+## Nexus-IDE
 
----
+The repository includes `src/nexus-ide`, a lightweight VS Code extension for GeneXus work:
 
-## [IDE] Nexus-IDE (Mini GeneXus IDE for VS Code)
+- Virtual file system using the `genexus://` scheme
+- KB explorer
+- Multi-part editing for source, rules, events, and variables
+- MCP discovery commands for tools, resources, and prompts
 
-The project includes **Nexus-IDE**, a lightweight VS Code extension that transforms VS Code into a mini GeneXus IDE by leveraging the MCP server.
+The extension uses `/mcp` directly. The legacy `/api/command` path has been removed from the gateway.
 
-- **Virtual File System**: Edit GeneXus objects directly in VS Code using the `genexus://` protocol.
-- **KB Explorer**: Browse your Knowledge Base hierarchy directly from the Activity Bar.
-- **Multi-Part Editing**: Seamlessly switch between **Source**, **Rules**, **Events**, and **Variables**.
-- **Real-time Indexing**: Powered by the same high-performance engine as the MCP server.
+## Installation
 
----
+### Fast path
 
-## [Setup] Installation & Setup (Zero-Config)
+1. Clone the repository.
+2. Run `.\install.ps1` in PowerShell.
+3. If your `config.json` values are invalid, the installer will prompt for the GeneXus installation path and the KB path.
+4. Restart Claude/Codex if they were already open.
+5. Open your KB folder in VS Code.
 
-### For Users (Fastest)
+Notes:
 
-1. **Clone the repository.**
-2. **Run `.\install.ps1` in PowerShell.**
-   * This universal installer will automatically:
-     * Compile the backend (.NET 8).
-     * Package and install the VS Code Extension (`nexus-ide`).
-     * Automatically inject the local configuration into **Claude Desktop**.
-3. **Open your KB folder** in VS Code (where the `.gxw` file is).
+- The installer updates `config.json`, builds the gateway/worker, packages `src/nexus-ide/nexus-ide.vsix`, configures Claude Desktop, and configures Codex.
+- Automatic extension installation works with the editor CLIs found in `PATH` among `code`, `code-insiders`, `cursor`, `codium`, and `antigravity`. If none are present, install the generated `.vsix` manually.
 
-### For Cursor / Cline Users (Copy & Paste)
+### Development build
 
-If you are using an AI coding assistant like **Cursor** or **Cline**, simply copy the following prompt and paste it into chat:
-
-> "I want to install the GeneXus MCP Server. Please clone the repo (https://github.com/lennix1337/Genexus18MCP.git), run `.\install.ps1` in Windows PowerShell, and then configure yourself to use the MCP server by adding `{ "command": "<REPO_PATH>\\publish\\start_mcp.bat", "args": [] }` to your MCP settings."
-
-### Manual Development Build
-
-#### 1. Build the Project
 ```powershell
 .\build.ps1
 ```
 
-#### 2. Configuration (`config.json`)
-The system is now configuration-driven. Edit the `config.json` in the backend folder:
+## Configuration
+
+Edit `config.json`:
+
 ```json
 {
+  "Server": {
+    "HttpPort": 5000,
+    "BindAddress": "127.0.0.1",
+    "AllowedOrigins": [],
+    "SessionIdleTimeoutMinutes": 10
+  },
   "GeneXus": {
     "InstallationPath": "C:\\Program Files (x86)\\GeneXus\\GeneXus18",
     "WorkerExecutable": "worker\\GxMcp.Worker.exe"
@@ -70,33 +64,61 @@ The system is now configuration-driven. Edit the `config.json` in the backend fo
 }
 ```
 
----
+## Correct MCP Usage
 
-## [Tools] Elite Toolset
+Official transports:
 
-Full documentation in `GEMINI.md`.
+- stdio MCP for desktop clients
+- HTTP MCP at `http://127.0.0.1:5000/mcp`
 
-- **`genexus_query`**: Semantic search for objects and references (supports `usedby:`).
-- **`genexus_read`**: Paginated source code reading (Base64 protected).
-- **`genexus_edit`**: Surgical patching or full overwrite.
-- **`genexus_batch_edit`**: Multi-object atomic edits.
-- **`genexus_inject_context`**: Dynamic dependency injection (supports `recursive: true`).
-- **`genexus_analyze`**: Navigation analysis, Linter, and Data Schema extraction.
-- **`genexus_get_sql`**: Instantly extract SQL DDL (`CREATE TABLE`) for any Transaction or Table.
-- **`genexus_test`**: Execute GXtest unit tests and get real-time results.
+HTTP MCP rules:
 
----
+1. Send `initialize` first.
+2. Include `MCP-Protocol-Version: 2025-06-18`.
+3. Persist and reuse the returned `MCP-Session-Id`.
+4. Use discovery methods before hardcoding assumptions: `tools/list`, `resources/list`, `resources/templates/list`, `prompts/list`.
+5. Execute work with `tools/call`, `resources/read`, and `prompts/get`.
+6. Use `GET /mcp` for SSE notifications when needed.
+7. Use `DELETE /mcp` to close the session.
 
-## [Arch] Architecture
+The gateway is MCP-only on HTTP. Use `/mcp`.
+
+## Tool Surface
+
+See `GEMINI.md` for guidance. The main MCP tools are:
+
+- `genexus_query`
+  - supports optional `typeFilter` and `domainFilter` for server-side narrowing before ranking/truncation
+  - `genexus_read`
+  - `genexus_batch_read`
+- `genexus_edit`
+- `genexus_batch_edit`
+- `genexus_inspect`
+- `genexus_analyze`
+- `genexus_inject_context`
+- `genexus_lifecycle`
+- `genexus_get_sql`
+- `genexus_test`
+- `genexus_create_object`
+- `genexus_refactor`
+- `genexus_add_variable`
+- `genexus_format`
+- `genexus_properties`
+- `genexus_history`
+- `genexus_structure`
+- `genexus_doc`
+
+## Architecture
 
 ```mermaid
 graph LR
-    A[AI Agent] --MCP Protocol--> B[Gateway .NET 8]
-    B --Config Watcher--> B
-    B --Single-Line JSON--> C[Worker .NET 4.8 STA]
-    C --PartAccessor--> D[GeneXus 18 KB]
+    A[AI Client or Nexus-IDE] -->|MCP stdio or HTTP /mcp| B[Gateway .NET 8]
+    B -->|JSON-RPC over process boundary| C[Worker .NET Framework 4.8]
+    C -->|Native SDK| D[GeneXus KB]
 ```
 
----
-**Current Version**: v1.0.0 (Official Release)  
-**Status**: Stable & Deployment Ready
+## Current State
+
+- The extension is MCP-first.
+- The gateway and worker remain the production architecture.
+- The HTTP transport is MCP-only at `/mcp`.

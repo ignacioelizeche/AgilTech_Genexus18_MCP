@@ -24,8 +24,16 @@ import {
 } from "./constants";
 
 let backendManager: BackendManager;
+const IS_TEST_MODE = process.env.NEXUS_IDE_TEST_MODE === "1";
+let isActivated = false;
 
 export function activate(context: vscode.ExtensionContext) {
+  if (isActivated) {
+    console.log("[Nexus IDE] Activation skipped; extension already initialized.");
+    return;
+  }
+  isActivated = true;
+
   console.log("[Nexus IDE] Extension activating...");
 
   const provider = new GxFileSystemProvider();
@@ -90,6 +98,33 @@ export function activate(context: vscode.ExtensionContext) {
 export async function addKbFolder(context: vscode.ExtensionContext, maxRetries = 5, delayMs = 2000, provider?: any) {
   const folders = vscode.workspace.workspaceFolders || [];
   const hasGxFolder = folders.some((f) => f.uri.scheme === GX_SCHEME);
+  if (hasGxFolder) {
+    console.log("[Nexus IDE] Virtual KB folder already mounted. Forcing refresh.");
+
+    try {
+      provider?.clearDirCache?.();
+      provider?._emitter?.fire?.([
+        {
+          type: vscode.FileChangeType.Changed,
+          uri: vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
+        },
+      ]);
+      await vscode.commands.executeCommand("nexus-ide.refreshTree");
+    } catch (e) {
+      console.warn("[Nexus IDE] Failed to refresh mounted virtual folder:", e);
+    }
+
+    try {
+      await vscode.commands.executeCommand(`${VIEW_EXPLORER}.focus`);
+    } catch {}
+
+    vscode.window.setStatusBarMessage(
+      "$(folder-opened) GeneXus KB pronta no Explorer",
+      DEFAULT_STATUS_BAR_TIMEOUT,
+    );
+    return;
+  }
+
   if (!hasGxFolder) {
     console.log(`[Nexus IDE] Checking if KB is accessible for auto-mount...`);
 
@@ -109,6 +144,13 @@ export async function addKbFolder(context: vscode.ExtensionContext, maxRetries =
           name: "GeneXus KB",
         });
         context.globalState.update(STATE_KEY_FOLDER_ADDED, true);
+        try {
+          await vscode.commands.executeCommand(`${VIEW_EXPLORER}.focus`);
+        } catch {}
+        vscode.window.setStatusBarMessage(
+          "$(folder-opened) GeneXus KB montada no Explorer",
+          DEFAULT_STATUS_BAR_TIMEOUT,
+        );
         return; // Success, exit retry loop
       } catch (e) {
         console.warn(
@@ -132,7 +174,7 @@ function initializeExtension(
 
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
   const port = config.get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
-  provider.baseUrl = `http://localhost:${port}/api/command`;
+  provider.baseUrl = `http://127.0.0.1:${port}/mcp`;
 
   // Initialize Managers
   backendManager = new BackendManager(context);
@@ -144,14 +186,11 @@ function initializeExtension(
   // Defer discovery registration until AFTER backend is potentially ready
   // discoveryManager.register(); // Moved below
 
-  const diagnosticProvider = new GxDiagnosticProvider(
-    (cmd) => provider.callGateway(cmd),
-    provider,
-  );
+  const diagnosticProvider = new GxDiagnosticProvider(provider);
   provider.setDiagnosticProvider(diagnosticProvider);
 
   const treeProvider = new GxTreeProvider(
-    (cmd) => provider.callGateway(cmd),
+    provider,
     context.extensionUri,
   );
 
@@ -205,6 +244,10 @@ function initializeExtension(
   backendManager
     .start(provider)
     .then(() => {
+      if (IS_TEST_MODE) {
+        console.log("[Nexus IDE] Test mode: skipping live MCP discovery registration.");
+        return;
+      }
       console.log(
         "[Nexus IDE] Backend started successfully. Registering discovery tools...",
       );
@@ -222,10 +265,11 @@ function initializeExtension(
     if (provider.isBulkIndexing) return;
 
     try {
-      const status = await provider.callGateway({
-        module: "KB",
-        action: "GetIndexStatus",
-      });
+      const status = await provider.callMcpTool(
+        "genexus_lifecycle",
+        { action: "status" },
+        15000,
+      );
 
       const shadowPath = shadowService.shadowRoot;
       const shadowDirExists =
@@ -237,21 +281,25 @@ function initializeExtension(
           10000,
         );
         provider.isBulkIndexing = true;
-        await provider.callGateway({
-          module: "KB",
-          action: "BulkIndex",
-        });
+        await provider.callMcpTool(
+          "genexus_lifecycle",
+          { action: "index" },
+          300000,
+        );
 
         let isDone = false;
         while (!isDone) {
           await new Promise((resolve) => setTimeout(resolve, 3000));
-          const currentStatus = await provider.callGateway({
-            module: "KB",
-            action: "GetIndexStatus",
-          });
+          const currentStatus = await provider.callMcpTool(
+            "genexus_lifecycle",
+            { action: "status" },
+            15000,
+          );
 
           if (currentStatus && currentStatus.status === "Complete") {
             isDone = true;
+            treeProvider.refresh();
+            provider.clearDirCache();
             vscode.window.setStatusBarMessage(
               "$(check) GeneXus: Ambiente Pronto!",
               DEFAULT_STATUS_BAR_TIMEOUT,
@@ -293,6 +341,7 @@ function initializeExtension(
 }
 
 export function deactivate() {
+  isActivated = false;
   if (backendManager) {
     backendManager.stop();
   }

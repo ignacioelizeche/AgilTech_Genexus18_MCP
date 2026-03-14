@@ -22,14 +22,10 @@ export class PropertiesView {
     this.currentPanel.webview.html = this.getHtml(target, controlName);
 
     try {
-      const result = await provider.callGateway({
-        method: "execute_command",
-        params: {
-          module: "Property",
-          action: "GetProperties",
-          target: target,
-          control: controlName
-        },
+      const result = await provider.callMcpTool("genexus_properties", {
+        action: "get",
+        name: target,
+        control: controlName
       });
       if (result && !result.error) {
         this.currentPanel.webview.postMessage({ type: "update", properties: result.properties });
@@ -40,16 +36,12 @@ export class PropertiesView {
       this.currentPanel.webview.onDidReceiveMessage(async (message) => {
         if (message.command === "setProperty") {
           try {
-            await provider.callGateway({
-              method: "execute_command",
-              params: {
-                module: "Property",
-                action: "SetProperty",
-                target: target,
-                name: message.name,
-                payload: message.value,
-                control: controlName
-              },
+            await provider.callMcpTool("genexus_properties", {
+              action: "set",
+              name: target,
+              propertyName: message.name,
+              value: message.value,
+              control: controlName
             });
           } catch (e) {
             vscode.window.showErrorMessage(`Failed to set property: ${e}`);

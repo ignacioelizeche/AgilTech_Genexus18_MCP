@@ -150,9 +150,10 @@ namespace GxMcp.Worker.Services
                     try {
                         var parsed = JObject.Parse(readResult);
                         parsed["object"] = name;
+                        parsed["part"] = part;
                         results.Add(parsed);
                     } catch {
-                        results.Add(new JObject { ["object"] = name, ["error"] = readResult });
+                        results.Add(new JObject { ["object"] = name, ["part"] = part, ["error"] = readResult });
                     }
                 }
 

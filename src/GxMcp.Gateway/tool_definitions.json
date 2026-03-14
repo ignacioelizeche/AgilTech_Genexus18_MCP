@@ -4,16 +4,24 @@
     "description": "Semantic search for objects, references, and snippets. Supports prefixes like 'usedby:Name', 'type:Type', and 'description:Text'. NOTE: If this tool returns 'Index missing', you MUST run genexus_lifecycle(action='index') before searching again.",
     "inputSchema": {
       "type": "object",
-      "properties": {
-        "query": {
-          "type": "string",
-          "description": "The search query."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Max results (default 50).",
-          "default": 50
-        }
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query."
+          },
+          "typeFilter": {
+            "type": "string",
+            "description": "Optional server-side type filter applied before ranking, such as 'Folder' or 'Module'."
+          },
+          "domainFilter": {
+            "type": "string",
+            "description": "Optional business domain filter applied before ranking."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (default 50).",
+            "default": 50
+          }
       },
       "required": [
         "query"
@@ -343,6 +351,7 @@
           "enum": [
             "build",
             "rebuild",
+            "reorg",
             "validate",
             "sync",
             "index",
@@ -425,6 +434,230 @@
         }
       },
       "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "genexus_create_object",
+    "description": "Creates a new GeneXus object in the active Knowledge Base.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Object type such as Procedure, Transaction, WebPanel, SDT, or DataProvider."
+        },
+        "name": {
+          "type": "string",
+          "description": "New object name."
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "genexus_refactor",
+    "description": "Runs supported GeneXus refactor operations such as renaming and procedure extraction.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "RenameAttribute",
+            "RenameVariable",
+            "RenameObject",
+            "ExtractProcedure"
+          ],
+          "description": "Refactor action."
+        },
+        "target": {
+          "type": "string",
+          "description": "Primary target object or symbol."
+        },
+        "newName": {
+          "type": "string",
+          "description": "New name for rename actions."
+        },
+        "objectName": {
+          "type": "string",
+          "description": "Object name that owns the refactor operation. Required for variable rename and extraction."
+        },
+        "code": {
+          "type": "string",
+          "description": "Code block to extract for ExtractProcedure."
+        },
+        "procedureName": {
+          "type": "string",
+          "description": "New procedure name for ExtractProcedure."
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "genexus_add_variable",
+    "description": "Adds a variable to the Variables part of a GeneXus object.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Object name."
+        },
+        "varName": {
+          "type": "string",
+          "description": "Variable name, with or without '&'."
+        },
+        "typeName": {
+          "type": "string",
+          "description": "Optional variable type or domain."
+        }
+      },
+      "required": [
+        "name",
+        "varName"
+      ]
+    }
+  },
+  {
+    "name": "genexus_explain_code",
+    "description": "Runs code explanation or auto-fix style analysis for a GeneXus object snippet.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Object name."
+        },
+        "code": {
+          "type": "string",
+          "description": "Code snippet or serialized analysis payload."
+        }
+      },
+      "required": [
+        "name",
+        "code"
+      ]
+    }
+  },
+  {
+    "name": "genexus_format",
+    "description": "Formats a GeneXus code snippet using the worker formatting rules.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "GeneXus code to format."
+        }
+      },
+      "required": [
+        "code"
+      ]
+    }
+  },
+  {
+    "name": "genexus_properties",
+    "description": "Reads or updates GeneXus object properties.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "set"
+          ],
+          "description": "Property operation."
+        },
+        "name": {
+          "type": "string",
+          "description": "Object name."
+        },
+        "control": {
+          "type": "string",
+          "description": "Optional control name for UI properties."
+        },
+        "propertyName": {
+          "type": "string",
+          "description": "Property name for set operations."
+        },
+        "value": {
+          "type": "string",
+          "description": "Property value for set operations."
+        }
+      },
+      "required": [
+        "action",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "genexus_history",
+    "description": "Lists, reads, saves, or restores GeneXus object history snapshots.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get_source",
+            "save",
+            "restore"
+          ],
+          "description": "History operation."
+        },
+        "name": {
+          "type": "string",
+          "description": "Object name."
+        },
+        "versionId": {
+          "type": "integer",
+          "description": "Version identifier for get_source."
+        }
+      },
+      "required": [
+        "action",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "genexus_structure",
+    "description": "Reads or updates visual and logical structure information for GeneXus objects.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "get_visual",
+            "update_visual",
+            "get_indexes",
+            "get_logic"
+          ],
+          "description": "Structure operation."
+        },
+        "name": {
+          "type": "string",
+          "description": "Object name."
+        },
+        "payload": {
+          "type": "object",
+          "description": "Payload for update_visual."
+        }
+      },
+      "required": [
+        "action",
         "name"
       ]
     }

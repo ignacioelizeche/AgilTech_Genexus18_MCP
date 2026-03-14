@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
+import { GxFileSystemProvider } from './gxFileSystem';
 
 export class GxCodeLensProvider implements vscode.CodeLensProvider {
     private refCache = new Map<string, { count: number, time: number }>();
 
-    constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
+    constructor(private readonly provider: GxFileSystemProvider) {}
 
     async provideCodeLenses(
         document: vscode.TextDocument,
@@ -45,10 +46,7 @@ export class GxCodeLensProvider implements vscode.CodeLensProvider {
         }
 
         try {
-            const results = await this.callGateway({
-                method: 'execute_command',
-                params: { module: 'Search', query: `usedby:${objName}`, limit: 1 }
-            });
+            const results = await this.provider.queryObjects(`usedby:${objName}`, 1, 15000);
 
             const count = (results && results.count !== undefined) ? results.count : (results?.results?.length || 0);
             this.refCache.set(objName, { count, time: Date.now() });

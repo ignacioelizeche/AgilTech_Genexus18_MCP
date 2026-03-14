@@ -6,12 +6,13 @@ import {
   dataTypes,
   ruleKeywords,
 } from "./gxNativeFunctions";
+import { GxFileSystemProvider } from "./gxFileSystem";
 
 export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
   private varCache = new Map<string, any[]>();
 
   constructor(
-    private readonly callGateway: (cmd: any) => Promise<any>,
+    private readonly provider: GxFileSystemProvider,
     private readonly getPart?: (uri: vscode.Uri) => string,
   ) {}
 
@@ -52,12 +53,11 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
         );
         if (word && word.length >= 2) {
           try {
-            const sdtResults = await this.callGateway({
-              module: "Search",
-              action: "Query",
-              target: `(type:SDT or type:Transaction or type:Domain) ${word}`,
-              limit: 15,
-            });
+            const sdtResults = await this.provider.queryObjects(
+              `(type:SDT or type:Transaction or type:Domain) ${word}`,
+              15,
+              15000,
+            );
             if (sdtResults && sdtResults.results) {
               for (const res of sdtResults.results) {
                 const item = new vscode.CompletionItem(
@@ -131,11 +131,15 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
           !type.startsWith("VarChar")
         ) {
           try {
-            const structure = await this.callGateway({
-              params: { module: "Structure", action: "Get", target: type },
-            });
-            if (structure && structure.fields) {
-              for (const field of structure.fields) {
+            const structure = await this.provider.getStructure(
+              type,
+              "get_visual",
+              undefined,
+              15000,
+            );
+            const fields = this.extractStructureFields(structure);
+            if (fields.length > 0) {
+              for (const field of fields) {
                 if (
                   partial &&
                   !field.name.toLowerCase().startsWith(partial.toLowerCase())
@@ -238,14 +242,11 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
       const word = range ? document.getText(range) : "";
       // If in For Each, we search even with 0 chars or small prefix
       if (isInsideForEach || (word.length >= 2 && !word.startsWith("&"))) {
-        const attrResults = await this.callGateway({
-          method: "execute_command",
-          params: {
-            module: "Search",
-            query: `type:Attribute ${word}`,
-            limit: isInsideForEach ? 30 : 15,
-          },
-        });
+        const attrResults = await this.provider.queryObjects(
+          `type:Attribute ${word}`,
+          isInsideForEach ? 30 : 15,
+          15000,
+        );
         if (attrResults && attrResults.results) {
           for (const attr of attrResults.results) {
             const item = new vscode.CompletionItem(
@@ -286,30 +287,27 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
             .length === 0
         ) {
           try {
-            const directAttrs = await this.callGateway({
-              method: "execute_command",
-              params: {
-                module: "Structure",
-                action: "GetTable",
-                target: baseTable,
-              },
-            });
-            if (directAttrs && directAttrs.attributes) {
-              for (const attr of directAttrs.attributes) {
-                if (
-                  word &&
-                  !attr.name.toLowerCase().startsWith(word.toLowerCase())
-                )
-                  continue;
-                const item = new vscode.CompletionItem(
-                  attr.name,
-                  vscode.CompletionItemKind.Property,
-                );
-                item.detail = `(Base Attribute) ${attr.type}`;
-                item.sortText = `000_000_${attr.name}`;
-                item.preselect = true;
-                items.push(item);
+            const directAttrs = await this.provider.getStructure(
+              baseTable,
+              "get_visual",
+              undefined,
+              15000,
+            );
+            for (const attr of this.extractStructureFields(directAttrs)) {
+              if (
+                word &&
+                !attr.name.toLowerCase().startsWith(word.toLowerCase())
+              ) {
+                continue;
               }
+              const item = new vscode.CompletionItem(
+                attr.name,
+                vscode.CompletionItemKind.Property,
+              );
+              item.detail = `(Base Attribute) ${attr.type}`;
+              item.sortText = `000_000_${attr.name}`;
+              item.preselect = true;
+              items.push(item);
             }
           } catch {}
         }
@@ -328,10 +326,7 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
     if (this.varCache.has(objName)) return this.varCache.get(objName)!;
 
     try {
-      const result = await this.callGateway({
-        method: "execute_command",
-        params: { module: "Read", action: "GetVariables", target: objName },
-      });
+      const result = await this.provider.readObjectVariables(objName, 15000);
       if (result && Array.isArray(result)) {
         this.varCache.set(objName, result);
         return result;
@@ -340,5 +335,16 @@ export class GxCompletionItemProvider implements vscode.CompletionItemProvider {
       console.error("[Nexus IDE] Error fetching variables:", e);
     }
     return [];
+  }
+
+  private extractStructureFields(structure: any): Array<{ name: string; type: string; isCollection?: boolean }> {
+    const children = Array.isArray(structure?.children) ? structure.children : [];
+    return children
+      .filter((child: any) => child && typeof child.name === "string")
+      .map((child: any) => ({
+        name: child.name,
+        type: child.type || "Unknown",
+        isCollection: Boolean(child.isCollection),
+      }));
   }
 }

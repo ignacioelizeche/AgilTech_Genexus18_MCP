@@ -6,7 +6,6 @@ export class GxDiagnosticProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
 
     constructor(
-        private readonly callGateway: (cmd: any) => Promise<any>,
         private readonly fsProvider: GxFileSystemProvider
     ) {
         this.diagnosticCollection = vscode.languages.createDiagnosticCollection('genexus');
@@ -19,14 +18,11 @@ export class GxDiagnosticProvider {
             const objName = this.getObjName(document);
             const currentPart = this.getPartName(document.uri);
 
-            const result = await this.callGateway({
-                method: 'execute_command',
-                params: { 
-                    module: 'Linter', 
-                    target: objName,
-                    part: currentPart 
-                }
-            });
+            const result = await this.fsProvider.analyzeObject(
+                objName,
+                'linter',
+                30000,
+            );
 
             if (result && result.issues) {
                 const diagnostics: vscode.Diagnostic[] = [];

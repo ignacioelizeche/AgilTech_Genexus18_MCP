@@ -20,10 +20,24 @@ import {
   MODULE_REFACTOR,
   MODULE_WRITE,
   MODULE_HEALTH,
-  DEFAULT_STATUS_BAR_TIMEOUT
+  DEFAULT_STATUS_BAR_TIMEOUT,
+  STATE_KEY_MCP_DISCOVERY,
 } from "../constants";
 
 import { GxUriParser } from "../utils/GxUriParser";
+
+type DiscoverySnapshot = {
+  tools: any[];
+  resources: any[];
+  resourceTemplates?: any[];
+  prompts: any[];
+  fetchedAt: string;
+};
+
+type DiscoveryResourceItem = vscode.QuickPickItem & {
+  itemType: "resource" | "template";
+  value: string;
+};
 
 export class CommandManager {
   constructor(
@@ -126,10 +140,11 @@ export class CommandManager {
             cancellable: false,
           },
           async () => {
-            const result = await this.provider.callGateway({
-              method: "execute_command",
-              params: { module: "Build", action: "Reorg" },
-            });
+            const result = await this.provider.callMcpTool(
+              "genexus_lifecycle",
+              { action: "reorg" },
+              600000,
+            );
             if (result && result.status === "Success") {
               vscode.window.showInformationMessage(
                 "Reorganization successful.",
@@ -176,14 +191,11 @@ export class CommandManager {
             },
             async (progress) => {
               try {
-                const result = await this.provider.callGateway(
+                const result = await this.provider.callMcpTool(
+                  "genexus_lifecycle",
                   {
-                    method: "execute_command",
-                    params: {
-                      module: MODULE_BUILD,
-                      action: "Build",
-                      target: objName,
-                    },
+                    action: "build",
+                    target: objName,
                   },
                   600000,
                 );
@@ -224,10 +236,11 @@ export class CommandManager {
           },
           async () => {
             try {
-              await this.provider.callGateway({
-                method: "execute_command",
-                params: { module: "Build", action: "RebuildAll" },
-              });
+              await this.provider.callMcpTool(
+                "genexus_lifecycle",
+                { action: "rebuild" },
+                600000,
+              );
               vscode.window.showInformationMessage("Rebuild All completed!");
             } catch (e) {
               vscode.window.showErrorMessage(`Rebuild All failed: ${e}`);
@@ -265,10 +278,11 @@ export class CommandManager {
             },
             async () => {
               try {
-                const result = await this.provider.callGateway({
-                  method: "execute_command",
-                  params: { module: "Analyze", action: "GetSQL", target: objName },
-                });
+                const result = await this.provider.callMcpTool(
+                  "genexus_get_sql",
+                  { name: objName },
+                  30000,
+                );
 
                 if (result && result.ddl) {
                   outputChannel.clear();
@@ -305,20 +319,22 @@ export class CommandManager {
           async (progress) => {
             try {
               this.provider.isBulkIndexing = true;
-              await this.provider.callGateway({
-                method: "execute_command",
-                params: { module: MODULE_KB, action: "BulkIndex" },
-              });
+              await this.provider.callMcpTool(
+                "genexus_lifecycle",
+                { action: "index" },
+                300000,
+              );
 
               let isDone = false;
               let lastProcessed = 0;
 
               while (!isDone) {
                 await new Promise((resolve) => setTimeout(resolve, 1000));
-                const status = await this.provider.callGateway({
-                  method: "execute_command",
-                  params: { module: MODULE_KB, action: "GetIndexStatus" },
-                });
+                const status = await this.provider.callMcpTool(
+                  "genexus_lifecycle",
+                  { action: "status" },
+                  15000,
+                );
 
                 if (status && status.isIndexing) {
                   const current = status.processed || 0;
@@ -377,15 +393,14 @@ export class CommandManager {
           },
           async () => {
             try {
-              const result = await this.provider.callGateway({
-                method: "execute_command",
-                params: {
-                  module: MODULE_KB,
-                  action: "CreateObject",
+              const result = await this.provider.callMcpTool(
+                "genexus_create_object",
+                {
                   type: selectedType,
                   name: name,
                 },
-              });
+                60000,
+              );
               if (result && result.status === "Success") {
                 vscode.window.showInformationMessage(
                   `${selectedType} '${name}' created!`,
@@ -436,15 +451,15 @@ export class CommandManager {
           },
           async () => {
             try {
-              const result = await this.provider.callGateway({
-                method: "execute_command",
-                params: {
-                  module: MODULE_REFACTOR,
+              const result = await this.provider.callMcpTool(
+                "genexus_refactor",
+                {
                   action: "RenameAttribute",
                   target: oldName,
-                  payload: newName,
+                  newName: newName,
                 },
-              });
+                300000,
+              );
               if (result && result.status === "Success") {
                 vscode.window.showInformationMessage(
                   `Attribute renamed successfully!`,
@@ -476,15 +491,14 @@ export class CommandManager {
             },
             async () => {
               try {
-                const result = await this.provider.callGateway({
-                  method: "execute_command",
-                  params: {
-                    module: MODULE_WRITE,
-                    action: "AddVariable",
-                    target: objName,
+                const result = await this.provider.callMcpTool(
+                  "genexus_add_variable",
+                  {
+                    name: objName,
                     varName: varName,
                   },
-                });
+                  60000,
+                );
                 if (result && result.status === "Success") {
                   vscode.window.showInformationMessage(
                     `Variable &${varName} created successfully.`,
@@ -506,6 +520,123 @@ export class CommandManager {
 
   private registerMiscCommands() {
     this.context.subscriptions.push(
+      vscode.commands.registerCommand("nexus-ide.showMcpDiscovery", async () => {
+        const snapshot = this.context.globalState.get<DiscoverySnapshot>(
+          STATE_KEY_MCP_DISCOVERY,
+        );
+        if (!snapshot) {
+          vscode.window.showWarningMessage(
+            "Nenhum snapshot MCP encontrado. Aguarde o discovery ou reinicie a extensao.",
+          );
+          return;
+        }
+
+        const doc = await vscode.workspace.openTextDocument({
+          language: "json",
+          content: JSON.stringify(snapshot, null, 2),
+        });
+        await vscode.window.showTextDocument(doc, { preview: false });
+      }),
+
+      vscode.commands.registerCommand("nexus-ide.openMcpResource", async () => {
+        const snapshot = this.context.globalState.get<DiscoverySnapshot>(
+          STATE_KEY_MCP_DISCOVERY,
+        );
+        if (!snapshot) {
+          vscode.window.showWarningMessage(
+            "Nenhum snapshot MCP encontrado. Aguarde o discovery ou reinicie a extensao.",
+          );
+          return;
+        }
+
+        const resourceItems: DiscoveryResourceItem[] = (snapshot.resources ?? []).map((resource) => ({
+          label: resource.name || resource.uri,
+          description: resource.uri,
+          detail: resource.description,
+          itemType: "resource" as const,
+          value: resource.uri,
+        }));
+        const templateItems: DiscoveryResourceItem[] = (snapshot.resourceTemplates ?? []).map(
+          (template) => ({
+            label: template.name || template.uriTemplate,
+            description: template.uriTemplate,
+            detail: template.description,
+            itemType: "template" as const,
+            value: template.uriTemplate,
+          }),
+        );
+
+        const selected = await vscode.window.showQuickPick<DiscoveryResourceItem>(
+          [...resourceItems, ...templateItems],
+          { placeHolder: "Selecione um MCP resource ou resource template" },
+        );
+        if (!selected) return;
+
+        let uri = selected.value;
+        if (selected.itemType === "template") {
+          const resolvedUri = await this.resolveResourceTemplate(selected.value);
+          if (!resolvedUri) return;
+          uri = resolvedUri;
+        }
+
+        const result = await this.provider.readMcpResource(uri, 30000);
+        const doc = await vscode.workspace.openTextDocument({
+          language: "json",
+          content:
+            typeof result === "string"
+              ? result
+              : JSON.stringify(result, null, 2),
+        });
+        await vscode.window.showTextDocument(doc, { preview: false });
+      }),
+
+      vscode.commands.registerCommand("nexus-ide.runMcpPrompt", async () => {
+        const snapshot = this.context.globalState.get<DiscoverySnapshot>(
+          STATE_KEY_MCP_DISCOVERY,
+        );
+        if (!snapshot) {
+          vscode.window.showWarningMessage(
+            "Nenhum snapshot MCP encontrado. Aguarde o discovery ou reinicie a extensao.",
+          );
+          return;
+        }
+
+        const selected = await vscode.window.showQuickPick(
+          (snapshot.prompts ?? []).map((prompt) => ({
+            label: prompt.name,
+            detail: prompt.description,
+            prompt,
+          })),
+          { placeHolder: "Selecione um MCP prompt" },
+        );
+        if (!selected) return;
+
+        const args = await this.collectPromptArguments(selected.prompt);
+        if (args === undefined) return;
+
+        const response = await this.provider.getMcpPrompt(
+          selected.prompt.name,
+          args,
+          30000,
+        );
+        const messages = Array.isArray(response?.messages) ? response.messages : [];
+        const content = messages
+          .map((message: any, index: number) => {
+            const text =
+              typeof message?.content?.text === "string"
+                ? message.content.text
+                : JSON.stringify(message?.content ?? {}, null, 2);
+            return `# Message ${index + 1}\n\n${text}`;
+          })
+          .join("\n\n");
+
+        const doc = await vscode.workspace.openTextDocument({
+          language: "markdown",
+          content: content || JSON.stringify(response, null, 2),
+        });
+        await vscode.window.showTextDocument(doc, { preview: false });
+      }),
+
       vscode.commands.registerCommand("nexus-ide.refreshTree", () => {
         this.provider.clearDirCache();
         this.treeProvider.refresh();
@@ -618,11 +749,8 @@ export class CommandManager {
           let objName = item?.gxName;
           if (!objName) {
             const editor = vscode.window.activeTextEditor;
-            if (editor && editor.document.uri.scheme === "genexuskb") {
-              objName = editor.document.uri.path
-                .split("/")
-                .pop()
-                ?.replace(".gx", "");
+            if (editor && editor.document.uri.scheme === GX_SCHEME) {
+              objName = GxUriParser.getObjectName(editor.document.uri);
             }
           }
           if (!objName) return;
@@ -639,10 +767,10 @@ export class CommandManager {
               cancellable: false,
             },
             async () => {
-              const result = await this.provider.callGateway(
+              const result = await this.provider.callMcpTool(
+                "genexus_test",
                 {
-                  method: "execute_command",
-                  params: { module: "Test", action: "Run", target: objName },
+                  name: objName,
                 },
                 300000,
               );
@@ -729,15 +857,16 @@ export class CommandManager {
                 .split("/")
                 .pop()
                 ?.replace(".gx", "");
-              const result = await this.provider.callGateway({
-                method: "execute_command",
-                params: {
-                  module: MODULE_REFACTOR,
+              const result = await this.provider.callMcpTool(
+                "genexus_refactor",
+                {
                   action: "ExtractProcedure",
-                  target: sourceName,
-                  payload: JSON.stringify({ code, procedureName: procName }),
+                  objectName: sourceName,
+                  code,
+                  procedureName: procName,
                 },
-              });
+                300000,
+              );
 
               if (result && result.status === "Success") {
                 vscode.window.showInformationMessage(
@@ -793,22 +922,21 @@ export class CommandManager {
           },
           async () => {
             try {
-              const result = await this.provider.callGateway({
-                method: "execute_command",
-                params: {
-                  module: MODULE_ANALYZE,
-                  action: "ExplainCode",
-                  target: activeDoc.uri.path
+              const result = await this.provider.callMcpTool(
+                "genexus_explain_code",
+                {
+                  name: activeDoc.uri.path
                     .split("/")
                     .pop()
                     ?.replace(".gx", ""),
-                  payload: JSON.stringify({
+                  code: JSON.stringify({
                     error: error.message,
                     line: error.range.start.line,
                     code: activeDoc.getText(),
                   }),
                 },
-              });
+                60000,
+              );
 
               if (result && result.fix) {
                 const choice = await vscode.window.showInformationMessage(
@@ -842,5 +970,48 @@ export class CommandManager {
         );
       }),
     );
+  }
+
+  private async resolveResourceTemplate(template: string): Promise<string | undefined> {
+    let resolved = template;
+    const placeholders = [...template.matchAll(/\{([^}]+)\}/g)].map(
+      (match) => match[1],
+    );
+
+    for (const placeholder of placeholders) {
+      const value = await vscode.window.showInputBox({
+        prompt: `Informe o valor para '${placeholder}'`,
+        value: placeholder === "part" ? "Source" : undefined,
+      });
+      if (!value) {
+        return undefined;
+      }
+
+      resolved = resolved.replace(`{${placeholder}}`, value);
+    }
+
+    return resolved;
+  }
+
+  private async collectPromptArguments(prompt: any): Promise<any | undefined> {
+    const args: Record<string, string> = {};
+    const promptArgs = Array.isArray(prompt?.arguments) ? prompt.arguments : [];
+
+    for (const arg of promptArgs) {
+      const value = await vscode.window.showInputBox({
+        prompt: arg.description || `Informe o valor para '${arg.name}'`,
+        placeHolder: arg.name,
+      });
+
+      if (value === undefined) {
+        return undefined;
+      }
+
+      if (value || arg.required) {
+        args[arg.name] = value;
+      }
+    }
+
+    return args;
   }
 }

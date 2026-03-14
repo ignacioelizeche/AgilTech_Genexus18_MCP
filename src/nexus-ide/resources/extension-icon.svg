@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="180 140 650 650" width="512" height="512" role="img" aria-label="Nexus IDE for GeneXus">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10294a" />
+      <stop offset="55%" stop-color="#0d2038" />
+      <stop offset="100%" stop-color="#081321" />
+    </linearGradient>
+    <linearGradient id="accent" x1="15%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#69d0ff" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#9ff1d8" stop-opacity="0.15" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#02070d" flood-opacity="0.45" />
+    </filter>
+
+    <path id="g-path" d="M 575 300
+             C 515 260, 455 240, 365 240
+             C 271 240, 195 334, 195 450
+             C 195 566, 271 660, 365 660
+             C 448 660, 515 611, 515 550
+             L 515 440
+             L 415 440
+             L 415 490
+             C 415 529, 393 560, 365 560
+             C 326 560, 295 511, 295 450
+             C 295 389, 326 340, 365 340
+             C 455 340, 515 340, 575 300 Z" />
+
+    <mask id="g-mask">
+      <rect x="0" y="0" width="1000" height="1000" fill="white" />
+      <use href="#g-path" fill="black" stroke="black" stroke-width="36" stroke-linejoin="round" stroke-linecap="round" />
+    </mask>
+  </defs>
+
+  <rect x="180" y="140" width="650" height="650" rx="120" fill="url(#bg)" />
+  <rect x="210" y="170" width="590" height="590" rx="92" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="4" />
+  <circle cx="730" cy="210" r="120" fill="url(#accent)" opacity="0.6" />
+  <circle cx="280" cy="690" r="110" fill="#5fd8ff" opacity="0.08" />
+
+  <g filter="url(#shadow)">
+    <use href="#g-path" fill="#f3f7fb" />
+    <g mask="url(#g-mask)" fill="#f3f7fb">
+      <polygon points="495,660 605,660 805,240 695,240" />
+      <polygon points="495,240 605,240 805,660 695,660" />
+    </g>
+  </g>
+
+  <path d="M 260 735 L 405 735" stroke="#9ff1d8" stroke-width="18" stroke-linecap="round" opacity="0.9" />
+</svg>

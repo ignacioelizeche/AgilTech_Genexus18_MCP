@@ -1,63 +1,26 @@
-# Estabilização da Integração Nativa com SDK GeneXus 18
+# Stabilizing Native GeneXus SDK Integration
 
-Este documento detalha as mudanças técnicas realizadas para permitir que o `GxMcp.Worker` interaja de forma nativa e estável com as Knowledge Bases (KBs) do GeneXus 18.
+This document summarizes the runtime decisions that keep the worker stable when loading and executing the GeneXus 18 SDK.
 
-## Desafios Resolvidos
+## Core constraints
 
-### 1. Compatibilidade de Arquitetura (Bitness)
+- The worker must run as x86 because the GeneXus SDK depends on 32-bit components.
+- SDK bootstrapping must follow the correct native initialization order.
+- Assembly resolution must search the GeneXus installation paths instead of assuming local publish copies.
+- KB lifecycle should be centralized so multiple services do not initialize the SDK inconsistently.
 
-O SDK do GeneXus 18 é composto por DLLs de 32 bits (x86). O Worker estava sendo compilado ou executado como AnyCPU/64 bits, o que causava erros de `BadImageFormatException` ou falhas silenciosas ao carregar dependências nativas.
+## Current MCP-facing outcome
 
-- **Solução:** Forçado o `PlatformTarget` para `x86` no arquivo `.csproj` do Worker.
+The stable SDK foundation now backs the MCP contracts used by the repository, including:
 
-### 2. Bootstrapping do SDK
+- `genexus_query`
+- `genexus_read`
+- `genexus_edit`
+- `genexus_doc`
+- `genexus_properties`
+- `genexus_history`
+- `genexus_structure`
 
-O GeneXus 18 requer uma sequência específica de inicialização que não está documentada para aplicações console standalone. Tentativas iniciais com `UIServices` e `ArtechServices` falharam por mudanças na versão 18.
+## Documentation note
 
-- **Solução:** Identificada a classe `Artech.Core.Connector` no assembly `Connector.dll` como o ponto de entrada correto. A inicialização agora segue a ordem:
-  1. `Artech.Core.Connector.Initialize()`
-  2. `Artech.Core.Connector.StartBL()`
-  3. `Artech.Architecture.UI.Framework.Services.UIServices.SetDisableUI(true)` (via Reflexão)
-
-### 3. Resolução Dinâmica de Dependências
-
-O SDK possui centenas de DLLs e pacotes que residem na pasta de instalação do GeneXus, mas não são copiados para a pasta `publish`.
-
-- **Solução:** Implementado um manipulador para o evento `AppDomain.CurrentDomain.AssemblyResolve`. Este manipulador busca automaticamente as DLLs faltantes nos seguintes caminhos:
-  - Pasta raiz do GeneXus (`gxPath`)
-  - Pasta de Packages (`gxPath\Packages`)
-  - Pasta de Patterns (`gxPath\Packages\Patterns`)
-
-### 4. Configuração do Enterprise Library
-
-O SDK do GeneXus utiliza o Microsoft Enterprise Library para log e tratamento de exceções. Sem a configuração correta no `App.config`, qualquer erro interno no SDK causava um `NullReferenceException` recursivo no próprio tratador de erros, mascarando a causa real.
-
-- **Solução:** Adicionadas as seções `<exceptionHandling>`, `<loggingConfiguration>` e `<cachingConfiguration>` ao `GxMcp.Worker.exe.config`, permitindo que o SDK logue erros corretamente e que o Worker capture a stack trace real.
-
-### 5. Centralização do Gerenciamento de KB (`KbService`)
-
-A lógica de abrir a KB e inicializar o SDK estava duplicada e inconsistente.
-
-- **Solução:** Criado o `KbService.cs` para gerenciar a instância única (`static`) da `KnowledgeBase`. Todos os outros serviços (`ObjectService`, `ListService`, etc.) agora dependem do `KbService` via injeção de dependência.
-
-## Verificação de Funcionalidade
-
-Após estas mudanças, as seguintes ferramentas MCP foram validadas com sucesso em KBs reais:
-
-- `genexus_list_objects`: Retorna a lista de objetos filtrados.
-- `genexus_read_object`: Retorna o XML completo do objeto, incluindo GUIDs de tipos e partes internas.
-- `genexus_write_object` (Documentation): Persistência completa de Wiki/Documentação garantida via inicialização de `WikiPage`.
-
-### 6. Persistência de Documentação (Wiki)
-
-A gravação de documentação no GeneXus 18 revelou-se um dos maiores desafios de persistência, pois o SDK descarta silenciosamente alterações se os metadados internos não estiverem presentes.
-
-- **Solução:** Implementado um fluxo de gravação especializado que:
-  1. Instancia um objeto `WikiPage` nativo.
-  2. Atribui obrigatoriamente `Name` (formato `Tipo.Nome`) e `Module`.
-  3. Envolve o conteúdo HTML em uma tag `<DIV>` para compatibilidade com o parser da IDE.
-  4. Grava simultaneamente nas propriedades `Content` e `EditableContent`.
-
-## Requisitos de Execução
-
-Para que o sistema funcione, o caminho do GeneXus configurado no `config.json` deve estar correto e conter todas as DLLs originais da instalação.
+Older document names such as `genexus_list_objects`, `genexus_read_object`, and `genexus_write_object` refer to pre-MCP or early-wrapper phases and should not be used as current contract names.

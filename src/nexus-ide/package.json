@@ -4,6 +4,12 @@
   "description": "Lightweight GeneXus IDE for VS Code powered by MCP",
   "publisher": "lennix1337",
   "version": "1.0.0",
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "icon": "resources/extension-icon.png",
+  "galleryBanner": {
+    "color": "#0d2038",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/lennix1337/Genexus18MCP.git"
@@ -36,6 +42,8 @@
     "resources",
     "syntaxes",
     "themes",
+    "README.md",
+    "LICENSE.txt",
     "genexus-icons.json",
     "language-configuration.json"
   ],
@@ -105,28 +113,6 @@
         "id": "genexus-icons",
         "label": "GeneXus Icons",
         "path": "./genexus-icons.json"
-      }
-    ],
-    "languageModelTools": [
-      {
-        "name": "genexus_search",
-        "displayName": "GeneXus Search",
-        "toolReferenceName": "genexus_search",
-        "canBeReferencedInPrompt": true,
-        "modelDescription": "Search for objects in the GeneXus Knowledge Base by name or type.",
-        "userDescription": "Search GeneXus KB",
-        "inputSchema": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "The search query (e.g., 'Customer', 'type:Procedure')"
-            }
-          },
-          "required": [
-            "query"
-          ]
-        }
       }
     ],
     "fileSystemProvider": [
@@ -294,6 +280,21 @@
       {
         "command": "nexus-ide.copyMcpConfig",
         "title": "GeneXus: Copy MCP Config for Copilot/Claude",
+        "category": "GeneXus"
+      },
+      {
+        "command": "nexus-ide.showMcpDiscovery",
+        "title": "GeneXus: Show MCP Discovery Snapshot",
+        "category": "GeneXus"
+      },
+      {
+        "command": "nexus-ide.openMcpResource",
+        "title": "GeneXus: Open MCP Resource",
+        "category": "GeneXus"
+      },
+      {
+        "command": "nexus-ide.runMcpPrompt",
+        "title": "GeneXus: Run MCP Prompt",
         "category": "GeneXus"
       },
       {

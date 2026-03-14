@@ -1,42 +1,49 @@
-# 🚀 Guia de Compartilhamento: Nexus IDE para GeneXus
+# Nexus-IDE Sharing Guide
 
-Este guia explica como instalar e configurar o **Nexus IDE**, transformando seu VS Code em um mini-editor GeneXus com suporte a IA (Copilot/Claude).
+This guide explains how to install and configure Nexus-IDE and how to point external MCP clients to the correct transport.
 
-## 1. Instalação
+## Installing the extension
 
-1. Baixe o arquivo `nexus-ide.vsix`.
-2. No VS Code, vá em **Extensions** (Ctrl+Shift+X).
-3. Clique em `...` (Views and More Actions) -> **Install from VSIX...**.
-4. Selecione o arquivo baixado.
+1. Obtain `nexus-ide.vsix`.
+2. In VS Code, open Extensions.
+3. Choose `Install from VSIX...`.
+4. Select the package.
 
-## 2. Configuração Inicial (Zero-Config)
+## Initial setup
 
-O Nexus IDE tentará localizar sua KB e o GeneXus 18 automaticamente:
+Nexus-IDE tries to locate:
 
-- **KB**: Identificada por arquivos `.gxw` na sua pasta de trabalho aberta.
-- **GeneXus**: Detectado automaticamente no caminho padrão.
+- the active KB from the workspace
+- the GeneXus 18 installation from configuration
 
-Se tudo estiver correto, o ícone do **GX** aparecerá e o backend iniciará sozinho. Caso precise ajustar manualmente:
+If automatic detection is not enough, update the relevant GeneXus settings and reload VS Code.
 
-1. Abra as **Settings** (`Ctrl+,`) e procure por `GeneXus`.
-2. Ajuste o **Kb Path** ou **Installation Path** se necessário.
-3. **Reinicie o VS Code** após alterações manuais.
+## Runtime expectation
 
-## 3. Uso do Explore (KB Explorer)
+Nexus-IDE uses MCP directly through `/mcp`.
 
-- Clique no ícone do **GX** na barra lateral esquerda.
-- O backend iniciará automaticamente e fará o índice da sua KB.
-- Você poderá navegar por arquivos `.gx` e editá-los diretamente.
+## Sharing MCP configuration
 
-## 4. Integração com Copilot / Claude
+To connect Claude Desktop, Copilot, Cursor, or another MCP-capable client, point it to the gateway and use the MCP transport, not the legacy gateway command endpoint.
 
-Para que o Copilot ou Claude consigam ler sua KB:
+### HTTP MCP
 
-1. Pressione `Ctrl+Shift+P`.
-2. Digite e selecione: **"GeneXus: Copy MCP Config for Copilot/Claude"**.
-3. No **Claude Desktop**: Abra o arquivo de configuração e cole o trecho copiado em `mcpServers`.
-4. No **VS Code Copilot**: Adicione o trecho nas configurações de MCP do GitHub Copilot.
+Use:
 
----
+- `http://127.0.0.1:5000/mcp`
+- `MCP-Protocol-Version: 2025-06-18`
 
-_Dica: Use as abas no topo do editor para alternar entre Source, Rules, Events e Variables._
+Flow:
+
+1. `initialize`
+2. `tools/list`, `resources/list`, `prompts/list`
+3. `tools/call`, `resources/read`, `prompts/get`
+
+### stdio MCP
+
+Point the client to the published gateway executable or the startup script that launches it.
+
+## What to avoid
+
+- Do not teach consumers any non-MCP HTTP contract.
+- Do not hardcode old tool names from the pre-MCP wrapper phase.

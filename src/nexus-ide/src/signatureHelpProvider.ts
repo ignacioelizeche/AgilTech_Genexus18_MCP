@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { nativeFunctions } from './gxNativeFunctions';
+import { GxFileSystemProvider } from './gxFileSystem';
 
 export class GxSignatureHelpProvider implements vscode.SignatureHelpProvider {
-    constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
+    constructor(private readonly provider: GxFileSystemProvider) {}
 
     async provideSignatureHelp(
         document: vscode.TextDocument,
@@ -42,10 +43,7 @@ export class GxSignatureHelpProvider implements vscode.SignatureHelpProvider {
 
         // 2. KB Object Search
         try {
-            const result = await this.callGateway({
-                method: 'execute_command',
-                params: { module: 'Analyze', action: 'GetParameters', target: name }
-            });
+            const result = await this.provider.inspectObject(name, ['signature'], 15000);
 
             if (result && result.parameters) {
                 const sig = new vscode.SignatureHelp();

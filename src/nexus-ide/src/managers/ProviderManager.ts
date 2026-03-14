@@ -24,8 +24,6 @@ export class ProviderManager {
   ) {}
 
   register() {
-    const callGateway = (cmd: any) => this.provider.callGateway(cmd);
-
     this.context.subscriptions.push(
       vscode.languages.registerDocumentSymbolProvider(
         "genexus",
@@ -33,15 +31,15 @@ export class ProviderManager {
       ),
       vscode.languages.registerDefinitionProvider(
         "genexus",
-        new GxDefinitionProvider(callGateway),
+        new GxDefinitionProvider(this.provider),
       ),
       vscode.languages.registerHoverProvider(
         "genexus",
-        new GxHoverProvider(callGateway),
+        new GxHoverProvider(this.provider),
       ),
       vscode.languages.registerCompletionItemProvider(
         "genexus",
-        new GxCompletionItemProvider(callGateway, (uri) =>
+        new GxCompletionItemProvider(this.provider, (uri) =>
           this.provider.getPart(uri),
         ),
         ".",
@@ -54,35 +52,35 @@ export class ProviderManager {
       ),
       vscode.languages.registerSignatureHelpProvider(
         "genexus",
-        new GxSignatureHelpProvider(callGateway),
+        new GxSignatureHelpProvider(this.provider),
         "(",
         ",",
       ),
       vscode.languages.registerCodeActionsProvider(
         "genexus",
-        new GxCodeActionProvider(callGateway),
+        new GxCodeActionProvider(),
         {
           providedCodeActionKinds: [GxCodeActionProvider.kind],
         },
       ),
       vscode.languages.registerRenameProvider(
         "genexus",
-        new GxRenameProvider(callGateway),
+        new GxRenameProvider(this.provider),
       ),
       vscode.languages.registerDocumentFormattingEditProvider(
         "genexus",
-        new GxFormatProvider(callGateway),
+        new GxFormatProvider(this.provider),
       ),
       vscode.languages.registerWorkspaceSymbolProvider(
-        new GxWorkspaceSymbolProvider(callGateway),
+        new GxWorkspaceSymbolProvider(this.provider),
       ),
       vscode.languages.registerCodeLensProvider(
         "genexus",
-        new GxCodeLensProvider(callGateway),
+        new GxCodeLensProvider(this.provider),
       ),
       vscode.languages.registerReferenceProvider(
         "genexus",
-        new GxReferenceProvider(callGateway),
+        new GxReferenceProvider(this.provider),
       ),
     );
 
@@ -116,7 +114,11 @@ export class ProviderManager {
   }
 
   private registerFileSearchProvider() {
-    if ((vscode.workspace as any).registerFileSearchProvider) {
+    if (!(vscode.workspace as any).registerFileSearchProvider) {
+      return;
+    }
+
+    try {
       (vscode.workspace as any).registerFileSearchProvider(GX_SCHEME, {
         provideFileSearchResults: async (
           query: any,
@@ -127,12 +129,11 @@ export class ProviderManager {
             const pattern = query.pattern || "";
             if (pattern.length < 2) return [];
 
-            const result = await this.provider.callGateway({
-              module: "Search",
-              action: "Query",
-              target: pattern + " @quick",
-              limit: 100,
-            });
+            const result = await this.provider.queryObjects(
+              pattern + " @quick",
+              50,
+              5000,
+            );
 
             if (token.isCancellationRequested) return [];
 
@@ -152,6 +153,8 @@ export class ProviderManager {
           return [];
         },
       });
+    } catch (e) {
+      console.warn("[ProviderManager] File search provider unavailable:", e);
     }
   }
 }

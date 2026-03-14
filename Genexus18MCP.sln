@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GxMcp.Gateway", "src\GxMcp.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GxMcp.Worker", "src\GxMcp.Worker\GxMcp.Worker.csproj", "{3B19B757-1EA4-4A61-AFDC-965398B75761}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GxMcp.Gateway.Tests", "src\GxMcp.Gateway.Tests\GxMcp.Gateway.Tests.csproj", "{3E8DF97D-FC4B-49AE-B137-84EA0FEB13CC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,9 +28,14 @@ Global
 		{3B19B757-1EA4-4A61-AFDC-965398B75761}.Debug|Any CPU.Build.0 = Debug|x86
 		{3B19B757-1EA4-4A61-AFDC-965398B75761}.Release|Any CPU.ActiveCfg = Release|x86
 		{3B19B757-1EA4-4A61-AFDC-965398B75761}.Release|Any CPU.Build.0 = Release|x86
+		{3E8DF97D-FC4B-49AE-B137-84EA0FEB13CC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3E8DF97D-FC4B-49AE-B137-84EA0FEB13CC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3E8DF97D-FC4B-49AE-B137-84EA0FEB13CC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3E8DF97D-FC4B-49AE-B137-84EA0FEB13CC}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{5675063E-7F20-4C40-87D5-C86FDBFDDCC3} = {D1B9634F-AE50-44B0-9194-B5EEC4EAB49E}
 		{3B19B757-1EA4-4A61-AFDC-965398B75761} = {D1B9634F-AE50-44B0-9194-B5EEC4EAB49E}
+		{3E8DF97D-FC4B-49AE-B137-84EA0FEB13CC} = {D1B9634F-AE50-44B0-9194-B5EEC4EAB49E}
 	EndGlobalSection
 EndGlobal

@@ -1,62 +1,46 @@
 ---
 name: GeneXus 18 Guidelines
-description: Core directives, architectural patterns, and development best practices for building robust applications with GeneXus 18.
+description: GeneXus 18 engineering rules that stay valid when the KB is accessed through the MCP server.
 ---
 
-# 📘 GeneXus 18 Development Guidelines
+# GeneXus 18 Development Guidelines
 
-This skill provides the core directives and best practices for development in GeneXus 18. It serves as a static knowledge base for agents to ensure compliant and high-quality contributions to the Knowledge Base (KB).
+This skill defines the domain rules. Pair it with the MCP mastery skill for transport and tool usage.
 
-## 🛡️ 1. Security First (The GAM Standard)
+## Security
 
-GeneXus Access Manager (GAM) is the mandatory standard for security in GeneXus 18.
+- Prefer GAM for authentication and authorization.
+- Keep sensitive configuration outside source control.
+- Avoid direct SQL when a GeneXus navigation or Business Component can express the same behavior safely.
 
-- **Enable GAM**: Always ensure GAM is enabled for centralized Authentication and Authorization.
-- **Centralized Identity**: Use Identity Providers for password centralization.
-- **Standard Protocols**: Prefer OAuth 2.0 for third-party integrations.
-- **Encryption**: Use built-in GeneXus functions for sensitive data encryption/decryption.
-- **Audit**: Implement audit logs for critical data modifications (Business Component 'After Trn' events).
+## Data and transactions
 
-## ⚡ 2. Performance & Scalability
+- Use Business Components for insert, update, and delete flows that must respect GeneXus rules and referential integrity.
+- Avoid `Commit` inside loops.
+- Keep transaction rules concise. Move non-trivial logic into procedures.
 
-- **Base Table Navigation**: Always filter `For Each` loops using `Where` or `Defined By` to avoid Full Table Scans.
-- **Caching**: Utilize Data Provider and Procedure caching for expensive, read-heavy operations.
-- **Data Types**: Use efficient types:
-  - `GUID`: For unique identifiers (better than autoincremental for distributed systems).
-  - `Geography`: For spatial data.
-- **Compilation**: Ensure the environment uses JDK 11+ and Gradle for parallelized Java compilation.
-- **Lazy Loading**: For UI components, use paging and on-demand data loading for large grids.
+## Navigation and performance
 
-## 🏗️ 3. Architectural Patterns & Maintainability
+- Constrain `For Each` with `Where` or `Defined By`.
+- Page large grids and expensive reads.
+- Validate navigation plans when changing transactions or heavy procedures.
 
-- **Modularization**: Organize the KB using **Modules**. Avoid keeping everything in the Root module.
-- **Design System Object (DSO)**: Use DSOs to centralize styles. Avoid hardcoded CSS or inline layouts.
-- **Business Components (BC)**: Always use BCs for data manipulation (Insert/Update/Delete) to ensure Transaction Rules and Referencial Integrity are respected.
-- **Patterns**: Leverage standard patterns like **Work With Plus (WWP)** to maintain UI consistency and speed up development.
-- **Smart Variable Injection (MCP special)**: When using the Nirvana MCP, variables starting with `&` are automatically defined if they match an Attribute name or common suffixes (Data, Dt, Is, Has, Id). Avoid manual declaration for these.
+## KB structure
 
-## ✍️ 4. Clean Code & Conventions
+- Keep modules organized. Do not accumulate unrelated objects in root.
+- Use clear naming conventions for Procedures, Transactions, Web Panels, Data Providers, and SDTs.
+- Prefer declarative GeneXus structures and supported refactors over raw text surgery.
 
-- **Naming**:
-  - `Prc`: Procedures
-  - `Trn`: Transactions
-  - `Wbp`: Web Panels
-  - `Dta`: Data Providers
-  - `SDT`: Structured Data Types
-- **Self-Documenting Code**: Use descriptive variable names (e.g., `&IsCustomerActive` instead of `&Flg`).
-- **Rule Management**: Keep Transaction rules concise. Complex logic should be encapsulated in Procedures called from the rules.
-- **Error Handling**: Use `Error_Handler` and `When Duplicate` clauses in `New` commands.
+## MCP-specific operating rules
 
-## ⚙️ 5. GeneXus Server & Native SDK
+- Use the MCP tools that match the object model instead of inventing ad hoc gateway commands.
+- For metadata changes, use `genexus_properties`.
+- For visual or logical designers, use `genexus_structure`.
+- For supported renames and extraction flows, use `genexus_refactor`.
+- For source edits, prefer `genexus_edit` or `genexus_batch_edit` and then validate.
 
-- **Native SDK Integration**: This project uses the native `Artech.Architecture` SDK. Object manipulation is performed directly on the GeneXus Object Model, ensuring integrity.
-- **Frequent Commits**: Always commit changes to **GeneXus Server** frequently with meaningful comments.
-- **CI/CD**: Integrate with GeneXus Server MSBuild tasks for automated testing (GXtest) and deployment.
-- **Versioning**: Use branches in GeneXus Server for feature isolation before merging into the Trunk.
+## Anti-patterns
 
-## 🚫 6. Core Anti-Patterns (The "Don'ts")
-
-- **NO** `Commit` inside loops (Breaks LUW and locks DB).
-- **NO** `Sleep` or `Wait` in Web Panels (Blocks IIS/Webserver threads).
-- **NO** Hardcoded URLs (Use Location objects or Environment settings).
-- **NO** Direct SQL commands if a `For Each` or `Business Component` can achieve the same (Breaks DB abstraction).
+- No hardcoded URLs when a Location or environment setting should own the value.
+- No blocking waits in interactive web flows.
+- No direct dependence on hidden or deprecated transport contracts outside MCP.

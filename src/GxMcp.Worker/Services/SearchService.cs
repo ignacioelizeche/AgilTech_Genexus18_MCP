@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using GxMcp.Worker.Models;
 using GxMcp.Worker.Helpers;
 
@@ -32,7 +33,13 @@ namespace GxMcp.Worker.Services
 
                 if (index.LastUpdated > _lastIndexTime) { _queryCache.Clear(); _lastIndexTime = index.LastUpdated; }
 
-                string cacheKey = string.Format("{0}|{1}|{2}|{3}", query ?? "", typeFilter ?? "", domainFilter ?? "", limit);
+                bool isQuick = !string.IsNullOrEmpty(query) && query.IndexOf("@quick", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (isQuick)
+                {
+                    query = Regex.Replace(query, @"\s*@quick\b", "", RegexOptions.IgnoreCase).Trim();
+                }
+
+                string cacheKey = string.Format("{0}|{1}|{2}|{3}|{4}", query ?? "", typeFilter ?? "", domainFilter ?? "", limit, isQuick ? "quick" : "full");
                 if (_queryCache.TryGetValue(cacheKey, out var cached)) return cached;
 
                 var criteria = ParseQuery(query);
@@ -87,7 +94,11 @@ namespace GxMcp.Worker.Services
                     );
                 }
 
-                var queryEmbedding = _vectorService.ComputeEmbedding(query);
+                float[] queryEmbedding = null;
+                if (!isQuick && criteria.Terms.Count > 0)
+                {
+                    queryEmbedding = _vectorService.ComputeEmbedding(query);
+                }
 
                 var scoredResults = queryResults
                     .Select(entry =>
@@ -103,11 +114,11 @@ namespace GxMcp.Worker.Services
                             if (score <= 0 && (entry.Type == "Folder" || entry.Type == "Module"))
                                 return new RankedResult { Score = -1 };
 
-                            if (entry.Embedding != null && queryEmbedding != null)
+                            if (!isQuick && entry.Embedding != null && queryEmbedding != null)
                             {
                                 vectorScore = _vectorService.CosineSimilarity(queryEmbedding, entry.Embedding);
                             }
-                            if (score <= 0 && vectorScore < 0.45f)
+                            if (!isQuick && score <= 0 && vectorScore < 0.45f)
                                 return new RankedResult { Score = -1 };
                         }
                         else
@@ -125,9 +136,6 @@ namespace GxMcp.Worker.Services
                     .Take(limit)
                     .ToList();
 
-                bool isQuick = false;
-                if (!string.IsNullOrEmpty(query) && query.Contains("@quick")) isQuick = true;
-                
                 string json;
                 if (isQuick)
                 {
@@ -164,7 +172,7 @@ namespace GxMcp.Worker.Services
 
                 _queryCache.TryAdd(cacheKey, json);
 
-                if (scoredResults.Count > 0)
+                if (!isQuick && criteria.Terms.Count > 0 && scoredResults.Count > 0)
                 {
                     var topGuids = scoredResults.Take(5)
                         .Where(r => !string.IsNullOrEmpty(r.Entry.Guid))
@@ -223,44 +231,34 @@ namespace GxMcp.Worker.Services
         {
             var c = new SearchCriteria();
             if (string.IsNullOrEmpty(query)) return c;
-            
-            if (query.Contains("description:")) {
-                var parts = query.Split(new[] { "description:" }, StringSplitOptions.None);
-                if (parts.Length > 1) {
-                    var val = parts[1].Split(' ')[0];
-                    c.DescriptionFilter = val.Replace("\"", "");
-                    query = query.Replace("description:" + val, "");
-                }
-            }
-            if (query.Contains("metadata:")) {
-                var parts = query.Split(new[] { "metadata:" }, StringSplitOptions.None);
-                if (parts.Length > 1) {
-                    var val = parts[1].Split(' ')[0];
-                    c.MetadataFilter = val.Replace("\"", "");
-                    query = query.Replace("metadata:" + val, "");
-                }
-            }
-            if (query.Contains("usedby:")) {
-                var parts = query.Split(new[] { "usedby:" }, StringSplitOptions.None);
-                if (parts.Length > 1) {
-                    var val = parts[1].Split(' ')[0];
-                    c.UsedByFilter = val;
-                    query = query.Replace("usedby:" + val, "");
-                }
-            }
-            if (query.Contains("parent:")) {
-                var parts = query.Split(new[] { "parent:" }, StringSplitOptions.None);
-                if (parts.Length > 1) {
-                    var val = parts[1].Split(' ')[0];
-                    c.ParentFilter = val.Replace("\"", "");
-                    query = query.Replace("parent:" + val, "");
-                }
-            }
+
+            query = ExtractFilter(query, "description", value => c.DescriptionFilter = value);
+            query = ExtractFilter(query, "metadata", value => c.MetadataFilter = value);
+            query = ExtractFilter(query, "usedby", value => c.UsedByFilter = value);
+            query = ExtractFilter(query, "parent", value => c.ParentFilter = value);
 
             foreach (var part in query.Split(new[]{' '}, StringSplitOptions.RemoveEmptyEntries)) {
                 c.Terms.Add(part.ToLowerInvariant());
             }
             return c;
+        }
+
+        private string ExtractFilter(string query, string filterName, Action<string> assign)
+        {
+            var pattern = string.Format(@"(?:^|\s){0}:(?:""(?<quoted>[^""]+)""|(?<plain>\S+))", Regex.Escape(filterName));
+            var match = Regex.Match(query, pattern, RegexOptions.IgnoreCase);
+            if (!match.Success) return query;
+
+            var value = match.Groups["quoted"].Success
+                ? match.Groups["quoted"].Value
+                : match.Groups["plain"].Value;
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                assign(value);
+            }
+
+            return query.Remove(match.Index, match.Length).Trim();
         }
 
         private class RankedResult { public SearchIndex.IndexEntry Entry { get; set; } public int Score { get; set; } public float VectorSimilarity { get; set; } }

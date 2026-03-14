@@ -34,13 +34,9 @@ export class StructureView {
     panel.webview.html = this.getHtml(objName, isReadOnly);
 
     try {
-      const result = await provider.callGateway({
-        method: "execute_command",
-        params: {
-          module: "Structure",
-          action: "GetVisualStructure",
-          target: target,
-        },
+      const result = await provider.callMcpTool("genexus_structure", {
+        action: "get_visual",
+        name: target,
       });
       if (result && !result.error) {
         panel.webview.postMessage({ type: "update", structure: result });
@@ -51,15 +47,12 @@ export class StructureView {
       panel.webview.onDidReceiveMessage(async (message) => {
         if (message.command === "save") {
           try {
-            const saveResult = await provider.callGateway(
+            const saveResult = await provider.callMcpTool(
+              "genexus_structure",
               {
-                method: "execute_command",
-                params: {
-                  module: "Structure",
-                  action: "UpdateVisualStructure",
-                  target: target,
-                  payload: JSON.stringify(message.structure),
-                },
+                action: "update_visual",
+                name: target,
+                payload: message.structure,
               },
               180000
             );

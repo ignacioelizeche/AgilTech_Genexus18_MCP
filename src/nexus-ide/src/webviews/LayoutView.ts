@@ -31,17 +31,14 @@ export class LayoutView {
     panel.webview.html = "<h1>Carregando Layout...</h1>";
 
     try {
-      const result = await provider.callGateway({
-        method: "execute_command",
-        params: {
-          module: "Read",
-          action: "ExtractSource",
-          target: target,
-          part: "Layout",
-        },
-      });
+      const result = await provider.readMcpResource(
+        `genexus://objects/${target}/part/Layout`,
+        30000,
+      );
       if (result && result.source) {
         panel.webview.html = result.source;
+      } else if (typeof result === "string") {
+        panel.webview.html = result;
       } else {
         panel.webview.html = "<h1>Erro ao carregar Layout</h1>";
       }

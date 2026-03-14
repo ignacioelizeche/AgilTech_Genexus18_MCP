@@ -19,6 +19,9 @@ import {
 export class BackendManager {
   private backendProcess: cp.ChildProcess | undefined;
   private healthMonitor: BackendHealthMonitor | undefined;
+  private ownsBackendProcess = false;
+  private static readonly STARTUP_RETRIES = 20;
+  private static readonly STARTUP_DELAY_MS = 1500;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -26,6 +29,14 @@ export class BackendManager {
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
     const autoStart = config.get(CONFIG_AUTO_START);
     if (!autoStart) return;
+
+    if (await this.isGatewayAlreadyReady(provider)) {
+      console.log("[BackendManager] Reusing already running MCP Gateway.");
+      this.ownsBackendProcess = false;
+      this.healthMonitor = new BackendHealthMonitor(provider, this.context, this);
+      this.healthMonitor.start();
+      return;
+    }
 
     let backendDir = path.join(this.context.extensionPath, "backend");
     let gatewayExe = path.join(backendDir, "GxMcp.Gateway.exe");
@@ -73,10 +84,20 @@ export class BackendManager {
 
     console.log("[BackendManager] Starting MCP Gateway...");
     try {
-      this.backendProcess = cp.spawn(gatewayExe, [], {
+      const launchSpec = this.resolveLaunchSpec(backendDir);
+      console.log(
+        `[BackendManager] Launch command: ${launchSpec.command} ${launchSpec.args.join(" ")}`.trim(),
+      );
+
+      this.backendProcess = cp.spawn(launchSpec.command, launchSpec.args, {
         cwd: backendDir,
         detached: false,
         stdio: "ignore",
+      });
+      this.ownsBackendProcess = true;
+
+      this.backendProcess.on("error", (error) => {
+        console.error("[BackendManager] Gateway spawn failed:", error);
       });
 
       this.backendProcess.on("exit", (code) => {
@@ -87,16 +108,19 @@ export class BackendManager {
       console.error("[BackendManager] Failed to spawn Gateway:", e);
     }
 
+    await this.waitForGatewayReady(provider);
+
     this.healthMonitor = new BackendHealthMonitor(provider, this.context, this);
     this.healthMonitor.start();
   }
 
   stop() {
     this.healthMonitor?.stop();
-    if (this.backendProcess) {
+    if (this.backendProcess && this.ownsBackendProcess) {
       this.backendProcess.kill();
-      this.backendProcess = undefined;
     }
+    this.backendProcess = undefined;
+    this.ownsBackendProcess = false;
   }
 
   private async findBestKbPath(): Promise<string> {
@@ -140,6 +164,58 @@ export class BackendManager {
     this.stop();
     await this.start(provider);
   }
+
+  private resolveLaunchSpec(backendDir: string): { command: string; args: string[] } {
+    const gatewayDll = path.join(backendDir, "GxMcp.Gateway.dll");
+    const gatewayExe = path.join(backendDir, "GxMcp.Gateway.exe");
+
+    if (fs.existsSync(gatewayDll)) {
+      return {
+        command: "dotnet",
+        args: [gatewayDll],
+      };
+    }
+
+    return {
+      command: gatewayExe,
+      args: [],
+    };
+  }
+
+  private async waitForGatewayReady(provider: GxFileSystemProvider): Promise<void> {
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= BackendManager.STARTUP_RETRIES; attempt++) {
+      try {
+        const status = await provider.callMcpMethod("ping", undefined, 2000);
+        if (status) {
+          console.log(
+            `[BackendManager] Gateway ready after ${attempt} attempt(s).`,
+          );
+          return;
+        }
+      } catch (e) {
+        lastError = e;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, BackendManager.STARTUP_DELAY_MS),
+      );
+    }
+
+    throw new Error(
+      `Gateway did not become ready in time. Last error: ${lastError}`,
+    );
+  }
+
+  private async isGatewayAlreadyReady(provider: GxFileSystemProvider): Promise<boolean> {
+    try {
+      const status = await provider.callMcpMethod("ping", undefined, 1500);
+      return Boolean(status);
+    } catch {
+      return false;
+    }
+  }
 }
 
 class BackendHealthMonitor {
@@ -165,13 +241,7 @@ class BackendHealthMonitor {
     const timeout = isIndexing ? HEALTH_CHECK_TIMEOUT_INDEXING : HEALTH_CHECK_TIMEOUT;
 
     try {
-      const status = await this.provider.callGateway(
-        {
-          method: "execute_command",
-          params: { module: MODULE_HEALTH, action: "Ping" },
-        },
-        timeout,
-      );
+      const status = await this.provider.callMcpMethod("ping", undefined, timeout);
       if (status) {
         this._consecutiveFailures = 0;
       } else {

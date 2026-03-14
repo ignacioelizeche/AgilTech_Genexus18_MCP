@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { GxUriParser } from './utils/GxUriParser';
+import { GxFileSystemProvider } from './gxFileSystem';
 
 export class GxRenameProvider implements vscode.RenameProvider {
-    constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
+    constructor(private readonly provider: GxFileSystemProvider) {}
 
     async provideRenameEdits(
         document: vscode.TextDocument,
@@ -23,18 +24,21 @@ export class GxRenameProvider implements vscode.RenameProvider {
                 title: `Renaming ${isVariable ? 'Variable' : 'Attribute'} ${oldName}...`,
                 cancellable: false
             }, async () => {
-                const result = await this.callGateway({
-                    method: 'execute_command',
-                    params: {
-                        module: 'Refactor',
-                        action: isVariable ? 'RenameVariable' : 'RenameAttribute',
-                        target: objName,
-                        payload: JSON.stringify({
-                            oldName: oldName,
-                            newName: newName
-                        })
-                    }
-                });
+                const result = await this.provider.refactor(
+                    isVariable
+                        ? {
+                            action: 'RenameVariable',
+                            objectName: objName,
+                            target: oldName,
+                            newName,
+                        }
+                        : {
+                            action: 'RenameAttribute',
+                            target: oldName,
+                            newName,
+                        },
+                    300000,
+                );
 
                 if (result && result.error) {
                     throw new Error(result.error);

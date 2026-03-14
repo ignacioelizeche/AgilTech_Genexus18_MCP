@@ -20,6 +20,9 @@ namespace GxMcp.Worker.Services
         public string TranslateTo(string targetName, string targetLanguage)
         {
             try {
+                if (string.IsNullOrWhiteSpace(targetName)) return "{\"error\":\"Object name is required\"}";
+                if (string.IsNullOrWhiteSpace(targetLanguage)) return "{\"error\":\"Target language is required\"}";
+
                 var obj = _objectService.FindObject(targetName);
                 if (obj == null) return "{\"error\":\"Object not found\"}";
 
@@ -107,3 +110,4 @@ namespace GxMcp.Worker.Services
         }
     }
 }
+

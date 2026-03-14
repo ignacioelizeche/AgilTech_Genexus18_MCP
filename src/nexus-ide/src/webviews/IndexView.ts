@@ -31,13 +31,9 @@ export class IndexView {
     panel.webview.html = this.getHtml(objName);
 
     try {
-      const result = await provider.callGateway({
-        method: "execute_command",
-        params: {
-          module: "Structure",
-          action: "GetVisualIndexes",
-          target: target,
-        },
+      const result = await provider.callMcpTool("genexus_structure", {
+        action: "get_indexes",
+        name: target,
       });
       if (result && !result.error) {
         panel.webview.postMessage({ type: "update", data: result });

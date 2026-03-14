@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 
 export class GxCodeActionProvider implements vscode.CodeActionProvider {
-    constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
-
     public static readonly kind = vscode.CodeActionKind.QuickFix;
 
     public async provideCodeActions(

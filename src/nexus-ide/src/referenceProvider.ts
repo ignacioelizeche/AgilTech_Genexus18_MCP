@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
 import { GX_SCHEME } from "./constants";
+import { GxFileSystemProvider } from "./gxFileSystem";
 
 export class GxReferenceProvider implements vscode.ReferenceProvider {
-  constructor(private readonly callGateway: (cmd: any) => Promise<any>) {}
+  constructor(private readonly provider: GxFileSystemProvider) {}
 
   async provideReferences(
     document: vscode.TextDocument,
@@ -19,10 +20,7 @@ export class GxReferenceProvider implements vscode.ReferenceProvider {
     const targetName = word.startsWith("&") ? word.substring(1) : word;
 
     try {
-      const results = await this.callGateway({
-        method: "execute_command",
-        params: { module: "Search", query: `usedby:${targetName}`, limit: 100 },
-      });
+      const results = await this.provider.queryObjects(`usedby:${targetName}`, 100, 15000);
 
       if (results && results.results) {
         return results.results.map((obj: any) => {

@@ -4,16 +4,19 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { TYPE_SUFFIX } from './gxFileSystem';
 import { GxUriParser } from './utils/GxUriParser';
+import { GxGatewayClient } from './infra/GxGatewayClient';
 
 export class GxShadowService {
     private _shadowRoot: string;
     private _baseUrl: string;
+    private _gateway: GxGatewayClient;
     private _fileHashes: Map<string, string> = new Map();
     private _fileContentCache: Map<string, string> = new Map();
     private readonly MAX_HASHES = 500;
 
     constructor(baseUrl: string) {
         this._baseUrl = baseUrl;
+        this._gateway = new GxGatewayClient(baseUrl);
         
         let workspaceRoot = vscode.workspace.workspaceFolders?.find(f => f.uri.scheme === 'file')?.uri.fsPath;
         
@@ -125,23 +128,15 @@ export class GxShadowService {
 
             if (oldFragment.length > 0) {
                 console.log(`[Shadow Service] ⚡ Delta Sync (Patch) for ${objName}.${partName}: ${linesChanged} lines.`);
-                const response = await fetch(this._baseUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        method: 'execute_command',
-                        params: {
-                            module: 'Patch',
-                            target: objName,
-                            part: partName,
-                            operation: 'Replace',
-                            context: oldFragment,
-                            content: newFragment,
-                            shadowPath: this._shadowRoot
-                        }
-                    })
-                });
-                return response.ok;
+                const response = await this._gateway.callMcpTool('genexus_edit', {
+                    name: objName,
+                    part: partName,
+                    mode: 'patch',
+                    operation: 'Replace',
+                    context: oldFragment,
+                    content: newFragment,
+                }, 30000);
+                return !response?.error && response?.status !== 'Error';
             }
         }
         return false;
@@ -170,23 +165,16 @@ export class GxShadowService {
             
             if (!deltaSuccess) {
                 console.log(`[Shadow Service] 💾 Full Write: ${objName} (Part: ${partName})`);
-                const base64Content = Buffer.from(content, 'utf8').toString('base64');
-                const response = await fetch(this._baseUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        method: 'execute_command',
-                        params: {
-                            module: 'Write',
-                            target: objName,
-                            action: partName,
-                            payload: base64Content,
-                            shadowPath: this._shadowRoot
-                        }
-                    })
-                });
+                const response = await this._gateway.callMcpTool('genexus_edit', {
+                    name: objName,
+                    part: partName,
+                    mode: 'full',
+                    content,
+                }, 30000);
 
-                if (!response.ok) throw new Error(`Gateway returned ${response.status}`);
+                if (response?.error || response?.status === 'Error') {
+                    throw new Error(response?.error || 'Gateway write failed');
+                }
             }
 
             // Always update cache after sync

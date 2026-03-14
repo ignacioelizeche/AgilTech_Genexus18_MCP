@@ -23,9 +23,11 @@ export const VIEW_ACTIONS = "genexusActions";
 
 // State keys
 export const STATE_KEY_FOLDER_ADDED = "genexus.kbFolderAdded_V6";
+export const STATE_KEY_MCP_DISCOVERY = "genexus.mcpDiscovery_V1";
 
 // Context keys
 export const CONTEXT_ACTIVE_PART = "genexus.activePart";
+export const ROOT_PARENT_NAME = "Root Module";
 
 // Gateway Modules
 export const MODULE_KB = "KB";

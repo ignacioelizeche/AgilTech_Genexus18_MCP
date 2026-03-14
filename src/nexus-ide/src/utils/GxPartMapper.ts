@@ -24,6 +24,8 @@ export const VALID_TYPES = new Set([
   "SDPanel",
   "SDT",
   "StructuredDataType",
+  "Domain",
+  "Image",
 ]);
 
 export class GxPartMapper {

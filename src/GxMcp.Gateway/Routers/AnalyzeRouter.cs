@@ -1,17 +1,13 @@
 using Newtonsoft.Json.Linq;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-
 namespace GxMcp.Gateway.Routers
 {
     public class AnalyzeRouter : IMcpModuleRouter
     {
         public string ModuleName => "Analyze";
 
-        public object ConvertToolCall(string toolName, JObject args)
+        public object? ConvertToolCall(string toolName, JObject? args)
         {
-            string target = args?["name"]?.ToString();
+            string? target = args?["name"]?.ToString();
             
             switch (toolName)
             {
@@ -31,7 +27,7 @@ namespace GxMcp.Gateway.Routers
                     return new { module = "Analyze", action = "InjectContext", target = target, recursive = recursive };
 
                 case "genexus_analyze":
-                    string mode = args?["mode"]?.ToString();
+                    string? mode = args?["mode"]?.ToString();
                     switch (mode)
                     {
                         case "linter":
