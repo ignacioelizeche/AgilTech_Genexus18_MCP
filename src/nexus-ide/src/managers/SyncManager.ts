@@ -100,47 +100,32 @@ export class SyncManager {
         // Invalidate cache in ShadowService
         this.shadowService.invalidateCache(objectName);
 
-        // Find ALL visible editors that might match this object
+        // Find ALL open documents that might match this object (including non-visible tabs)
         // We match by filename (e.g. DebugGravar.gx) to be safe
-        const matchingEditors = vscode.window.visibleTextEditors.filter(editor => {
-            const fsPath = editor.document.uri.fsPath.toLowerCase();
+        const matchingDocs = vscode.workspace.textDocuments.filter(doc => {
+            const fsPath = doc.uri.fsPath.toLowerCase();
             const fileName = path.basename(fsPath);
             return fileName.startsWith(objectName.toLowerCase() + ".") || fileName === objectName.toLowerCase() + ".gx";
         });
 
-        if (matchingEditors.length > 0) {
-            console.log(`[SyncManager] External change detected for ${objectName}. Refreshing ${matchingEditors.length} editors.`);
+        if (matchingDocs.length > 0) {
+            console.log(`[SyncManager] External change detected for ${objectName}. Refreshing ${matchingDocs.length} documents.`);
             vscode.window.setStatusBarMessage(`$(sync) KB Atualizada: ${objectName}`, 5000);
             
             // Wait a bit to ensure the OS/SDK has finished file operations
             await new Promise(resolve => setTimeout(resolve, 800));
 
-            for (const editor of matchingEditors) {
-                if (editor.document.isDirty) {
+            for (const doc of matchingDocs) {
+                if (doc.isDirty) {
                     console.log(`[SyncManager] Skipping refresh for dirty document: ${objectName}`);
                     continue;
                 }
 
                 // Proactively hydrate to update .gx_mirror file on disk
-                const success = await this.shadowService.hydrateOpenedFile(editor.document.uri, this.provider);
+                const success = await this.shadowService.hydrateOpenedFile(doc.uri, this.provider);
                 if (success) {
-                    try {
-                        // Revert the document to load from disk
-                        if (vscode.window.activeTextEditor === editor) {
-                            await vscode.commands.executeCommand('workbench.action.files.revert');
-                        } else {
-                            // If it's visible but not active, we can't easily call 'revert' via command.
-                            // But usually VS Code picks up the disk change if it's visible.
-                            // We can try to force it by opening it again (which updates the existing editor)
-                            await vscode.window.showTextDocument(editor.document, {
-                                viewColumn: editor.viewColumn,
-                                preserveFocus: true,
-                                preview: false
-                            });
-                        }
-                    } catch (e) {
-                         console.error(`[SyncManager] Failed to refresh editor for ${objectName}: ${e}`);
-                    }
+                    // Invalidate internal provider caches and tell VS Code to reload the file natively
+                    this.provider.fireFileChange(doc.uri);
                 }
             }
         }

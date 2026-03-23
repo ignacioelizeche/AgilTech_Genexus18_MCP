@@ -95,6 +95,19 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
   }
 
+  public fireFileChange(uri: vscode.Uri) {
+    const uriStr = uri.toString();
+    this._cache.contentCache.delete(uriStr);
+    this._cache.partsCache.delete(uriStr);
+    for (const key of this._cache.metadataCache.keys()) {
+      if (key.startsWith(uriStr + ":")) {
+        this._cache.metadataCache.delete(key);
+      }
+    }
+    this._cache.mtimes.set(uriStr, Date.now());
+    this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+  }
+
   public getPart(uri: vscode.Uri): string {
     const parsed = GxUriParser.parse(uri);
     if (parsed?.part) {

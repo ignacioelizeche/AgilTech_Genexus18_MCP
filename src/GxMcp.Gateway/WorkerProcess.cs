@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Channels;
+using System.IO.Pipes;
 using Newtonsoft.Json;
 
 namespace GxMcp.Gateway
@@ -17,6 +18,9 @@ namespace GxMcp.Gateway
         private Task? _healthCheckTask;
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private DateTime _lastResponse = DateTime.Now;
+        private NamedPipeServerStream? _pipeServer;
+        private StreamReader? _pipeReader;
+        private StreamWriter? _pipeWriter;
 
         public event Action<string>? OnRpcResponse;
         public event Action? OnWorkerExited;
@@ -79,13 +83,21 @@ namespace GxMcp.Gateway
                             if (_process == null || _process.HasExited) Start();
                             
                             try {
-                                await _process!.StandardInput.WriteLineAsync(jsonRpc);
-                                await _process!.StandardInput.FlushAsync();
+                                if (_pipeWriter != null) {
+                                    await _pipeWriter.WriteLineAsync(jsonRpc);
+                                } else {
+                                    await _process!.StandardInput.WriteLineAsync(jsonRpc);
+                                    await _process!.StandardInput.FlushAsync();
+                                }
                             } catch {
                                 StopProcess();
                                 Start();
-                                await _process!.StandardInput.WriteLineAsync(jsonRpc);
-                                await _process!.StandardInput.FlushAsync();
+                                if (_pipeWriter != null) {
+                                    await _pipeWriter.WriteLineAsync(jsonRpc);
+                                } else {
+                                    await _process!.StandardInput.WriteLineAsync(jsonRpc);
+                                    await _process!.StandardInput.FlushAsync();
+                                }
                             }
                         }
                     }
@@ -135,11 +147,15 @@ namespace GxMcp.Gateway
             };
 
             string kbPath = _config.Environment?.KBPath ?? "";
+            string pipeName = "GxMcpPipe_" + Guid.NewGuid().ToString("N");
             startInfo.Arguments = $"--kb \"{kbPath}\"";
             startInfo.EnvironmentVariables["GX_PROGRAM_DIR"] = _config.GeneXus?.InstallationPath ?? "";
             startInfo.EnvironmentVariables["GX_KB_PATH"] = kbPath;
             startInfo.EnvironmentVariables["GX_SHADOW_PATH"] = _config.Environment?.GX_SHADOW_PATH ?? Path.Combine(kbPath, ".gx_mirror");
+            startInfo.EnvironmentVariables["GX_MCP_PIPE"] = pipeName;
             startInfo.EnvironmentVariables["PATH"] = (_config.GeneXus?.InstallationPath ?? "") + ";" + Environment.GetEnvironmentVariable("PATH");
+
+            _pipeServer = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
 
             _process = new Process { StartInfo = startInfo };
             _process.EnableRaisingEvents = true;
@@ -169,6 +185,38 @@ namespace GxMcp.Gateway
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
 
+            // Wait for Pipe Connection with timeout
+            try {
+                var connectTask = _pipeServer.WaitForConnectionAsync(_cts.Token);
+                if (connectTask.Wait(10000)) { 
+                    Program.Log($"[Gateway] IPC Pipe {pipeName} connected.");
+                    _pipeReader = new StreamReader(_pipeServer, System.Text.Encoding.UTF8);
+                    _pipeWriter = new StreamWriter(_pipeServer, System.Text.Encoding.UTF8) { AutoFlush = true };
+                    
+                    _ = Task.Run(async () => {
+                        try {
+                            while (!_cts.Token.IsCancellationRequested) {
+                                string? line = await _pipeReader.ReadLineAsync();
+                                if (line == null) break;
+                                
+                                _lastResponse = DateTime.Now;
+                                if (line.TrimStart().StartsWith("{") && line.Contains("\"jsonrpc\"")) {
+                                    OnRpcResponse?.Invoke(line);
+                                } else {
+                                    Console.Error.WriteLine($"[Worker-Pipe] {line}");
+                                }
+                            }
+                        } catch (Exception ex) {
+                            if (!_cts.Token.IsCancellationRequested) Program.Log($"[Gateway] IPC Pipe Error: {ex.Message}");
+                        }
+                    });
+                } else {
+                    Program.Log($"[Gateway] IPC Pipe failed to connect within 10s. Falling back to Native STDIO.");
+                }
+            } catch (Exception ex) {
+                Program.Log($"[Gateway] IPC Pipe Init Error: {ex.Message}");
+            }
+
             if (_healthCheckTask == null || _healthCheckTask.IsCompleted)
             {
                 _healthCheckTask = Task.Run(() => RunHealthCheckAsync(_cts.Token));
@@ -188,6 +236,10 @@ namespace GxMcp.Gateway
 
         private void StopProcess()
         {
+            if (_pipeWriter != null) { try { _pipeWriter.Dispose(); } catch { } _pipeWriter = null; }
+            if (_pipeReader != null) { try { _pipeReader.Dispose(); } catch { } _pipeReader = null; }
+            if (_pipeServer != null) { try { _pipeServer.Dispose(); } catch { } _pipeServer = null; }
+
             if (_process != null) {
                 try { 
                     if (!_process.HasExited) _process.Kill(); 

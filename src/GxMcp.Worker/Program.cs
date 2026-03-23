@@ -94,6 +94,23 @@ namespace GxMcp.Worker
                     }
                 }
 
+                string pipeName = Environment.GetEnvironmentVariable("GX_MCP_PIPE");
+                if (!string.IsNullOrEmpty(pipeName))
+                {
+                    try {
+                        var pipeClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+                        pipeClient.Connect(5000);
+                        var writer = new StreamWriter(pipeClient, System.Text.Encoding.UTF8) { AutoFlush = true };
+                        var reader = new StreamReader(pipeClient, System.Text.Encoding.UTF8);
+                        
+                        Console.SetOut(writer);
+                        Console.SetIn(reader);
+                        Logger.Info($"[Worker] Connected to IPC Pipe {pipeName} successfully.");
+                    } catch (Exception ex) {
+                        Logger.Error($"[Worker] IPC Pipe Connection Error: {ex.Message}. Falling back to STDIO.");
+                    }
+                }
+
                 Logger.Info("Worker SDK ready.");
 
                 // Start External KB Watcher
@@ -108,17 +125,15 @@ namespace GxMcp.Worker
                 watcher.Start();
 
                 var readerThread = new Thread(() => {
-                    using (var reader = new StreamReader(Console.OpenStandardInput())) {
-                        while (true) {
-                            string line = reader.ReadLine();
-                            if (line == null) break;
-                            if (line.Trim().Equals("ping", StringComparison.OrdinalIgnoreCase) || line.Contains("\"method\":\"ping\"") || line.Contains("\"action\":\"Ping\""))
-                            {
-                                lock (Console.Out) { Console.WriteLine("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"Ready\"},\"id\":\"heartbeat\"}"); Console.Out.Flush(); }
-                                if (!line.Contains("\"method\"")) continue; // Only skip if it was a literal ping, leave JSON for full dispatch just in case
-                            }
-                            if (!string.IsNullOrWhiteSpace(line)) CommandQueue.Add(line);
+                    while (true) {
+                        string line = Console.ReadLine();
+                        if (line == null) break;
+                        if (line.Trim().Equals("ping", StringComparison.OrdinalIgnoreCase) || line.Contains("\"method\":\"ping\"") || line.Contains("\"action\":\"Ping\""))
+                        {
+                            lock (Console.Out) { Console.WriteLine("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"Ready\"},\"id\":\"heartbeat\"}"); Console.Out.Flush(); }
+                            if (!line.Contains("\"method\"")) continue; // Only skip if it was a literal ping, leave JSON for full dispatch just in case
                         }
+                        if (!string.IsNullOrWhiteSpace(line)) CommandQueue.Add(line);
                     }
                     CommandQueue.CompleteAdding();
                 }) { IsBackground = true, Name = "HeartbeatReader" };

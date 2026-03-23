@@ -92,7 +92,7 @@ namespace GxMcp.Worker.Services
                 sb.AppendLine("  <Target Name=\"Execute\">");
                 sb.AppendLine("    <OpenKnowledgeBase Directory=\"" + kbPath + "\" />");
                 if (action.Equals("Build", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(target))
-                    sb.AppendLine("    <BuildOne BuildCalled=\"true\" ObjectName=\"" + target + "\" ForceRebuild=\"false\" />");
+                    sb.AppendLine("    <BuildOne BuildCalled=\"false\" CompileMains=\"false\" ObjectName=\"" + target + "\" ForceRebuild=\"false\" />");
                 else if (action.Equals("RebuildAll", StringComparison.OrdinalIgnoreCase))
                     sb.AppendLine("    <RebuildAll />");
                 else if (action.Equals("Reorg", StringComparison.OrdinalIgnoreCase))
