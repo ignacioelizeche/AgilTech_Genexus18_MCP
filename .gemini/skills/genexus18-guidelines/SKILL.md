@@ -1,46 +1,37 @@
 ---
 name: GeneXus 18 Guidelines
-description: GeneXus 18 engineering rules that stay valid when the KB is accessed through the MCP server.
+description: Advanced GeneXus 18 engineering rules using specialized object-level and flow-level references.
 ---
 
 # GeneXus 18 Development Guidelines
 
-This skill defines the domain rules. Pair it with the MCP mastery skill for transport and tool usage.
+Use this skill to ensure high-quality, performant, and secure GeneXus 18 development. It coordinates specialized references for different object types and logic patterns.
 
-## Security
+## Triggers
+- Mentions of GeneXus object types (Transaction, Procedure, Data Provider, etc.)
+- Knowledge Base modeling tasks
+- Requests for generating or reviewing GeneXus code
+- Data modeling and normalization questions
 
-- Prefer GAM for authentication and authorization.
-- Keep sensitive configuration outside source control.
-- Avoid direct SQL when a GeneXus navigation or Business Component can express the same behavior safely.
+## Responsibilities
+- Provide deep, object-specific guidance based on modular references.
+- Ensure consistency between Data Modeling and Logic Implementation.
+- Apply GeneXus 18 best practices for performance and security.
+- Coordinate multiple objects in complex development tasks.
 
-## Data and transactions
+## Structure
+This skill uses a modular reference architecture:
+- `references/global-guidelines.md`: Core engineering rules and security.
+- `references/object-*.md`: Specialized knowledge for each object type (e.g., Transaction, Procedure).
+- `references/common-*.md`: Shared logic patterns (e.g., Commands, Rules, Events).
 
-- Use Business Components for insert, update, and delete flows that must respect GeneXus rules and referential integrity.
-- Avoid `Commit` inside loops.
-- Keep transaction rules concise. Move non-trivial logic into procedures.
+## Resource Selection Protocol
+1. Load `references/global-guidelines.md` for overall architecture.
+2. Load the corresponding `references/object-*.md` based on the objects being discussed.
+3. Load `references/common-*.md` for specific logic or syntax questions.
 
-## Navigation and performance
-
-- Constrain `For Each` with `Where` or `Defined By`.
-- Page large grids and expensive reads.
-- Validate navigation plans when changing transactions or heavy procedures.
-
-## KB structure
-
-- Keep modules organized. Do not accumulate unrelated objects in root.
-- Use clear naming conventions for Procedures, Transactions, Web Panels, Data Providers, and SDTs.
-- Prefer declarative GeneXus structures and supported refactors over raw text surgery.
-
-## MCP-specific operating rules
-
-- Use the MCP tools that match the object model instead of inventing ad hoc gateway commands.
-- For metadata changes, use `genexus_properties`.
-- For visual or logical designers, use `genexus_structure`.
-- For supported renames and extraction flows, use `genexus_refactor`.
-- For source edits, prefer `genexus_edit` or `genexus_batch_edit` and then validate.
-
-## Anti-patterns
-
-- No hardcoded URLs when a Location or environment setting should own the value.
-- No blocking waits in interactive web flows.
-- No direct dependence on hidden or deprecated transport contracts outside MCP.
+## Reference List
+- [Global Guidelines](file:///c:/Projetos/GenexusMCP/.gemini/skills/genexus18-guidelines/references/global-guidelines.md)
+- [Transaction Reference](file:///c:/Projetos/GenexusMCP/.gemini/skills/genexus18-guidelines/references/object-transaction.md)
+- [Procedure Reference](file:///c:/Projetos/GenexusMCP/.gemini/skills/genexus18-guidelines/references/object-procedure.md)
+- [Common Commands](file:///c:/Projetos/GenexusMCP/.gemini/skills/genexus18-guidelines/references/common-commands.md)
