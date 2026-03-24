@@ -114,7 +114,10 @@ export class GxTreeProvider implements vscode.TreeDataProvider<GxTreeItem> {
 
     const items = fs
       .readdirSync(targetDir, { withFileTypes: true })
-      .filter((entry) => entry.name !== ".gx_index.json")
+      .filter((entry) =>
+        entry.name !== ".gx_index.json" &&
+        entry.name !== ".mcp_config.json",
+      )
       .sort((a, b) => {
         if (a.isDirectory() !== b.isDirectory()) {
           return a.isDirectory() ? -1 : 1;

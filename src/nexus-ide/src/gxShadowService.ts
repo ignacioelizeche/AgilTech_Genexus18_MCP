@@ -6,6 +6,7 @@ import { TYPE_SUFFIX, GxFileSystemProvider } from "./gxFileSystem";
 import { GxUriParser } from "./utils/GxUriParser";
 import { GxGatewayClient } from "./infra/GxGatewayClient";
 import { extractMcpError, formatMcpErrorMessage } from "./utils/McpErrorFormatter";
+import { ROOT_PARENT_NAME } from "./constants";
 
 const PLACEHOLDER_PREFIX = "// GXMCP_PLACEHOLDER:";
 const INDEX_FILE = ".gx_index.json";
@@ -15,6 +16,18 @@ type MirrorIndexEntry = {
   name: string;
   part: string;
   path: string;
+};
+
+type HydrationTargetInfo = {
+  type: string;
+  name: string;
+  part: string;
+};
+
+type MaterializationProgress = {
+  currentParent: string;
+  directoriesCreated: number;
+  filesPrepared: number;
 };
 
 export class GxShadowService {
@@ -292,16 +305,70 @@ export class GxShadowService {
     }
   }
 
+  private tryParsePlaceholderInfo(content: string | undefined): HydrationTargetInfo | null {
+    if (!content || !content.startsWith(PLACEHOLDER_PREFIX)) {
+      return null;
+    }
+
+    const firstLine = content.split(/\r?\n/, 1)[0];
+    const encoded = firstLine.substring(PLACEHOLDER_PREFIX.length).trim();
+    const segments = encoded.split(":");
+    if (segments.length < 3) {
+      return null;
+    }
+
+    const type = segments.shift()?.trim() || "";
+    const part = segments.pop()?.trim() || "Source";
+    const name = segments.join(":").trim();
+
+    if (!type || !name) {
+      return null;
+    }
+
+    return { type, name, part: part || "Source" };
+  }
+
+  private resolveHydrationTarget(
+    uri: vscode.Uri,
+    currentText?: string,
+  ): HydrationTargetInfo | null {
+    const fromCurrentText = this.tryParsePlaceholderInfo(currentText);
+    if (fromCurrentText) {
+      return fromCurrentText;
+    }
+
+    try {
+      const diskContent = fs.readFileSync(uri.fsPath, "utf8");
+      const fromDisk = this.tryParsePlaceholderInfo(diskContent);
+      if (fromDisk) {
+        return fromDisk;
+      }
+    } catch {}
+
+    const parsed = GxUriParser.parse(uri);
+    if (!parsed?.name) {
+      return null;
+    }
+
+    return {
+      type: parsed.type,
+      name: parsed.name,
+      part: parsed.part || "Source",
+    };
+  }
+
   public async hydrateOpenedFile(
     uri: vscode.Uri,
     provider: GxFileSystemProvider,
+    currentText?: string,
   ): Promise<boolean> {
     if (uri.scheme !== "file") {
       return false;
     }
 
-    const info = GxUriParser.parse(uri);
+    const info = this.resolveHydrationTarget(uri, currentText);
     if (!info?.name) {
+      console.warn(`[GxShadow] Unable to resolve hydration target for ${uri.fsPath}`);
       return false;
     }
 
@@ -316,10 +383,13 @@ export class GxShadowService {
         name: target,
         part: info.part || "Source",
       },
-      30000,
+      90000,
     );
 
     if (!result?.source) {
+      console.warn(
+        `[GxShadow] genexus_read returned no source for ${target} (${info.part || "Source"})`,
+      );
       return false;
     }
 
@@ -332,10 +402,38 @@ export class GxShadowService {
   }
 
   public async materializeWorkspace(provider: GxFileSystemProvider): Promise<void> {
+    return this.materializeWorkspaceWithProgress(provider);
+  }
+
+  public async materializeWorkspaceWithProgress(
+    provider: GxFileSystemProvider,
+    onProgress?: (progress: MaterializationProgress) => void,
+  ): Promise<void> {
     const indexEntries: MirrorIndexEntry[] = [];
+    let directoriesCreated = 0;
+    let filesPrepared = 0;
+
+    const reportProgress = (currentParent: string) => {
+      onProgress?.({
+        currentParent,
+        directoriesCreated,
+        filesPrepared,
+      });
+    };
 
     const walk = async (parentName: string, parentDir: string) => {
+      reportProgress(parentName);
+      const browseStartedAt = Date.now();
       const children = await provider.browseObjects(parentName);
+      const browseElapsedMs = Date.now() - browseStartedAt;
+      console.log(
+        `[GxShadow] browseObjects(${parentName}) returned ${children.length} item(s) in ${browseElapsedMs}ms.`,
+      );
+      if (parentName === ROOT_PARENT_NAME && children.length === 0) {
+        throw new Error(
+          "Materialization root browse returned 0 objects. Search index is reachable, but the root query produced no children.",
+        );
+      }
       const siblingNames = new Set<string>();
 
       for (const child of children) {
@@ -350,6 +448,8 @@ export class GxShadowService {
           const nextDir = path.join(parentDir, displayName);
           if (!fs.existsSync(nextDir)) {
             fs.mkdirSync(nextDir, { recursive: true });
+            directoriesCreated++;
+            reportProgress(child.name);
           }
           await walk(child.name, nextDir);
           continue;
@@ -360,6 +460,10 @@ export class GxShadowService {
           this.writeTrackedFile(filePath, this.buildPlaceholder(child));
         }
         indexEntries.push(this.buildIndexEntry(filePath, child));
+        filesPrepared++;
+        if (filesPrepared % 25 === 0) {
+          reportProgress(parentName);
+        }
       }
     };
 
@@ -367,8 +471,30 @@ export class GxShadowService {
       fs.mkdirSync(this._shadowRoot, { recursive: true });
     }
 
-    await walk("Root Module", this._shadowRoot);
+    await walk(ROOT_PARENT_NAME, this._shadowRoot);
+    if (indexEntries.length === 0) {
+      throw new Error(
+        "Materialization produced 0 entries. Mirror index was not written to avoid a false-ready state.",
+      );
+    }
     this.writeMirrorIndex(indexEntries);
+    reportProgress("Complete");
+  }
+
+  public resetMirrorWorkspace(): void {
+    if (!fs.existsSync(this._shadowRoot)) {
+      fs.mkdirSync(this._shadowRoot, { recursive: true });
+      return;
+    }
+
+    for (const entry of fs.readdirSync(this._shadowRoot, { withFileTypes: true })) {
+      if (entry.name === ".mcp_config.json") {
+        continue;
+      }
+
+      const targetPath = path.join(this._shadowRoot, entry.name);
+      fs.rmSync(targetPath, { recursive: true, force: true });
+    }
   }
 
   public async syncToDisk(
@@ -527,7 +653,18 @@ export class GxShadowService {
   }
 
   public hasMaterializedWorkspace(): boolean {
-    return this.readCurrentMirrorIndex().length > 0;
+    const index = this.readCurrentMirrorIndex();
+    if (index.length === 0) return false;
+
+    // Adicional: Verificar se pelo menos alguns arquivos do índice existem no disco
+    const sampleSize = Math.min(index.length, 5);
+    for (let i = 0; i < sampleSize; i++) {
+        const fullPath = path.join(this._shadowRoot, index[i].path);
+        if (fs.existsSync(fullPath)) return true;
+    }
+
+    // Se nenhum dos primeiros 5 arquivos existe, considerar como não materializado
+    return false;
   }
 
   public shouldIgnore(filePath: string): boolean {
@@ -595,7 +732,7 @@ export class GxShadowService {
             context: oldFragment,
             content: newFragment,
           },
-          30000,
+          90000,
         );
         return !response?.error && response?.status !== "Error";
       }
@@ -657,7 +794,7 @@ export class GxShadowService {
             mode: "full",
             content,
           },
-          30000,
+          120000,
         );
 
         if (response?.error || response?.status === "Error") {

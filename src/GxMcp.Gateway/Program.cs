@@ -31,43 +31,44 @@ namespace GxMcp.Gateway
             "https://127.0.0.1"
         };
 
+        private static readonly object _logLock = new object();
+
+        public static void TryWriteStderr(string message)
+        {
+            try
+            {
+                Console.Error.WriteLine(message);
+            }
+            catch
+            {
+            }
+        }
+
+        public static void TryWriteStdout(string message)
+        {
+            try
+            {
+                Console.WriteLine(message);
+                Console.Out.Flush();
+            }
+            catch
+            {
+            }
+        }
+
         private static void InitializeLogging()
         {
-            for (int i = 0; i < 3; i++)
-            {
-                try
-                {
-                    if (File.Exists(_logPath))
-                    {
-                        string prevLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gateway_debug.prev.log");
-                        if (File.Exists(prevLog)) File.Delete(prevLog);
-                        File.Move(_logPath, prevLog);
-                        break;
-                    }
-                }
-                catch 
-                { 
-                    if (i == 2) break;
-                    System.Threading.Thread.Sleep(100); 
-                }
-            }
-            
-            // Start background log writer
-            Task.Run(() => {
-                foreach (var msg in _logQueue.GetConsumingEnumerable())
-                {
-                    try { File.AppendAllText(_logPath, msg); }
-                    catch { }
-                }
-            });
-
+            /* Background writer disabled for stability */
             Log("=== Gateway starting (Stdio Mode) ===");
         }
 
         public static void Log(string msg)
         {
-            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
-            _logQueue.Add($"[{timestamp}] {msg}\n");
+            try {
+                lock (_logLock) {
+                    File.AppendAllText(_logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {msg}\n");
+                }
+            } catch { }
         }
 
         private static async Task RunSessionCleanupLoop(CancellationToken cancellationToken)
@@ -91,17 +92,23 @@ namespace GxMcp.Gateway
 
         private static void BroadcastNotification(string method, object payload)
         {
-            string json = JsonConvert.SerializeObject(new
-            {
-                jsonrpc = "2.0",
-                method,
-                @params = payload
-            });
+            _ = Task.Run(() => {
+                try {
+                    string json = JsonConvert.SerializeObject(new
+                    {
+                        jsonrpc = "2.0",
+                        method,
+                        @params = payload
+                    });
 
-            foreach (var session in _httpSessions.ActiveSessions)
-            {
-                QueueSessionMessage(session, json);
-            }
+                    foreach (var session in _httpSessions.ActiveSessions)
+                    {
+                        QueueSessionMessage(session, json);
+                    }
+                } catch (Exception ex) {
+                    Log($"[Broadcast] Error: {ex.Message}");
+                }
+            });
         }
 
         private static void BroadcastToolsListChanged(string reason)
@@ -132,15 +139,30 @@ namespace GxMcp.Gateway
             });
         }
 
-        static async Task Main(string[] args)
+        public static async Task Main(string[] args)
         {
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => {
+                string msg = $"[{DateTime.Now}] FATAL UNHANDLED: {e.ExceptionObject}\n";
+                TryWriteStderr(msg);
+                try { File.AppendAllText("gateway_panic.log", msg); } catch { }
+            };
+
             // Register encoding provider for Windows-1252 support in .NET 8
             System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
-            Console.InputEncoding = System.Text.Encoding.UTF8;
-            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            try
+            {
+                Console.InputEncoding = System.Text.Encoding.UTF8;
+                Console.OutputEncoding = System.Text.Encoding.UTF8;
+            }
+            catch (IOException)
+            {
+                // Detached HTTP-only launches may not have a console handle.
+            }
 
             InitializeLogging();
+            var config = Configuration.Load();
+            Log("[Gateway] Startup orphan-kill disabled. Existing gateway reuse is handled by the extension client.");
 
             AppDomain.CurrentDomain.UnhandledException += (s, e) => {
                 Log("FATAL UNHANDLED EXCEPTION: " + (e.ExceptionObject as Exception)?.ToString());
@@ -151,9 +173,8 @@ namespace GxMcp.Gateway
                 e.SetObserved();
             };
 
-            Console.Error.WriteLine("=== Gateway starting (Stdio Mode) ===");
+            TryWriteStderr("=== Gateway starting (Stdio Mode) ===");
             
-            var config = Configuration.Load();
             _httpSessions = new HttpSessionRegistry(TimeSpan.FromMinutes(config.Server?.SessionIdleTimeoutMinutes ?? 10));
             
             // Subscribing to Configuration Changes
@@ -169,11 +190,32 @@ namespace GxMcp.Gateway
                 }
             };
 
-            StartWorker(config);
+            // 1. Start HTTP Server first (it's critical for VS Code communication)
+            if (config.Server?.HttpPort > 0)
+            {
+                Log($"[Gateway] Starting HTTP server on port {config.Server.HttpPort}...");
+                _ = Task.Run(async () => {
+                    try { 
+                        await StartHttpServer(config); 
+                        Log("[Gateway] HTTP server bound and active.");
+                        while(true) {
+                            await Task.Delay(30000);
+                            Log("[Gateway] Heartbeat: HTTP server still active.");
+                        }
+                    }
+                    catch (Exception exHttp) { Log($"[HTTP] Fatal error: {exHttp.Message}"); }
+                });
+            }
 
-            // Subscribing to KB changes for Semantic Cache Invalidation
+            // 2. Start Worker in background
+            Log("[Gateway] Initializing Worker...");
+            StartWorker(config);
+            Log("[Gateway] Worker started.");
+
+            // 3. Subscribing to KB changes for Semantic Cache Invalidation
             if (!string.IsNullOrEmpty(config.Environment?.KBPath))
             {
+                Log("[Gateway] Setting up .gx_mirror watcher...");
                 try 
                 {
                     string mirrorPath = Path.Combine(config.Environment.KBPath, ".gx_mirror");
@@ -188,45 +230,48 @@ namespace GxMcp.Gateway
                         _semanticCache.Clear();
                         BroadcastResourceUpdated("genexus://objects", "external_kb_change");
                     };
+                    Log("[Gateway] .gx_mirror watcher active.");
                 } catch (Exception ex) { Log($"[Cache] Watcher error: {ex.Message}"); }
             }
 
-            // HTTP Server in background
-            if (config.Server?.HttpPort > 0)
+            if (config.Server?.McpStdio == true)
             {
-                _ = Task.Run(async () => {
-                    try { await StartHttpServer(config); }
-                    catch { }
-                });
-            }
-
-            // MCP Stdio Loop
-            var reader = Console.In;
-            {
+                Log("[Gateway] Entering Stdio Loop...");
+                var reader = Console.In;
                 while (true)
                 {
                     string? line = null;
                     try { line = await reader.ReadLineAsync(); } catch { }
-                    
-                    if (line == null) {
-                        // If Stdio is closed but HTTP is enabled, wait forever
-                        if (config.Server?.HttpPort > 0) {
+
+                    if (line == null)
+                    {
+                        if (config.Server?.HttpPort > 0)
+                        {
                             Log("Stdio closed, keeping alive for HTTP...");
                             await Task.Delay(-1);
                         }
-                        break; 
+                        break;
                     }
-                    
-                    try {
+
+                    try
+                    {
                         var request = JObject.Parse(line);
                         var response = await ProcessMcpRequest(request);
                         if (response != null)
                         {
-                            Console.WriteLine(response.ToString(Formatting.None));
-                            Console.Out.Flush();
+                            TryWriteStdout(response.ToString(Formatting.None));
                         }
-                    } catch (Exception ex) { Log("MCP Error: " + ex.Message); }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log("MCP Error: " + ex.Message);
+                    }
                 }
+            }
+            else if (config.Server?.HttpPort > 0)
+            {
+                Log("[Gateway] MCP stdio disabled. Serving HTTP only.");
+                await Task.Delay(-1);
             }
         }
 
@@ -432,7 +477,13 @@ namespace GxMcp.Gateway
                         $"Timeout waiting for tool: {toolName}",
                         resultObj =>
                         {
-                            var finalResult = TruncateResponseIfNeeded(resultObj["result"] ?? resultObj["error"], toolName);
+                            JToken? finalResult = null;
+                            try {
+                                finalResult = TruncateResponseIfNeeded(resultObj["result"] ?? resultObj["error"], toolName);
+                            } catch (Exception exTrunc) {
+                                Log($"[Gateway] Error during truncation: {exTrunc.Message}");
+                                finalResult = resultObj["result"] ?? resultObj["error"];
+                            }
 
                             var response = new JObject
                             {
@@ -485,28 +536,17 @@ namespace GxMcp.Gateway
 
             if (result is JObject obj)
             {
-                if (obj["results"] is JArray searchResults)
+                if (obj["results"] is JArray searchResults && searchResults.Count > 10)
                 {
                     int originalCount = searchResults.Count;
-                    while (searchResults.Count > 1 && obj.ToString(Formatting.None).Length > 79000)
+                    string currentRaw = obj.ToString(Formatting.None);
+                    if (currentRaw.Length > 80000)
                     {
-                        searchResults.RemoveAt(searchResults.Count - 1);
-                    }
-
-                    if (searchResults.Count < originalCount)
-                    {
+                        // Drastic pruning: keep only first 5
+                        while (searchResults.Count > 5) searchResults.RemoveAt(searchResults.Count - 1);
                         obj["isTruncated"] = true;
-                        obj["returnedCount"] = searchResults.Count;
-
-                        while (searchResults.Count > 1 && obj.ToString(Formatting.None).Length > 80000)
-                        {
-                            searchResults.RemoveAt(searchResults.Count - 1);
-                            obj["returnedCount"] = searchResults.Count;
-                        }
-                    }
-
-                    if (obj.ToString(Formatting.None).Length <= 80000)
-                    {
+                        obj["returnedCount"] = 5;
+                        obj["originalCount"] = originalCount;
                         return obj;
                     }
                 }
@@ -651,10 +691,10 @@ namespace GxMcp.Gateway
             await context.Response.WriteAsync($"event: session\ndata: {{\"sessionId\":\"{session.Id}\"}}\n\n");
             await context.Response.Body.FlushAsync();
 
-            DateTime deadline = DateTime.UtcNow.AddSeconds(30);
             try
             {
-                while (!context.RequestAborted.IsCancellationRequested && DateTime.UtcNow < deadline)
+                // Ironclad SSE: No deadline, keep alive indefinitely until client or server disconnects.
+                while (!context.RequestAborted.IsCancellationRequested)
                 {
                     string? payload = null;
                     lock (session.PendingMessages)
@@ -671,25 +711,18 @@ namespace GxMcp.Gateway
                         continue;
                     }
 
-                    await context.Response.WriteAsync(": keepalive\n\n");
-                    await context.Response.Body.FlushAsync();
                     try
                     {
+                        await context.Response.WriteAsync(": keepalive\n\n");
+                        await context.Response.Body.FlushAsync();
                         await Task.Delay(5000, context.RequestAborted);
                     }
-                    catch (TaskCanceledException)
-                    {
-                        break;
-                    }
+                    catch (OperationCanceledException) { break; }
                 }
             }
-            catch (IOException)
+            catch (Exception ex)
             {
-                Log($"[HTTP] SSE stream closed for session {session.Id}.");
-            }
-            catch (OperationCanceledException)
-            {
-                Log($"[HTTP] SSE stream canceled for session {session.Id}.");
+                Log($"[HTTP] SSE stream error for session {session.Id}: {ex.Message}");
             }
 
             return Results.Empty;
@@ -700,12 +733,14 @@ namespace GxMcp.Gateway
             using (var reader = new StreamReader(request.Body))
             {
                 string body = await reader.ReadToEndAsync();
+                string id = "no-id";
 
                 try
                 {
                     var requestObj = JsonConvert.DeserializeObject<JObject>(body);
                     if (requestObj == null) return Results.BadRequest(new { error = "Invalid JSON" });
 
+                    id = requestObj["id"]?.ToString() ?? "no-id";
                     var sessionError = McpHttpProtocol.TryGetValidSession(_httpSessions, request, requestObj, out var session);
                     if (sessionError != null)
                         return Results.Json(new { error = sessionError.Value.Message }, statusCode: sessionError.Value.StatusCode);
@@ -714,9 +749,10 @@ namespace GxMcp.Gateway
                     if (protocolError != null)
                         return Results.Json(new { error = protocolError.Value.Message }, statusCode: protocolError.Value.StatusCode);
 
+                    id = requestObj["id"]?.ToString() ?? "no-id";
                     string method = requestObj["method"]?.ToString() ?? "unknown";
-                    string id = requestObj["id"]?.ToString() ?? "no-id";
-                    Log($"[HTTP] Received {method} (ID: {id}) on /mcp");
+                    string bodyBrief = body.Length > 100 ? body.Substring(0, 100) + "..." : body;
+                    Log($"[HTTP] Received {method} (ID: {id}) - Body: {bodyBrief}");
 
                     var response = await ProcessMcpRequest(requestObj);
 
@@ -739,16 +775,23 @@ namespace GxMcp.Gateway
                         
                     if (response != null)
                     {
-                        Log($"[HTTP] Responding to {id}");
-                        return Results.Content(response.ToString(Formatting.None), "application/json");
+                        Log($"[HTTP] Serializing response for {id}...");
+                        string jsonResponse = response.ToString(Formatting.None);
+                        Log($"[HTTP] Sending {jsonResponse.Length} bytes to {id}");
+                        return Results.Content(jsonResponse, "application/json");
                     }
 
                     return Results.BadRequest(new { error = "No response generated" });
                 }
+                catch (OperationCanceledException)
+                {
+                    Log($"[HTTP] Request aborted by client: {id}");
+                    return Results.StatusCode(499); // Client Closed Request
+                }
                 catch (Exception ex)
                 {
-                    Log($"[HTTP Error] {ex.Message}");
-                    return Results.Problem(ex.Message);
+                    Log($"[HTTP] Error processing {id}: {ex.Message}");
+                    return Results.Json(new { jsonrpc = "2.0", id = id, error = new { code = -32603, message = $"Gateway Error: {ex.Message}" } });
                 }
             }
         }
@@ -756,7 +799,7 @@ namespace GxMcp.Gateway
         static Task StartHttpServer(Configuration config)
         {
             var serverConfig = config.Server ?? new ServerConfig();
-            string bindAddress = string.IsNullOrWhiteSpace(serverConfig.BindAddress) ? "127.0.0.1" : serverConfig.BindAddress;
+            string bindAddress = string.IsNullOrWhiteSpace(serverConfig.BindAddress) ? "0.0.0.0" : serverConfig.BindAddress;
             Log($"[HTTP] Starting server on {bindAddress}:{serverConfig.HttpPort}...");
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseUrls($"http://{bindAddress}:{serverConfig.HttpPort}");

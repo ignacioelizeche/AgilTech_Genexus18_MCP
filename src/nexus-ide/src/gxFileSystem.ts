@@ -50,8 +50,10 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
   private _cache: GxCacheManager;
   private _shadowService?: GxShadowService;
   private _diagnosticProvider?: GxDiagnosticProvider;
+  private _metadataWarmupStarted: boolean = false;
   public isBulkIndexing: boolean = false;
   public isWorkspaceHydrating: boolean = false;
+  private _interactiveHydrations = 0;
 
   private _kbInitPromise: Promise<any> | null = null;
   private _pendingQueryRequests = new Map<string, Promise<any>>();
@@ -108,6 +110,18 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
   }
 
+  public beginInteractiveHydration(): void {
+    this._interactiveHydrations++;
+  }
+
+  public endInteractiveHydration(): void {
+    this._interactiveHydrations = Math.max(0, this._interactiveHydrations - 1);
+  }
+
+  public get hasInteractiveHydration(): boolean {
+    return this._interactiveHydrations > 0;
+  }
+
   public getPart(uri: vscode.Uri): string {
     const parsed = GxUriParser.parse(uri);
     if (parsed?.part) {
@@ -146,7 +160,6 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
           uri: vscode.Uri.from({ scheme: GX_SCHEME, path: "/" }),
         },
       ]);
-      setTimeout(() => this.shadowMetadata(), 1000);
     }).catch((error) => {
       console.error("[Nexus IDE] KB init failed:", error);
       this._kbInitPromise = null;
@@ -155,12 +168,25 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     return this._kbInitPromise;
   }
 
+  public warmMetadataAfterBootstrap(): void {
+    if (this._metadataWarmupStarted) {
+      return;
+    }
+
+    this._metadataWarmupStarted = true;
+    setTimeout(() => {
+      void this.shadowMetadata().catch((error) => {
+        console.error("[Nexus IDE] Deferred metadata warmup failed:", error);
+      });
+    }, 1000);
+  }
+
   private async shadowMetadata() {
     try {
       const result = await this.queryObjects(
         "type:Transaction or type:SDT",
         5,
-        30000,
+        120000,
       );
 
       if (result && result.results) {
@@ -313,7 +339,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         const result = await this.queryObjects(
           `type:${parentName} @quick`,
           BROWSE_QUERY_LIMIT,
-          30000,
+          60000,
         );
         objects = Array.isArray(result?.results)
           ? result.results
@@ -395,7 +421,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
           {
             items: partsToFetch.map((part) => ({ name: target, part })),
           },
-          30000,
+          120000,
         );
         if (allPartsResult && Array.isArray(allPartsResult.results)) {
           const newPCache = new Map<string, Uint8Array>();
@@ -426,7 +452,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
             name: target,
             part: partName,
           },
-          30000,
+          120000,
         );
         const data =
           result && result.source
@@ -459,6 +485,10 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
   }
 
   async preWarm(uri: vscode.Uri): Promise<void> {
+    if (uri.scheme === "file") {
+      return;
+    }
+
     if (
       !this._cache.partsCache.has(uri.toString()) &&
       !this._cache.pendingReadRequests.has(uri.toString())
@@ -489,7 +519,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
           mode: "full",
           content: Buffer.from(content).toString("utf8"),
         },
-        30000,
+        120000,
       );
       if (!result || result.error || result.status === "Error") {
         if (result?.issues && this._diagnosticProvider) {
@@ -603,48 +633,368 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     return request;
   }
 
-  public async browseObjects(parentName: string): Promise<any[]> {
-    const result = await this.queryObjects(
-      `parent:"${parentName}" @quick`,
-      BROWSE_QUERY_LIMIT,
-      30000,
+  public async listObjects(
+    options?: {
+      filter?: string;
+      limit?: number;
+      offset?: number;
+      parent?: string;
+      typeFilter?: string;
+    },
+    customTimeout?: number,
+  ): Promise<any[]> {
+    const result = await this.callMcpTool(
+      "genexus_list_objects",
+      {
+        ...(options?.filter ? { filter: options.filter } : {}),
+        ...(options?.limit !== undefined ? { limit: options.limit } : {}),
+        ...(options?.offset !== undefined ? { offset: options.offset } : {}),
+        ...(options?.parent ? { parent: options.parent } : {}),
+        ...(options?.typeFilter ? { typeFilter: options.typeFilter } : {}),
+      },
+      customTimeout,
     );
 
-    const objects = Array.isArray(result?.results)
-      ? result.results
-      : Array.isArray(result)
-        ? result
+    if (typeof result?.error === "string" && result.error.length > 0) {
+      throw new Error(result.error);
+    }
+
+    return Array.isArray(result)
+      ? result
+      : Array.isArray(result?.results)
+        ? result.results
         : [];
+  }
+
+  public async browseObjects(parentName: string): Promise<any[]> {
+    const normalizeQueryResults = (result: any): any[] =>
+      Array.isArray(result?.results)
+        ? result.results
+        : Array.isArray(result)
+            ? result
+            : [];
+
+    const getEntryKey = (entry: any): string =>
+      `${String(entry?.type ?? "")}:${String(entry?.name ?? "")}`.toLowerCase();
+
+    const getTypeSortBucket = (type: unknown): number => {
+      const normalized = typeof type === "string" ? type.toLowerCase() : "";
+      return normalized === "folder" || normalized === "module" ? 0 : 1;
+    };
+
+    const sortEntries = (entries: any[]): any[] =>
+      [...entries].sort((left, right) => {
+        const bucketDiff =
+          getTypeSortBucket(left?.type) - getTypeSortBucket(right?.type);
+        if (bucketDiff !== 0) {
+          return bucketDiff;
+        }
+
+        const nameDiff = String(left?.name ?? "").localeCompare(
+          String(right?.name ?? ""),
+          undefined,
+          { sensitivity: "accent" },
+        );
+        if (nameDiff !== 0) {
+          return nameDiff;
+        }
+
+        return String(left?.type ?? "").localeCompare(String(right?.type ?? ""), undefined, {
+          sensitivity: "accent",
+        });
+      });
+
+    const dedupeEntries = (entries: any[]): any[] => {
+      const unique = new Map<string, any>();
+      for (const entry of entries) {
+        if (!entry?.name || !entry?.type) continue;
+        unique.set(getEntryKey(entry), entry);
+      }
+      return sortEntries(Array.from(unique.values()));
+    };
+
+    const isTimeoutError = (error: unknown): boolean => {
+      const message =
+        typeof error === "string"
+          ? error
+          : error instanceof Error
+            ? error.message
+            : String(error ?? "");
+      return /timeout gateway/i.test(message);
+    };
+
+    const loadTypedQueriesSequentially = async (
+      query: string,
+      typeFilters: string[],
+      timeoutMs: number,
+      options?: {
+        continueOnError?: boolean;
+        stopOnFirstMatch?: boolean;
+        scopeLabel?: string;
+      },
+    ): Promise<any[]> => {
+      const collected: any[] = [];
+
+      for (const typeFilter of typeFilters) {
+        try {
+          const typedResult = await this.queryObjects(
+            query,
+            BROWSE_QUERY_LIMIT,
+            timeoutMs,
+            { typeFilter },
+          );
+
+          if (typeof typedResult?.error === "string" && typedResult.error.length > 0) {
+            throw new Error(typedResult.error);
+          }
+
+          const entries = normalizeQueryResults(typedResult);
+          if (entries.length > 0) {
+            console.log(
+              `[GxFS] ${options?.scopeLabel ?? "typed browse"}: ${typeFilter} returned ${entries.length} item(s).`,
+            );
+            collected.push(...entries);
+            if (options?.stopOnFirstMatch) {
+              break;
+            }
+          }
+        } catch (error) {
+          if (!options?.continueOnError) {
+            throw error;
+          }
+
+          console.warn(
+            `[GxFS] ${options?.scopeLabel ?? "typed browse"}: ${typeFilter} failed with '${error instanceof Error ? error.message : String(error)}'. Continuing.`,
+          );
+        }
+      }
+
+      return dedupeEntries(collected);
+    };
+
+    const isRootEntry = (entry: any): boolean => {
+      const entryParent =
+        typeof entry?.parent === "string" ? entry.parent.trim() : "";
+      return entryParent.length === 0 || entryParent === ROOT_PARENT_NAME;
+    };
+
+    const loadChildrenFromStructuralList = async (): Promise<any[]> => {
+      const collected: any[] = [];
+      const seenKeys = new Set<string>();
+      let offset = 0;
+      let pageNumber = 0;
+
+      while (true) {
+        pageNumber++;
+        const entries = await this.listObjects(
+          {
+            parent: parentName,
+            limit: BROWSE_QUERY_LIMIT,
+            offset,
+          },
+          120000,
+        );
+
+        if (!Array.isArray(entries) || entries.length === 0) {
+          break;
+        }
+
+        const normalizedPage = dedupeEntries(entries).filter((entry) => {
+          if (!entry?.name || !entry?.type) {
+            return false;
+          }
+
+          const entryParent =
+            typeof entry?.parent === "string" ? entry.parent.trim() : "";
+
+          if (parentName === ROOT_PARENT_NAME) {
+            return entryParent.length === 0 || entryParent === ROOT_PARENT_NAME;
+          }
+
+          return entryParent === parentName;
+        });
+
+        let pageAdded = 0;
+        for (const entry of normalizedPage) {
+          const key = getEntryKey(entry);
+          if (seenKeys.has(key)) {
+            continue;
+          }
+
+          seenKeys.add(key);
+          collected.push(entry);
+          pageAdded++;
+        }
+
+        if (pageNumber > 1 && pageAdded > 0) {
+          console.warn(
+            `[GxFS] Structural list page ${pageNumber} added ${pageAdded} child(ren) for ${parentName}.`,
+          );
+        }
+
+        if (entries.length < BROWSE_QUERY_LIMIT) {
+          break;
+        }
+
+        if (pageAdded === 0) {
+          console.warn(
+            `[GxFS] Structural list pagination stalled for ${parentName} at offset ${offset}. Aborting further page fetches to avoid an infinite loop.`,
+          );
+          break;
+        }
+
+        offset += BROWSE_QUERY_LIMIT;
+      }
+
+      const normalized = sortEntries(collected);
+
+      if (normalized.length > 0) {
+        console.warn(
+          `[GxFS] Structural list resolved ${normalized.length} child(ren) for ${parentName}.`,
+        );
+      }
+
+      return normalized;
+    };
+
+    const loadRootFallback = async (): Promise<any[]> => {
+      console.warn(
+        `[GxFS] Falling back to sequential root enumeration after direct root browse failed or returned no items.`,
+      );
+
+      const rootContainerTypes = ["Folder", "Module"];
+      const rootLeafTypes = BROWSE_FALLBACK_TYPES.filter(
+        (typeFilter) => !rootContainerTypes.includes(typeFilter),
+      );
+
+      const containerEntries = (
+        await loadTypedQueriesSequentially(
+          "@quick",
+          rootContainerTypes,
+          45000,
+          {
+            continueOnError: true,
+            scopeLabel: "root container fallback",
+          },
+        )
+      ).filter(isRootEntry);
+
+      const leafEntries = (
+        await loadTypedQueriesSequentially(
+          "@quick",
+          rootLeafTypes,
+          30000,
+          {
+            continueOnError: true,
+            stopOnFirstMatch: false,
+            scopeLabel: "root leaf fallback",
+          },
+        )
+      ).filter(isRootEntry);
+
+      const combinedEntries = dedupeEntries([
+        ...containerEntries,
+        ...leafEntries,
+      ]);
+
+      if (combinedEntries.length > 0) {
+        console.warn(
+          `[GxFS] Root fallback resolved ${combinedEntries.length} root item(s), including ${containerEntries.length} container(s).`,
+        );
+      }
+
+      return combinedEntries;
+    };
+
+    try {
+      const structuralChildren = await loadChildrenFromStructuralList();
+      if (structuralChildren.length > 0) {
+        return structuralChildren;
+      }
+    } catch (error) {
+      console.warn(
+        `[GxFS] Structural list failed for ${parentName}: ${error instanceof Error ? error.message : String(error)}. Falling back to search-based browse.`,
+      );
+    }
+
+    if (parentName === ROOT_PARENT_NAME) {
+      const fallbackObjects = await loadRootFallback();
+      if (fallbackObjects.length > 0) {
+        console.warn(
+          `[GxFS] Root browse resolved immediately via fallback query with ${fallbackObjects.length} container(s).`,
+        );
+        return fallbackObjects;
+      }
+    }
+
+    let result: any;
+    try {
+      result = await this.queryObjects(
+        `parent:"${parentName}" @quick`,
+        BROWSE_QUERY_LIMIT,
+        90000,
+      );
+    } catch (error) {
+      if (parentName === ROOT_PARENT_NAME) {
+        const fallbackObjects = await loadRootFallback();
+        if (fallbackObjects.length > 0) {
+          console.warn(
+            `[GxFS] Root browse failed with '${error instanceof Error ? error.message : String(error)}'; recovered ${fallbackObjects.length} root containers via fallback query.`,
+          );
+          return fallbackObjects;
+        }
+      }
+      throw error;
+    }
+
+    if (typeof result?.error === "string" && result.error.length > 0) {
+      if (parentName === ROOT_PARENT_NAME && /timeout gateway/i.test(result.error)) {
+        const fallbackObjects = await loadRootFallback();
+        if (fallbackObjects.length > 0) {
+          console.warn(
+            `[GxFS] Root browse timed out; recovered ${fallbackObjects.length} root containers via fallback query.`,
+          );
+          return fallbackObjects;
+        }
+      }
+      throw new Error(result.error);
+    }
+
+    const objects = normalizeQueryResults(result);
+
+    if (parentName === ROOT_PARENT_NAME && objects.length === 0) {
+      const fallbackObjects = await loadRootFallback();
+      if (fallbackObjects.length > 0) {
+        console.warn(
+          `[GxFS] Root browse returned 0 objects; recovered ${fallbackObjects.length} root containers via fallback query.`,
+        );
+        return fallbackObjects;
+      }
+    }
 
     if (!(result?.isTruncated === true)) {
       return objects;
     }
 
-    const typedResults = await Promise.all(
-      BROWSE_FALLBACK_TYPES.map(async (typeFilter) => {
-        const typedResult = await this.queryObjects(
-          `parent:"${parentName}" @quick`,
-          BROWSE_QUERY_LIMIT,
-          30000,
-          { typeFilter },
-        );
+      if (parentName === ROOT_PARENT_NAME) {
+        const fallbackObjects = await loadRootFallback();
+        if (fallbackObjects.length > 0) {
+          console.warn(
+            `[GxFS] Root browse used fallback after truncated result and recovered ${fallbackObjects.length} item(s).`,
+          );
+          return fallbackObjects;
+        }
+      }
 
-        return Array.isArray(typedResult?.results)
-          ? typedResult.results
-          : Array.isArray(typedResult)
-            ? typedResult
-            : [];
-      }),
-    );
-
-    const unique = new Map<string, any>();
-    for (const entry of typedResults.flat()) {
-      if (!entry?.name || !entry?.type) continue;
-      unique.set(`${entry.type}:${entry.name}`, entry);
+      return loadTypedQueriesSequentially(
+        `parent:"${parentName}" @quick`,
+        BROWSE_FALLBACK_TYPES,
+        90000,
+        {
+          scopeLabel: `typed child browse for ${parentName}`,
+        },
+      );
     }
-
-    return Array.from(unique.values());
-  }
 
   public async readObjectVariables(name: string, customTimeout?: number): Promise<any[]> {
     const result = await this.readMcpResource(

@@ -3,10 +3,9 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { GxFileSystemProvider } from "../gxFileSystem";
+import { resolveGatewayHttpPort } from "../utils/GatewayConfig";
 import {
   CONFIG_SECTION,
-  CONFIG_MCP_PORT,
-  DEFAULT_MCP_PORT,
   COMMAND_PREFIX,
   DISCOVERY_DELAY,
   STATE_KEY_MCP_DISCOVERY,
@@ -35,8 +34,27 @@ export class McpDiscoveryManager {
     const discovery = await this.loadDiscoverySnapshot();
     this.registerCopilotTools(discovery);
 
-    setTimeout(() => this.createLocalDiscoveryFile(), DISCOVERY_DELAY);
+    if (this.context.extensionMode === vscode.ExtensionMode.Development) {
+      this.deleteLocalDiscoveryFilesForDevelopment();
+    } else {
+      setTimeout(() => this.createLocalDiscoveryFile(), DISCOVERY_DELAY);
+    }
     this.registerCommands();
+  }
+
+  public cleanupDevelopmentDiscoveryFiles() {
+    if (this.context.extensionMode !== vscode.ExtensionMode.Development) {
+      return;
+    }
+
+    this.deleteLocalDiscoveryFilesForDevelopment();
+  }
+
+  private getEffectivePort(): number {
+    return resolveGatewayHttpPort(
+      this.context.extensionPath,
+      vscode.workspace.getConfiguration(CONFIG_SECTION),
+    );
   }
 
   private async loadDiscoverySnapshot(): Promise<DiscoverySnapshot | null> {
@@ -93,9 +111,7 @@ export class McpDiscoveryManager {
 
     const rootPath = physicalFolder.uri.fsPath;
     const configPath = path.join(rootPath, ".mcp_config.json");
-    const port = vscode.workspace
-      .getConfiguration(CONFIG_SECTION)
-      .get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
+    const port = this.getEffectivePort();
 
     const config = {
       mcpServers: {
@@ -119,6 +135,72 @@ export class McpDiscoveryManager {
         "[McpDiscoveryManager] Failed to create discovery file:",
         e,
       );
+    }
+  }
+
+  private deleteLocalDiscoveryFilesForDevelopment() {
+    const folders = vscode.workspace.workspaceFolders;
+    const roots = new Set<string>();
+
+    if (folders) {
+      for (const folder of folders) {
+        if (folder.uri.scheme === "file") {
+          roots.add(folder.uri.fsPath);
+        }
+      }
+    }
+
+    roots.add(this.context.extensionPath);
+
+    for (const root of roots) {
+      if (!fs.existsSync(root)) {
+        continue;
+      }
+
+      this.deleteDiscoveryFilesRecursively(root);
+    }
+  }
+
+  private deleteDiscoveryFilesRecursively(rootPath: string) {
+    const pending = [rootPath];
+
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (!current) {
+        continue;
+      }
+
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        const fullPath = path.join(current, entry.name);
+
+        if (entry.isDirectory()) {
+          pending.push(fullPath);
+          continue;
+        }
+
+        if (!entry.isFile() || entry.name !== ".mcp_config.json") {
+          continue;
+        }
+
+        try {
+          fs.unlinkSync(fullPath);
+          console.log(
+            `[McpDiscoveryManager] Removed local discovery file during development: ${fullPath}`,
+          );
+        } catch (e) {
+          console.warn(
+            `[McpDiscoveryManager] Failed to remove local discovery file during development: ${fullPath}`,
+            e,
+          );
+        }
+      }
     }
   }
 
@@ -221,9 +303,7 @@ export class McpDiscoveryManager {
       "Claude",
       "claude_desktop_config.json",
     );
-    const port = vscode.workspace
-      .getConfiguration(CONFIG_SECTION)
-      .get(CONFIG_MCP_PORT, DEFAULT_MCP_PORT);
+    const port = this.getEffectivePort();
 
     try {
       let config: any = { mcpServers: {} };

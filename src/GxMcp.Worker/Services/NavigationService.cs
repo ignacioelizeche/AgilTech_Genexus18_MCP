@@ -2,7 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Diagnostics;
+using System.Text;
 using System.Xml.Linq;
+using System.Xml;
 using Newtonsoft.Json.Linq;
 using GxMcp.Worker.Helpers;
 
@@ -21,12 +24,25 @@ namespace GxMcp.Worker.Services
         {
             try
             {
+                var sw = Stopwatch.StartNew();
+                Logger.Info($"GetNavigation START: {targetName}");
+
                 string nvgPath = FindNavigationFile(targetName);
                 if (nvgPath == null) return "{\"error\": \"Navigation report not found for '" + targetName + "'. Make sure the object is specified.\"}";
 
-                // Use Windows-1252 encoding for GeneXus XML reports
-                string xmlContent = File.ReadAllText(nvgPath, System.Text.Encoding.GetEncoding(1252));
-                XDocument doc = XDocument.Parse(xmlContent);
+                Logger.Info($"GetNavigation file resolved for {targetName}: {nvgPath}");
+
+                var xmlSettings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    IgnoreComments = true,
+                    IgnoreWhitespace = true,
+                    CloseInput = true
+                };
+
+                XDocument doc = LoadNavigationDocument(nvgPath, xmlSettings, targetName);
+
                 var result = new JObject();
                 result["name"] = targetName;
                 
@@ -70,10 +86,12 @@ namespace GxMcp.Worker.Services
                     warnings.Add(w.Element("Message")?.Value);
                 result["warnings"] = warnings;
 
+                Logger.Info($"GetNavigation SUCCESS: {targetName} in {sw.ElapsedMilliseconds}ms");
                 return result.ToString();
             }
             catch (Exception ex)
             {
+                Logger.Error($"GetNavigation ERROR for {targetName}: {ex.Message}");
                 return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
         }
@@ -84,29 +102,69 @@ namespace GxMcp.Worker.Services
             if (kb == null) return null;
 
             string kbPath = kb.Location;
-            var specFolders = Directory.GetDirectories(kbPath, "GXSPC*", SearchOption.TopDirectoryOnly)
-                                       .OrderByDescending(d => d);
+            if (File.Exists(kbPath))
+            {
+                kbPath = Path.GetDirectoryName(kbPath);
+            }
+
+            if (string.IsNullOrWhiteSpace(kbPath) || !Directory.Exists(kbPath))
+            {
+                return null;
+            }
+
+            var specFolders = Directory.EnumerateDirectories(kbPath, "GXSPC*", SearchOption.TopDirectoryOnly)
+                                       .OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase);
 
             foreach (var specFolder in specFolders)
             {
-                string genPath = Path.Combine(specFolder, "GEN15", "NVG");
-                if (Directory.Exists(genPath))
+                foreach (var genFolder in Directory.EnumerateDirectories(specFolder, "GEN*", SearchOption.TopDirectoryOnly))
                 {
+                    string genPath = Path.Combine(genFolder, "NVG");
+                    if (!Directory.Exists(genPath))
+                    {
+                        continue;
+                    }
+
                     string fullPath = Path.Combine(genPath, targetName + ".xml");
                     if (File.Exists(fullPath)) return fullPath;
                 }
             }
 
-            try {
-                var nvgDirs = Directory.GetDirectories(kbPath, "NVG", SearchOption.AllDirectories);
-                foreach (var dir in nvgDirs)
-                {
-                    string fullPath = Path.Combine(dir, targetName + ".xml");
-                    if (File.Exists(fullPath)) return fullPath;
-                }
-            } catch {}
-
             return null;
+        }
+
+        private static XDocument LoadNavigationDocument(string nvgPath, XmlReaderSettings xmlSettings, string targetName)
+        {
+            try
+            {
+                using (var stream = new FileStream(nvgPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var reader = XmlReader.Create(stream, xmlSettings))
+                {
+                    return XDocument.Load(reader, LoadOptions.None);
+                }
+            }
+            catch (XmlException ex) when (LooksLikeLegacySingleByteEncoding(ex))
+            {
+                Logger.Info($"GetNavigation fallback decoding for {targetName}: retrying as Windows-1252.");
+                string xmlText = Encoding.GetEncoding(1252).GetString(File.ReadAllBytes(nvgPath));
+                using (var stringReader = new StringReader(xmlText))
+                using (var reader = XmlReader.Create(stringReader, xmlSettings))
+                {
+                    return XDocument.Load(reader, LoadOptions.None);
+                }
+            }
+        }
+
+        private static bool LooksLikeLegacySingleByteEncoding(XmlException ex)
+        {
+            if (ex == null || string.IsNullOrWhiteSpace(ex.Message))
+            {
+                return false;
+            }
+
+            string message = ex.Message;
+            return message.IndexOf("codifica", StringComparison.OrdinalIgnoreCase) >= 0
+                || message.IndexOf("encoding", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }
