@@ -62,6 +62,18 @@ namespace GxMcp.Worker.Services
                         break;
 
                     case "append":
+                        // PREVENT DUPLICATED EVENTS: Check if content looks like logic blocks (Event, Sub, etc.)
+                        var blockMatches = Regex.Matches(normalizedContent, @"^(?:Event|Sub|Rule)\s+(.*?)\b", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+                        foreach (Match m in blockMatches)
+                        {
+                            string blockHeader = m.Value.Trim();
+                            if (normalizedText.IndexOf(blockHeader, StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                return "{\"error\": \"Conflict detected: '" + blockHeader + "' already exists in the object. " +
+                                       "GeneXus does not allow duplicate blocks for the same event or subroutine. " +
+                                       "Use 'Insert_After' to add logic inside the existing block or 'Replace' to modify it.\"}";
+                            }
+                        }
                         newText = normalizedText.TrimEnd() + "\n" + normalizedContent;
                         break;
 

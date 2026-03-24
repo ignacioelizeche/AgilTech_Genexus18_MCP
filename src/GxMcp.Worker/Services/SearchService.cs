@@ -225,8 +225,13 @@ namespace GxMcp.Worker.Services
         {
             if (string.IsNullOrEmpty(type) || string.IsNullOrEmpty(query)) return false;
             string t = type.ToLower(); string q = query.ToLower();
-            if (q == "prc" || q == "procedure") return t.Contains("procedure");
+            if (q == "prc" || q == "procedure" || q == "proc") return t.Contains("procedure");
             if (q == "trn" || q == "transaction") return t.Contains("transaction");
+            if (q == "tab" || q == "table") return t == "table";
+            if (q == "wp" || q == "webpanel") return t.Contains("webpanel");
+            if (q == "dp" || q == "dataprovider") return t.Contains("dataprovider");
+            if (q == "sdt") return t.Contains("sdt");
+            if (q == "attr" || q == "attribute") return t.Contains("attribute");
             return t.Contains(q);
         }
 
@@ -239,6 +244,7 @@ namespace GxMcp.Worker.Services
             query = ExtractFilter(query, "metadata", value => c.MetadataFilter = value);
             query = ExtractFilter(query, "usedby", value => c.UsedByFilter = value);
             query = ExtractFilter(query, "parent", value => c.ParentFilter = value);
+            query = ExtractFilter(query, "type", value => c.TypeFilter = value);
 
             foreach (var part in query.Split(new[]{' '}, StringSplitOptions.RemoveEmptyEntries)) {
                 c.Terms.Add(part.ToLowerInvariant());

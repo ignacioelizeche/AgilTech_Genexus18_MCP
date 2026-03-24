@@ -180,7 +180,21 @@ namespace GxMcp.Worker.Services
             json["total"] = _totalCount;
             json["processed"] = _processedCount;
             json["status"] = _currentStatus;
+            json["isBusy"] = _isIndexing || _isOpenInProgress;
             return json.ToString();
+        }
+
+        public string EnsureNotIndexing()
+        {
+            if (_isIndexing)
+            {
+                return "{\"error\": \"Knowledge Base is currently busy performing a background indexing task. Please wait a few seconds and try again.\", \"isBusy\": true}";
+            }
+            if (_isOpenInProgress)
+            {
+                return "{\"error\": \"Knowledge Base is currently opening. Please wait.\", \"isBusy\": true}";
+            }
+            return null;
         }
     }
 }

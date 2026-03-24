@@ -133,11 +133,17 @@ namespace GxMcp.Worker.Services
 
                 if (part == null) {
                     Logger.Error("[DEBUG-SAVE] Part NOT FOUND in object: " + partName);
+                    string details = $"The object '{obj.Name}' of type '{obj.TypeDescriptor.Name}' does not expose the requested part '{partName}'.";
+                    if (obj is global::Artech.Genexus.Common.Objects.Transaction && partName.Equals("Events", StringComparison.OrdinalIgnoreCase))
+                        details += " Transactions use 'Rules' or 'Events' (for Win/WebForms), but business logic is usually in 'Rules'.";
+                    if (obj.TypeDescriptor.Name.Equals("Table", StringComparison.OrdinalIgnoreCase))
+                        details = "Tables are data structures and do not contain executable logic like 'Events' or 'Rules'.";
+
                     return CreateWriteError(
                         $"Part '{partName}' not found in {obj.TypeDescriptor.Name}",
                         target,
                         partName,
-                        $"The object '{obj.Name}' of type '{obj.TypeDescriptor.Name}' does not expose the requested part.",
+                        details,
                         obj
                     );
                 }
@@ -346,6 +352,9 @@ namespace GxMcp.Worker.Services
         {
             try
             {
+                if (string.IsNullOrEmpty(varName)) return "{\"error\": \"Variable name is required.\"}";
+                varName = varName.TrimStart('&');
+
                 var obj = _objectService.FindObject(target);
                 if (obj == null) return CreateWriteError(
                     "Object not found",

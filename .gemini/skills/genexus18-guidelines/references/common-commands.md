@@ -5,10 +5,14 @@
 ### For Each
 Used to navigate the database.
 ~~~
-For Each [Order <attr>] [Where <cond>]
+For Each [TransactionName | LevelName] [Order <attr>] [Where <cond>]
     <commands>
 EndFor
 ~~~
+
+> [!IMPORTANT]
+> **Error SRC0310:** Occurs when specifying a name in `For Each` that is not a Transaction. In many KBs, table levels have the same name as the table but are not standalone transactions.
+> **Best Practice:** Prefer an **empty `For Each`** (omitting the name) to let GeneXus infer the base table automatically from the attributes used within the block. This avoids ambiguity and SRC0310 errors.
 
 ### For in
 Iterates over collections or SDTs.
