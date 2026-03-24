@@ -385,8 +385,9 @@ export class CommandManager {
                   const increment = ((current - lastProcessed) / total) * 100;
                   lastProcessed = current;
 
+                  const percent = Math.round((current / total) * 100);
                   progress.report({
-                    message: `${status.status} (${current}/${total})`,
+                    message: `[${percent}%] Indexing: ${current}/${total} objects (${status.status || "Processing"})`,
                     increment: increment > 0 ? increment : undefined,
                   });
 
@@ -403,16 +404,17 @@ export class CommandManager {
                   isDone = true;
                 }
               }
+
+              this.treeProvider.refresh();
+              vscode.window.showInformationMessage(
+                 "GeneXus KB Indexed! Hierarchy and Search are now ready.",
+              );
             } catch (e) {
               vscode.window.showErrorMessage(`Indexing failed: ${e}`);
             } finally {
               this.provider.isBulkIndexing = false;
             }
           },
-        );
-        this.treeProvider.refresh();
-        vscode.window.showInformationMessage(
-          "GeneXus KB Indexed! Hierarchy and Search are now ready.",
         );
       }),
 

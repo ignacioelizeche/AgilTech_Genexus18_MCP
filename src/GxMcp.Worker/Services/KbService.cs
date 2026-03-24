@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.IO;
 using System.Linq;
 using GxMcp.Worker.Helpers;
@@ -15,10 +16,10 @@ namespace GxMcp.Worker.Services
         private readonly VectorService _vectorService = new VectorService();
 
         // Progress Tracking
-        private static int _processedCount = 0;
-        private static int _totalCount = 0;
-        private static bool _isIndexing = false;
-        private static string _currentStatus = "";
+        private static volatile int _processedCount = 0;
+        private static volatile int _totalCount = 0;
+        private static volatile bool _isIndexing = false;
+        private static volatile string _currentStatus = "";
 
         private static dynamic _kb;
         private static bool _isOpenInProgress = false;
@@ -32,6 +33,7 @@ namespace GxMcp.Worker.Services
         public void SetBuildService(BuildService bs) { _buildService = bs; }
         public IndexCacheService GetIndexCache() { return _indexCacheService; }
         public bool IsInitializing => _isOpenInProgress;
+        public bool IsIndexing => _isIndexing;
 
         public dynamic GetKB()
         {
@@ -95,30 +97,60 @@ namespace GxMcp.Worker.Services
             _totalCount = 0;
             _currentStatus = "Scanning objects...";
 
-            Program.BackgroundQueue.Enqueue(() => {
+            // Start indexing in a dedicated STA thread to prevent blocking the command consumer
+            var indexThread = new Thread(() => {
                 try {
                     dynamic kb = GetKB();
-                    if (kb == null) { _isIndexing = false; return; }
+                    if (kb == null) { 
+                        _isIndexing = false; 
+                        _currentStatus = "Error: KB not open";
+                        return; 
+                    }
                     
-                    var allObjects = kb.DesignModel.Objects.GetAll();
-                    // Ensure we cast to IEnumerable if it's dynamic to use Linq
-                    var objectList = ((System.Collections.IEnumerable)allObjects).Cast<global::Artech.Architecture.Common.Objects.KBObject>();
-                    
-                    _totalCount = objectList.Count();
-                    _currentStatus = $"Indexing {_totalCount} objects...";
+                    _currentStatus = "Capturing KB objects snapshot...";
                     Logger.Info(_currentStatus);
 
-                    foreach (var obj in objectList)
+                    var objectList = (System.Collections.IEnumerable)kb.DesignModel.Objects;
+                    var objectSnapshot = new List<KeyValuePair<Guid, string>>();
+                    foreach (global::Artech.Architecture.Common.Objects.KBObject obj in objectList)
+                    {
+                        objectSnapshot.Add(new KeyValuePair<Guid, string>(obj.Guid, obj.Name));
+                        _totalCount++;
+                        if (_totalCount % 500 == 0) Thread.Sleep(1); // Small breather during capture
+                    }
+
+                    _currentStatus = $"Indexing {_totalCount} objects using snapshot...";
+                    Logger.Info(_currentStatus);
+
+                    foreach (var snapshotEntry in objectSnapshot)
                     {
                         try {
+                            // Fetch object safely by stable identity. Name-based dynamic dispatch
+                            // can bind to the wrong GeneXus SDK overload during bulk indexing.
+                            var obj = kb.DesignModel.Objects.Get(snapshotEntry.Key);
+                            if (obj == null) continue;
+
                             _indexCacheService.UpdateEntry(obj);
                             _processedCount++;
-                            if (_processedCount % 100 == 0) {
+                            
+                            // ELITE: Adaptive notifications. 
+                            int notifyInterval = Math.Max(500, _totalCount / 100);
+                            if (_processedCount % notifyInterval == 0 || _processedCount == _totalCount) {
                                 _currentStatus = $"Processed {_processedCount}/{_totalCount}";
                                 Logger.Info(_currentStatus);
+                                
+                                Program.SendNotification("notifications/status", new {
+                                    status = "Indexing",
+                                    processed = _processedCount,
+                                    total = _totalCount,
+                                    message = _currentStatus
+                                });
                             }
+                            
+                            // Ironclad Throttling: Give the system a breather every 50 objects
+                            if (_processedCount % 50 == 0) Thread.Sleep(10);
                         } catch (Exception ex) {
-                            Logger.Error($"Error indexing object {obj.Name}: {ex.Message}");
+                            Logger.Error($"Error indexing object {snapshotEntry.Value}: {ex.Message}");
                         }
                     }
 
@@ -130,7 +162,13 @@ namespace GxMcp.Worker.Services
                     _isIndexing = false;
                     _currentStatus = "Error: " + ex.Message;
                 }
-            });
+            }) { 
+                IsBackground = true, 
+                Name = "AsyncIndexer", 
+                Priority = ThreadPriority.BelowNormal 
+            };
+            indexThread.SetApartmentState(ApartmentState.STA);
+            indexThread.Start();
 
             return "{\"status\":\"Started\"}";
         }

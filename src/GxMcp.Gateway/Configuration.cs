@@ -29,24 +29,38 @@ namespace GxMcp.Gateway
         {
             if (CurrentConfigPath == null)
             {
-                // Reliable path discovery: look for config.json starting from .exe up to root
-                string? currentDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-
-                while (currentDir != null)
+                string? explicitConfigPath = global::System.Environment.GetEnvironmentVariable("GX_CONFIG_PATH");
+                if (!string.IsNullOrWhiteSpace(explicitConfigPath))
                 {
-                    string check = Path.Combine(currentDir, "config.json");
-                    if (File.Exists(check)) { CurrentConfigPath = check; break; }
-                    currentDir = Path.GetDirectoryName(currentDir);
+                    string fullPath = Path.GetFullPath(explicitConfigPath);
+                    if (!File.Exists(fullPath))
+                    {
+                        throw new FileNotFoundException($"GX_CONFIG_PATH points to a missing config.json: {fullPath}");
+                    }
+
+                    CurrentConfigPath = fullPath;
                 }
-
-                if (CurrentConfigPath == null)
+                else
                 {
-                    if (File.Exists("config.json")) CurrentConfigPath = Path.GetFullPath("config.json");
-                    else throw new FileNotFoundException("Could not find config.json in any parent directory.");
+                    // Reliable path discovery: look for config.json starting from .exe up to root
+                    string? currentDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+
+                    while (currentDir != null)
+                    {
+                        string check = Path.Combine(currentDir, "config.json");
+                        if (File.Exists(check)) { CurrentConfigPath = check; break; }
+                        currentDir = Path.GetDirectoryName(currentDir);
+                    }
+
+                    if (CurrentConfigPath == null)
+                    {
+                        if (File.Exists("config.json")) CurrentConfigPath = Path.GetFullPath("config.json");
+                        else throw new FileNotFoundException("Could not find config.json in any parent directory.");
+                    }
                 }
             }
 
-            Console.Error.WriteLine($"[Gateway] Loading config from: {CurrentConfigPath}");
+            Program.TryWriteStderr($"[Gateway] Loading config from: {CurrentConfigPath}");
             var config = ParseConfig(CurrentConfigPath);
 
             SetupWatcher(CurrentConfigPath);
@@ -66,9 +80,25 @@ namespace GxMcp.Gateway
                     if (config == null) throw new Exception("Failed to parse config.json");
                     
                     if (string.IsNullOrEmpty(config.Environment?.KBPath))
-                        Console.Error.WriteLine("[Gateway] WARNING: Environment.KBPath is missing in config.json!");
+                        Program.TryWriteStderr("[Gateway] WARNING: Environment.KBPath is missing in config.json!");
                     else 
-                        Console.Error.WriteLine($"[Gateway] KB Path configured: {config.Environment.KBPath}");
+                        Program.TryWriteStderr($"[Gateway] KB Path configured: {config.Environment.KBPath}");
+
+                    string? portOverride = global::System.Environment.GetEnvironmentVariable("GX_MCP_PORT");
+                    if (int.TryParse(portOverride, out int httpPortOverride) && httpPortOverride > 0)
+                    {
+                        config.Server ??= new ServerConfig();
+                        config.Server.HttpPort = httpPortOverride;
+                        Program.TryWriteStderr($"[Gateway] HTTP port overridden by GX_MCP_PORT={httpPortOverride}");
+                    }
+
+                    string? stdioOverride = global::System.Environment.GetEnvironmentVariable("GX_MCP_STDIO");
+                    if (bool.TryParse(stdioOverride, out bool mcpStdioOverride))
+                    {
+                        config.Server ??= new ServerConfig();
+                        config.Server.McpStdio = mcpStdioOverride;
+                        Program.TryWriteStderr($"[Gateway] MCP stdio overridden by GX_MCP_STDIO={mcpStdioOverride}");
+                    }
                         
                     return config;
                 }
@@ -90,14 +120,14 @@ namespace GxMcp.Gateway
             _watcher = new FileSystemWatcher(dir, file);
             _watcher.NotifyFilter = NotifyFilters.LastWrite;
             _watcher.Changed += (s, e) => {
-                Console.Error.WriteLine($"[Gateway] Configuration file changed: {e.FullPath}");
+                Program.TryWriteStderr($"[Gateway] Configuration file changed: {e.FullPath}");
                 // Add a small delay to ensure writing process has released the lock
                 Thread.Sleep(200);
                 try {
                     var newConfig = ParseConfig(path);
                     OnConfigurationChanged?.Invoke(newConfig);
                 } catch (Exception ex) {
-                    Console.Error.WriteLine($"[Gateway] Failed to reload configuration: {ex.Message}");
+                    Program.TryWriteStderr($"[Gateway] Failed to reload configuration: {ex.Message}");
                 }
             };
             _watcher.EnableRaisingEvents = true;

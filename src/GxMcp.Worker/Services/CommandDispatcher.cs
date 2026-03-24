@@ -44,6 +44,7 @@ namespace GxMcp.Worker.Services
         private readonly DataInsightService _dataInsightService;
         private readonly SummarizeService _summarizeService;
         private readonly InjectionService _injectionService;
+        private readonly ListService _listService;
 
         private CommandDispatcher()
         {
@@ -56,6 +57,7 @@ namespace GxMcp.Worker.Services
             _formatService = new FormatService();
             _objectService = new ObjectService(_kbService, _buildService);
             _navigationService = new NavigationService(_kbService);
+            _listService = new ListService(_kbService, _indexCacheService);
             _uiService = new UIService(_kbService, _objectService);
             _analyzeService = new AnalyzeService(_kbService, _objectService, _indexCacheService, _uiService);
             _summarizeService = new SummarizeService(_kbService, _objectService);
@@ -104,6 +106,7 @@ namespace GxMcp.Worker.Services
             {
                 var request = JObject.Parse(line);
                 string method = request["method"]?.ToString();
+                string action = request["action"]?.ToString();
 
                 if (string.IsNullOrEmpty(method)) return false;
                 method = method.ToLower();
@@ -111,6 +114,14 @@ namespace GxMcp.Worker.Services
                 // Only allow strictly non-SDK or pure read-cache operations to bypass STA thread
                 if (method == "ping" || method == "search" || method == "health") 
                     return true;
+
+                if (method == "list")
+                    return true;
+                
+                // GetIndexStatus only reads static volatile fields – no SDK access
+                if (method == "kb" && action == "GetIndexStatus")
+                    return true;
+
                 
                 // Any operation interacting with GeneXus SDK (COM objects) MUST run in the STA thread to prevent corruption
                 return false;
@@ -153,6 +164,16 @@ namespace GxMcp.Worker.Services
                                 args?["typeFilter"]?.ToString(),
                                 args?["domainFilter"]?.ToString(),
                                 args?["limit"]?.ToObject<int?>() ?? 50
+                            );
+                        break;
+                    case "list":
+                        if (action == "Objects")
+                            return _listService.ListObjects(
+                                target,
+                                args?["limit"]?.ToObject<int?>() ?? 5000,
+                                args?["offset"]?.ToObject<int?>() ?? 0,
+                                args?["parent"]?.ToString(),
+                                args?["typeFilter"]?.ToString()
                             );
                         break;
                     case "read":

@@ -25,11 +25,14 @@ namespace GxMcp.Worker.Services
         {
             try
             {
-                if (_indexCacheService.IsIndexMissing) 
-                    return "{\"error\": \"Index missing. Please run genexus_lifecycle(action='index') to build the search index before using this tool.\"}";
-
-                var index = _indexCacheService.GetIndex();
-                if (index == null || index.Objects.Count == 0) return "{\"error\": \"Index empty.\"}";
+                 if (_indexCacheService.IsIndexMissing && !_indexCacheService.IsScanning) 
+                     return "{\"error\": \"Index missing. Please run genexus_lifecycle(action='index') to build the search index before using this tool.\"}";
+ 
+                 var index = _indexCacheService.GetIndex();
+                 if (index == null || index.Objects.Count == 0) {
+                     if (_indexCacheService.IsScanning) return "{\"count\": 0, \"results\": [], \"info\": \"Indexing in progress...\"}";
+                     return "{\"error\": \"Index empty.\"}";
+                 }
 
                 if (index.LastUpdated > _lastIndexTime) { _queryCache.Clear(); _lastIndexTime = index.LastUpdated; }
 

@@ -70,23 +70,47 @@ export class GxGatewayClient {
   }
 
   async callMcp(method: string, params?: any, customTimeout?: number): Promise<any> {
-    const sessionId = await this.initializeMcpSession(customTimeout);
-    const response = await this.postRawJsonRpc(
-      this.mcpBaseUrl,
-      {
-        jsonrpc: "2.0",
-        id: `${method}-${Date.now()}`,
-        method,
-        params,
-      },
-      customTimeout,
-      {
-        "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
-        "MCP-Session-Id": sessionId,
-      },
-    );
+    let lastError: unknown;
 
-    return this.unwrapGatewayResponse(response.body);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const sessionId = await this.initializeMcpSession(customTimeout);
+        const response = await this.postRawJsonRpc(
+          this.mcpBaseUrl,
+          {
+            jsonrpc: "2.0",
+            id: `${method}-${Date.now()}`,
+            method,
+            params,
+          },
+          customTimeout,
+          {
+            "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+            "MCP-Session-Id": sessionId,
+          },
+        );
+
+        const unwrapped = this.unwrapGatewayResponse(response.body);
+        if (this.isExpiredSessionResponse(unwrapped) && attempt < 3) {
+          this.resetMcpSession();
+          continue;
+        }
+
+        return unwrapped;
+      } catch (error) {
+        lastError = error;
+        if (!this.isRetriableTransportError(error) || attempt === 3) {
+          throw error;
+        }
+
+        this.resetMcpSession();
+        await this.delay(350 * attempt);
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(String(lastError ?? "Unknown MCP error"));
   }
 
   async listMcpTools(customTimeout?: number): Promise<any[]> {
@@ -192,6 +216,34 @@ export class GxGatewayClient {
     }
   }
 
+  private resetMcpSession(): void {
+    this._mcpSessionId = undefined;
+  }
+
+  private isExpiredSessionResponse(payload: unknown): boolean {
+    if (!payload || typeof payload !== "object") {
+      return false;
+    }
+
+    const errorValue = (payload as { error?: unknown }).error;
+    return typeof errorValue === "string" &&
+      errorValue.toLowerCase().includes("unknown or expired mcp session");
+  }
+
+  private isRetriableTransportError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    const lowered = message.toLowerCase();
+    return lowered.includes("econnreset") ||
+      lowered.includes("socket hang up") ||
+      lowered.includes("unknown or expired mcp session") ||
+      lowered.includes("mcp session was not established") ||
+      lowered.includes("connect econnrefused");
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   private async postRawJsonRpc(
     targetUrl: string,
     command: any,
@@ -202,68 +254,80 @@ export class GxGatewayClient {
       const requestLabel = this.describeCommand(command);
       const startedAt = Date.now();
       let finished = false;
-      GxGatewayClient.activeRequests++;
-      this.updateBusyStatus(requestLabel);
-      GxGatewayClient.outputChannel.appendLine(
-        `[${new Date(startedAt).toISOString()}] -> ${requestLabel}`,
-      );
 
-      if (this._shadowService && command.params) {
-        command.params.shadowPath = this._shadowService.shadowRoot;
-      }
+      try {
+        GxGatewayClient.activeRequests++;
+        this.updateBusyStatus(requestLabel);
+        GxGatewayClient.outputChannel.appendLine(
+          `[${new Date(startedAt).toISOString()}] -> ${requestLabel}`,
+        );
 
-      const data = JSON.stringify(command);
-      const timeout = customTimeout || 60000;
+        if (this._shadowService && command.params) {
+          command.params.shadowPath = this._shadowService.shadowRoot;
+        }
 
-      console.log(
-        `[GxGateway] Calling: ${targetUrl} with module ${command.module ?? command.method}...`,
-      );
-      const url = new URL(targetUrl);
-      const req = http.request(
-        url,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(data),
-            ...(extraHeaders ?? {}),
+        const data = JSON.stringify(command);
+        const timeout = customTimeout || 120000;
+
+        console.log(
+          `[GxGateway] Calling: ${targetUrl} with module ${command.module ?? command.method}...`,
+        );
+        const url = new URL(targetUrl);
+        const req = http.request(
+          url,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(data),
+              ...(extraHeaders ?? {}),
+            },
+            timeout: timeout,
           },
-          timeout: timeout,
-        },
-        (res) => {
-          console.log(
-            `[GxGateway] Response status: ${res.statusCode} for module: ${command.module ?? command.method}`,
-          );
-          let body = "";
-          res.on("data", (chunk) => (body += chunk));
-          res.on("end", () => {
-            if (!finished) {
-              finished = true;
-              this.finishTrackedRequest(requestLabel, startedAt, `HTTP ${res.statusCode}`);
-            }
-            resolve({ body, headers: res.headers });
-          });
-        },
-      );
+          (res) => {
+            console.log(
+              `[GxGateway] Response status: ${res.statusCode} for module: ${command.module ?? command.method}`,
+            );
+            let body = "";
+            res.on("data", (chunk) => (body += chunk));
+            res.on("end", () => {
+              if (!finished) {
+                finished = true;
+                this.finishTrackedRequest(requestLabel, startedAt, `HTTP ${res.statusCode}`);
+              }
+              resolve({ body, headers: res.headers });
+            });
+          },
+        );
 
-      req.on("timeout", () => {
-        req.destroy();
+        req.on("timeout", () => {
+          req.destroy();
+          if (!finished) {
+            finished = true;
+            this.finishTrackedRequest(requestLabel, startedAt, "timeout");
+          }
+          reject(new Error(`Timeout Gateway (${timeout / 1000}s)`));
+        });
+
+        req.on("error", (error) => {
+          if (!finished) {
+            finished = true;
+            this.finishTrackedRequest(requestLabel, startedAt, `error: ${error.message}`);
+          }
+          reject(error);
+        });
+        req.write(data);
+        req.end();
+      } catch (syncError) {
         if (!finished) {
           finished = true;
-          this.finishTrackedRequest(requestLabel, startedAt, "timeout");
+          // In case activeRequests was already incremented
+          if (GxGatewayClient.activeRequests > 0) {
+              this.finishTrackedRequest(requestLabel, startedAt, `sync_error: ${syncError}`);
+          }
         }
-        reject(new Error(`Timeout Gateway (${timeout / 1000}s)`));
-      });
-
-      req.on("error", (error) => {
-        if (!finished) {
-          finished = true;
-          this.finishTrackedRequest(requestLabel, startedAt, `error: ${error.message}`);
-        }
-        reject(error);
-      });
-      req.write(data);
-      req.end();
+        reject(syncError);
+      }
     });
   }
 

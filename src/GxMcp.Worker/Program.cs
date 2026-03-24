@@ -16,16 +16,25 @@ namespace GxMcp.Worker
         public static readonly BlockingCollection<string> CommandQueue = new BlockingCollection<string>();
         public static readonly BlockingCollection<string> SdkCommandQueue = new BlockingCollection<string>();
         public static readonly ConcurrentQueue<Action> BackgroundQueue = new ConcurrentQueue<Action>();
+        private static readonly BlockingCollection<string> _outputQueue = new BlockingCollection<string>();
+        private static readonly BlockingCollection<string> _errorQueue = new BlockingCollection<string>();
         private static CommandDispatcher _dispatcher;
+        private static TextWriter _originalOut;
+        private static TextWriter _originalError;
+        private static StreamWriter _pipeWriter;
 
         [STAThread]
         static void Main(string[] args)
         {
             try {
-                // Use UTF-8 for communication with Gateway
-                // The SDK handles KB encoding internally.
+                // Force UTF-8 on worker stdio before capturing the original writers.
                 Console.InputEncoding = System.Text.Encoding.UTF8;
-                Console.OutputEncoding = System.Text.Encoding.UTF8;
+                Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+
+                // ELITE: Start output threads first to capture all logs immediately
+                StartOutputThreads();
+                Console.SetOut(new QueueWriter(_outputQueue));
+                Console.SetError(new QueueWriter(_errorQueue));
 
                 // Ensure culture is Portuguese-Brazil for SDK character mapping
                 try {
@@ -42,7 +51,7 @@ namespace GxMcp.Worker
                     e.SetObserved();
                 };
 
-                Console.WriteLine("WORKER_HANDSHAKE_START");
+                WriteLine("WORKER_HANDSHAKE_START");
                 Logger.Info("Worker process started (STA Mode).");
 
                 // ELITE: Configuration Resolve Logic (Env > Local Config > Error)
@@ -71,6 +80,23 @@ namespace GxMcp.Worker
                     return null;
                 };
 
+                string pipeName = Environment.GetEnvironmentVariable("GX_MCP_PIPE");
+                if (!string.IsNullOrEmpty(pipeName))
+                {
+                    try {
+                        var pipeClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+                        pipeClient.Connect(30000);
+                        var writer = new StreamWriter(pipeClient, new System.Text.UTF8Encoding(false)) { AutoFlush = true };
+                        var reader = new StreamReader(pipeClient, new System.Text.UTF8Encoding(false));
+                        
+                        _pipeWriter = writer;
+                        Console.SetIn(reader);
+                        Logger.Info($"[Worker] Connected to IPC Pipe {pipeName} successfully.");
+                    } catch (Exception ex) {
+                        Logger.Error($"[Worker] IPC Pipe Connection Error: {ex.Message}. Falling back to STDIO.");
+                    }
+                }
+
                 InitializeSdk(gxPath);
                 _dispatcher = CommandDispatcher.Instance;
                 
@@ -94,23 +120,6 @@ namespace GxMcp.Worker
                     }
                 }
 
-                string pipeName = Environment.GetEnvironmentVariable("GX_MCP_PIPE");
-                if (!string.IsNullOrEmpty(pipeName))
-                {
-                    try {
-                        var pipeClient = new System.IO.Pipes.NamedPipeClientStream(".", pipeName, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
-                        pipeClient.Connect(5000);
-                        var writer = new StreamWriter(pipeClient, System.Text.Encoding.UTF8) { AutoFlush = true };
-                        var reader = new StreamReader(pipeClient, System.Text.Encoding.UTF8);
-                        
-                        Console.SetOut(writer);
-                        Console.SetIn(reader);
-                        Logger.Info($"[Worker] Connected to IPC Pipe {pipeName} successfully.");
-                    } catch (Exception ex) {
-                        Logger.Error($"[Worker] IPC Pipe Connection Error: {ex.Message}. Falling back to STDIO.");
-                    }
-                }
-
                 Logger.Info("Worker SDK ready.");
 
                 // Start External KB Watcher
@@ -130,8 +139,8 @@ namespace GxMcp.Worker
                         if (line == null) break;
                         if (line.Trim().Equals("ping", StringComparison.OrdinalIgnoreCase) || line.Contains("\"method\":\"ping\"") || line.Contains("\"action\":\"Ping\""))
                         {
-                            lock (Console.Out) { Console.WriteLine("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"Ready\"},\"id\":\"heartbeat\"}"); Console.Out.Flush(); }
-                            if (!line.Contains("\"method\"")) continue; // Only skip if it was a literal ping, leave JSON for full dispatch just in case
+                            WriteLine("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"Ready\"},\"id\":\"heartbeat\"}");
+                            if (!line.Contains("\"method\"")) continue;
                         }
                         if (!string.IsNullOrWhiteSpace(line)) CommandQueue.Add(line);
                     }
@@ -140,7 +149,6 @@ namespace GxMcp.Worker
                 readerThread.Start();
 
                 // DEDICATED SDK WORKER THREAD (STA)
-                // This thread handles all non-thread-safe commands (Write, Save, etc.)
                 var sdkWorker = new Thread(() => {
                     Logger.Info("SDK Worker Thread started.");
                     foreach (var line in SdkCommandQueue.GetConsumingEnumerable())
@@ -152,7 +160,6 @@ namespace GxMcp.Worker
                 sdkWorker.Start();
 
                 // DEDICATED STA BACKGROUND TASK THREAD
-                // Critical for GeneXus SDK stability in long-running tasks
                 var backgroundWorker = new Thread(() => {
                     Logger.Info("Background STA Worker Thread started.");
                     while (!CommandQueue.IsCompleted) {
@@ -163,48 +170,23 @@ namespace GxMcp.Worker
                             Thread.Sleep(100);
                         }
                     }
-                }) { 
-                    IsBackground = true, 
-                    Name = "BackgroundWorker",
-                };
-                backgroundWorker.SetApartmentState(ApartmentState.STA); // THE FIX!
+                }) { IsBackground = true, Name = "BackgroundWorker" };
+                backgroundWorker.SetApartmentState(ApartmentState.STA);
                 backgroundWorker.Start();
 
-                // MAIN DISPATCHER LOOP (Ultra-responsive)
+                // MAIN DISPATCHER LOOP
                 while (!CommandQueue.IsCompleted || CommandQueue.Count > 0)
                 {
                     if (CommandQueue.TryTake(out string line, 100))
                     {
                         if (_dispatcher.IsThreadSafe(line))
-                        {
-                            // SEARCH, HEALTH, etc: Run in parallel immediately
                             System.Threading.Tasks.Task.Run(() => ProcessCommand(line));
-                        }
                         else
-                        {
-                            // WRITE, SDK: Send to sequential SDK Worker
                             SdkCommandQueue.Add(line);
-                        }
                     }
                 }
 
-                // Wait for Sdk Worker to finish its queue
-                Logger.Info("Input EOF reached. Waiting for Background tasks and SdkWorker to finish...");
-                
-                // Drain background queue first (since it might add to Sdk queue)
-                while (BackgroundQueue.Count > 0 || (bool)(_dispatcher.GetKbService().GetType().GetField("_isIndexing", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) ?? false))
-                {
-                    if (BackgroundQueue.TryDequeue(out var action))
-                    {
-                        try { action(); }
-                        catch (Exception ex) { Logger.Error("Shutdown Background Task Error: " + ex.Message); }
-                    }
-                    else
-                    {
-                        Thread.Sleep(100);
-                    }
-                }
-
+                Logger.Info("Input EOF reached. Shutting down...");
                 SdkCommandQueue.CompleteAdding();
                 while (!SdkCommandQueue.IsCompleted || SdkCommandQueue.Count > 0)
                 {
@@ -222,40 +204,26 @@ namespace GxMcp.Worker
                 Logger.Debug($"Setting current directory to {gxPath}");
                 Directory.SetCurrentDirectory(gxPath);
                 
-                // 1. Initialize Context and Services (Critical for KB.Open)
                 var archAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.Common.dll"));
                 var contextServiceType = archAsm.GetType("Artech.Architecture.Common.Services.ContextService");
                 contextServiceType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
-                Logger.Debug("ContextService Initialized.");
 
-                // Load BL Framework (Critical for implementations)
                 var blAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.BL.Framework.dll"));
                 var blCommonType = blAsm.GetType("Artech.Architecture.BL.Framework.Services.CommonServices");
                 blCommonType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
-                Logger.Debug("BL Framework CommonServices Initialized.");
 
-                // 2. Initialize UI Services (Bridge mode)
                 var uiAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Architecture.UI.Framework.dll"));
                 var uiType = uiAsm.GetType("Artech.Architecture.UI.Framework.Services.UIServices");
                 uiType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
-                Logger.Debug("UIServices Initialized.");
 
-                // 2. Initialize KB Model Objects (Critical)
                 var commonAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Artech.Genexus.Common.dll"));
                 var initType = commonAsm.GetType("Artech.Genexus.Common.KBModelObjectsInitializer");
                 initType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
-                Logger.Debug("KBModelObjects Initialized.");
 
-                // 3. Initialize Connector and Factory
-                Logger.Debug("Loading Connector.dll...");
                 var connAsm = Assembly.LoadFrom(Path.Combine(gxPath, "Connector.dll"));
-                Logger.Debug("Connector.dll loaded.");
                 var connType = connAsm.GetType("Artech.Core.Connector");
-                Logger.Debug("Invoking Connector.Initialize...");
                 connType?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
-                Logger.Debug("Invoking Connector.Start...");
                 connType?.GetMethod("Start", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null);
-                Logger.Debug("Connector Started.");
                 
                 var kbBaseType = archAsm.GetType("Artech.Architecture.Common.Objects.KnowledgeBase");
                 var factoryProp = kbBaseType?.GetProperty("KBFactory", BindingFlags.Public | BindingFlags.Static);
@@ -276,71 +244,108 @@ namespace GxMcp.Worker
         private static void ProcessCommand(string line)
         {
             try {
-                Logger.Debug($"[WORKER-STDI] Received raw line: {(line.Length > 100 ? line.Substring(0, 100) + "..." : line)}");
                 var obj = JObject.Parse(line);
                 string idJson = obj["id"]?.ToString() ?? "null";
                 string method = obj["method"]?.ToString();
-
-                Logger.Info($"[WORKER-STDI] Processing command: {method} (ID: {idJson})");
-
+                Logger.Info($"[WORKER] Command: {method} ({idJson})");
                 string result = _dispatcher.Dispatch(line);
                 SendResponse(result, idJson);
-            } catch (Exception ex) { Logger.Error("ProcessCommand Error: " + ex.Message + " | Line: " + (line.Length > 100 ? line.Substring(0, 100) : line)); }
+            } catch (Exception ex) { Logger.Error("ProcessCommand Error: " + ex.Message); }
         }
 
         private static void SendResponse(string result, string id)
         {
             try {
                 object resultObj;
-                try { resultObj = JToken.Parse(result); }
-                catch { resultObj = result; }
-
-                var response = new {
-                    jsonrpc = "2.0",
-                    result = resultObj,
-                    id = id
-                };
-
-                string json = JsonConvert.SerializeObject(response, Formatting.None);
-                
-                lock (Console.Out) { 
-                    Console.WriteLine(json); 
-                    Console.Out.Flush(); 
-                }
+                try { resultObj = JToken.Parse(result); } catch { resultObj = result; }
+                var response = new { jsonrpc = "2.0", result = resultObj, id = id };
+                WriteLine(JsonConvert.SerializeObject(response, Formatting.None));
             } catch (Exception ex) { Logger.Error("SendResponse Error: " + ex.Message); }
         }
 
         public static void SendNotification(string method, object @params)
         {
             try {
-                var notification = new {
-                    jsonrpc = "2.0",
-                    method = method,
-                    @params = @params
-                };
-
-                string json = JsonConvert.SerializeObject(notification, Formatting.None);
-                
-                lock (Console.Out) { 
-                    Console.WriteLine(json); 
-                    Console.Out.Flush(); 
-                }
+                var notification = new { jsonrpc = "2.0", method = method, @params = @params };
+                WriteLine(JsonConvert.SerializeObject(notification, Formatting.None));
             } catch (Exception ex) { Logger.Error("SendNotification Error: " + ex.Message); }
+        }
+
+        public static void WriteLine(string line) => _outputQueue.Add(line);
+        public static void WriteError(string line) => _errorQueue.Add(line);
+
+        private static void StartOutputThreads()
+        {
+            _originalOut = Console.Out;
+            _originalError = Console.Error;
+
+            var outThread = new Thread(() => {
+                foreach (var line in _outputQueue.GetConsumingEnumerable()) {
+                    try { 
+                        if (_pipeWriter != null) {
+                            _pipeWriter.WriteLine(line);
+                            _pipeWriter.Flush();
+                        } else {
+                            _originalOut.WriteLine(line); 
+                            _originalOut.Flush(); 
+                        }
+                    } catch { }
+                }
+            }) { IsBackground = true, Name = "OutputWriter" };
+            outThread.Start();
+
+            var errThread = new Thread(() => {
+                foreach (var line in _errorQueue.GetConsumingEnumerable()) {
+                    try { _originalError.WriteLine(line); _originalError.Flush(); } catch { }
+                }
+            }) { IsBackground = true, Name = "ErrorWriter" };
+            errThread.Start();
         }
 
         private static JObject LoadLocalConfig()
         {
-            try
-            {
+            try {
                 string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
                 string configPath = Path.Combine(exeDir, "config.json");
-                if (File.Exists(configPath))
-                {
-                    return JObject.Parse(File.ReadAllText(configPath));
+                if (File.Exists(configPath)) return JObject.Parse(File.ReadAllText(configPath));
+            } catch { }
+            return null;
+        }
+    }
+
+    public class QueueWriter : TextWriter
+    {
+        private readonly BlockingCollection<string> _queue;
+        private readonly System.Text.StringBuilder _buffer = new System.Text.StringBuilder();
+
+        public QueueWriter(BlockingCollection<string> queue) { _queue = queue; }
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+
+        public override void Write(char value)
+        {
+            if (value == '\n')
+            {
+                lock (_buffer) {
+                    _queue.Add(_buffer.ToString());
+                    _buffer.Clear();
                 }
             }
-            catch { }
-            return null;
+            else if (value != '\r')
+            {
+                lock (_buffer) { _buffer.Append(value); }
+            }
+        }
+
+        public override void Write(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return;
+            foreach (char c in value) Write(c);
+        }
+
+        public override void WriteLine(string value)
+        {
+            Write(value);
+            Write('\n');
         }
     }
 }

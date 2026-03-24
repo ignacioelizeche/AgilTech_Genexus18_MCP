@@ -21,7 +21,6 @@ $vsixPath = Join-Path $extensionDir "nexus-ide.vsix"
 $startMcpBatPath = Join-Path $publishDir "start_mcp.bat"
 $claudeConfigPath = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
 $codexConfigPath = Join-Path $env:USERPROFILE ".codex\config.toml"
-$codexMcpUrl = "http://127.0.0.1:5000/mcp"
 
 function Write-Step([string]$message) {
     Write-Host ""
@@ -197,6 +196,14 @@ $config.Environment.KBPath = Get-ExistingPathOrPrompt "Knowledge Base path" $con
 Backup-File $configPath
 Save-JsonFile $configPath $config
 Write-Ok "config.json updated."
+
+$httpPort = 5000
+if ($config.Server -and $config.Server.HttpPort) {
+    try {
+        $httpPort = [int]$config.Server.HttpPort
+    } catch {}
+}
+$codexMcpUrl = "http://127.0.0.1:$httpPort/mcp"
 
 Write-Step "[1/4] Building gateway, worker, and extension backend"
 & (Join-Path $root "build.ps1")
