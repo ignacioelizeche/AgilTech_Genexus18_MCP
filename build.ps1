@@ -139,7 +139,7 @@ setlocal
 
 set "REPO_ROOT=$root"
 set "GX_CONFIG_PATH=$root\config.json"
-set "GX_MCP_STDIO=false"
+set "GX_MCP_STDIO=true"
 
 set "DEBUG_GATEWAY=%REPO_ROOT%\src\GxMcp.Gateway\bin\Debug\net8.0-windows\GxMcp.Gateway.exe"
 set "RELEASE_GATEWAY=%REPO_ROOT%\src\GxMcp.Gateway\bin\Release\net8.0-windows\GxMcp.Gateway.exe"
