@@ -12,6 +12,15 @@ Write-Host "   > Stopping running processes..."
 Stop-Process -Name GxMcp.Worker -ErrorAction SilentlyContinue
 Stop-Process -Name GxMcp.Gateway -ErrorAction SilentlyContinue
 
+# Resolve GeneXus Path
+$gxPath = "C:\Program Files (x86)\GeneXus\GeneXus18"
+if (Test-Path (Join-Path $root "config.json")) {
+    $configData = Get-Content (Join-Path $root "config.json") -Raw | ConvertFrom-Json
+    if ($configData.GeneXus -and $configData.GeneXus.InstallationPath) {
+        $gxPath = $configData.GeneXus.InstallationPath
+    }
+}
+
 # Also stop dotnet processes running the Gateway (since we use 'dotnet GxMcp.Gateway.dll')
 Get-CimInstance Win32_Process -Filter "Name = 'dotnet.exe'" |
     Where-Object { $_.CommandLine -like "*GxMcp.Gateway.dll*" } |
@@ -59,14 +68,14 @@ if ($LASTEXITCODE -ne 0) {
 
 # 3. Build Worker (.NET Framework 4.8)
 Write-Host "   > Building Worker (Release)..."
-dotnet build "src\GxMcp.Worker\GxMcp.Worker.csproj" -c Release --nologo
+dotnet build "src\GxMcp.Worker\GxMcp.Worker.csproj" -c Release --nologo -p:GX_PATH="$gxPath"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[build] Worker build failed." -ForegroundColor Red
     exit $LASTEXITCODE
 }
 
 Write-Host "   > Building Worker (Debug)..."
-dotnet build "src\GxMcp.Worker\GxMcp.Worker.csproj" -c Debug --nologo
+dotnet build "src\GxMcp.Worker\GxMcp.Worker.csproj" -c Debug --nologo -p:GX_PATH="$gxPath"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[build] Worker debug build failed." -ForegroundColor Red
     exit $LASTEXITCODE
@@ -89,7 +98,6 @@ if (Test-Path $workerBinRelease) {
 }
 
 # 4.1 Copy GeneXus Definitions (Crucial for SDK)
-$gxPath = "C:\Program Files (x86)\GeneXus\GeneXus18"
 if (Test-Path "$gxPath\Definitions") {
     Write-Host "   > Copying GeneXus Definitions..."
     if (-not (Test-Path "$workerPublishDir\Definitions")) {
@@ -129,9 +137,9 @@ $batContent = @"
 @echo off
 setlocal
 
-for %%I in ("%~dp0..") do set "REPO_ROOT=%%~fI"
-set "GX_CONFIG_PATH=%REPO_ROOT%\config.json"
-set "GX_MCP_STDIO=true"
+set "REPO_ROOT=$root"
+set "GX_CONFIG_PATH=$root\config.json"
+set "GX_MCP_STDIO=false"
 
 set "DEBUG_GATEWAY=%REPO_ROOT%\src\GxMcp.Gateway\bin\Debug\net8.0-windows\GxMcp.Gateway.exe"
 set "RELEASE_GATEWAY=%REPO_ROOT%\src\GxMcp.Gateway\bin\Release\net8.0-windows\GxMcp.Gateway.exe"

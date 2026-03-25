@@ -21,6 +21,7 @@ $vsixPath = Join-Path $extensionDir "nexus-ide.vsix"
 $startMcpBatPath = Join-Path $publishDir "start_mcp.bat"
 $claudeConfigPath = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
 $codexConfigPath = Join-Path $env:USERPROFILE ".codex\config.toml"
+$antigravityConfigPath = Join-Path $env:USERPROFILE ".gemini\antigravity\mcp_config.json"
 
 function Write-Step([string]$message) {
     Write-Host ""
@@ -53,6 +54,24 @@ function Backup-File([string]$path) {
 function Get-ExistingPathOrPrompt([string]$label, [string]$currentValue) {
     if (-not [string]::IsNullOrWhiteSpace($currentValue) -and (Test-Path $currentValue)) {
         return $currentValue
+    }
+
+    # Auto-detect GeneXus 18 from registry if label is "GeneXus installation path"
+    if ($label -eq "GeneXus installation path") {
+        $regPaths = @(
+            "HKLM:\SOFTWARE\WOW6432Node\Artech\GeneXus\18.0\InstallPath",
+            "HKLM:\SOFTWARE\Artech\GeneXus\18.0\InstallPath",
+            "HKCU:\SOFTWARE\Artech\GeneXus\18.0\InstallPath"
+        )
+        foreach ($regPath in $regPaths) {
+            if (Test-Path $regPath) {
+                $detected = Get-ItemProperty -Path $regPath -Name "(Default)" -ErrorAction SilentlyContinue
+                if ($detected -and (Test-Path $detected.'(Default)')) {
+                    Write-Ok "Auto-detected GeneXus 18 at: $($detected.'(Default)')"
+                    return $detected.'(Default)'
+                }
+            }
+        }
     }
 
     while ($true) {
@@ -88,19 +107,52 @@ function Set-ClaudeConfig([string]$path, [string]$commandPath) {
         $config = [pscustomobject]@{}
     }
 
-    if (-not ($config.PSObject.Properties.Name -contains "mcpServers")) {
+    if ($null -eq $config.mcpServers) {
         $config | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([pscustomobject]@{})
     }
 
-    $existingServer = $config.mcpServers.PSObject.Properties["genexus18"]
-    if ($existingServer) {
-        $config.mcpServers.genexus18.command = $commandPath
-        $config.mcpServers.genexus18.args = @()
-    } else {
+    if ($null -eq $config.mcpServers.genexus18) {
         $config.mcpServers | Add-Member -MemberType NoteProperty -Name "genexus18" -Value ([pscustomobject]@{
             command = $commandPath
             args = @()
         })
+    } else {
+        $config.mcpServers.genexus18.command = $commandPath
+        $config.mcpServers.genexus18.args = @()
+    }
+
+    Save-JsonFile $path $config
+}
+
+function Set-AntigravityConfig([string]$path, [string]$commandPath) {
+    if (-not (Test-Path $path)) {
+        $configDir = Split-Path $path
+        if (-not (Test-Path $configDir)) {
+            return # Antigravity not found, skip
+        }
+    }
+
+    if (Test-Path $path) {
+        Backup-File $path
+        $config = Get-Content $path -Raw | ConvertFrom-Json
+    } else {
+        $config = [pscustomobject]@{}
+    }
+
+    if ($null -eq $config.mcpServers) {
+        $config | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([pscustomobject]@{})
+    }
+
+    # Use 'genexus' key for Antigravity
+    if ($null -eq $config.mcpServers.genexus) {
+        $config.mcpServers | Add-Member -MemberType NoteProperty -Name "genexus" -Value ([pscustomobject]@{
+            command = $commandPath
+            args = @()
+            env = [pscustomobject]@{}
+        })
+    } else {
+        $config.mcpServers.genexus.command = $commandPath
+        $config.mcpServers.genexus.args = @()
     }
 
     Save-JsonFile $path $config
@@ -205,7 +257,7 @@ if ($config.Server -and $config.Server.HttpPort) {
 }
 $codexMcpUrl = "http://127.0.0.1:$httpPort/mcp"
 
-Write-Step "[1/4] Building gateway, worker, and extension backend"
+Write-Step "[1/5] Building gateway, worker, and extension backend"
 & (Join-Path $root "build.ps1")
 if ($LASTEXITCODE -ne 0) {
     Fail "Build failed."
@@ -216,7 +268,7 @@ if (-not (Test-Path $startMcpBatPath)) {
 Write-Ok "Build completed."
 
 if (-not $SkipExtensionInstall) {
-    Write-Step "[2/4] Packaging and installing the VS Code extension"
+    Write-Step "[2/5] Packaging and installing the VS Code extension"
     Push-Location $extensionDir
     try {
         $npmCommand = Resolve-CommandPath @("npm.cmd", "npm")
@@ -235,7 +287,22 @@ if (-not $SkipExtensionInstall) {
         }
 
         Invoke-NativeCommand $npmCommand @("run", "compile")
-        Invoke-NativeCommand $npxCommand @("--yes", "@vscode/vsce", "package", "--out", "nexus-ide.vsix")
+        
+        Write-Host "Packaging extension..." -ForegroundColor Cyan
+        & $npxCommand --yes @vscode/vsce package --out nexus-ide.vsix
+        if ($LASTEXITCODE -ne 0) {
+            $vsceLog = Join-Path $extensionDir "vsce-package.log"
+            Write-Error "vsce package failed. Checking for common issues..."
+            if (-not (Test-Path (Join-Path $extensionDir "LICENSE.txt"))) {
+                Write-Warn "LICENSE.txt is missing in $extensionDir. Copying from root..."
+                Copy-Item (Join-Path $root "LICENSE.txt") (Join-Path $extensionDir "LICENSE.txt")
+                & $npxCommand --yes @vscode/vsce package --out nexus-ide.vsix
+            }
+            
+            if ($LASTEXITCODE -ne 0) {
+                throw "vsce package failed again. Please check if LICENSE.txt is being ignored by Git or if there are other issues in package.json."
+            }
+        }
 
         $editorCommands = Get-EditorCommands
         if ($editorCommands.Length -gt 0) {
@@ -253,11 +320,11 @@ if (-not $SkipExtensionInstall) {
         Pop-Location
     }
 } else {
-    Write-Step "[2/4] Skipping VS Code extension installation"
+    Write-Step "[2/5] Skipping VS Code extension installation"
 }
 
 if (-not $SkipClaudeConfig) {
-    Write-Step "[3/4] Configuring Claude Desktop"
+    Write-Step "[3/5] Configuring Claude Desktop"
     try {
         Set-ClaudeConfig -path $claudeConfigPath -commandPath $startMcpBatPath
         Write-Ok "Claude Desktop configured at $claudeConfigPath"
@@ -265,19 +332,26 @@ if (-not $SkipClaudeConfig) {
         Write-Warn "Failed to update Claude Desktop config: $($_.Exception.Message)"
     }
 } else {
-    Write-Step "[3/4] Skipping Claude Desktop configuration"
+    Write-Step "[3/5] Skipping Claude Desktop configuration"
 }
 
 if (-not $SkipCodexConfig) {
-    Write-Step "[4/4] Configuring Codex Desktop"
+    Write-Step "[4/5] Configuring Codex Desktop"
     try {
         Set-CodexConfig -path $codexConfigPath -url $codexMcpUrl
         Write-Ok "Codex configured at $codexConfigPath"
     } catch {
         Write-Warn "Failed to update Codex config: $($_.Exception.Message)"
     }
+    Write-Step "[5/5] Configuring Antigravity"
+    try {
+        Set-AntigravityConfig -path $antigravityConfigPath -commandPath $startMcpBatPath
+        Write-Ok "Antigravity configured at $antigravityConfigPath"
+    } catch {
+        Write-Warn "Failed to update Antigravity config: $($_.Exception.Message)"
+    }
 } else {
-    Write-Step "[4/4] Skipping Codex Desktop configuration"
+    Write-Step "[5/5] Skipping Antigravity configuration"
 }
 
 Write-Host ""
@@ -297,4 +371,4 @@ Write-Host '    }'
 Write-Host '  }'
 Write-Host '}'
 Write-Host ""
-Write-Host "If Claude or Codex was open, restart the app to pick up the new MCP configuration."
+Write-Host "If Claude, Codex, or Antigravity was open, restart the app to pick up the new MCP configuration."

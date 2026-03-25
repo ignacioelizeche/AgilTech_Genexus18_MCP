@@ -8,6 +8,8 @@
 # --- Runtime Data ---
 *.log
 *.txt
+*.bak
+!LICENSE.txt
 *.zip
 *.xpz
 .history/

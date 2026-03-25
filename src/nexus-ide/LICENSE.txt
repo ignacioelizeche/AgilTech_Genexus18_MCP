@@ -1,0 +1,6 @@
+UNLICENSED
+
+This extension package is currently provided without an open-source license grant.
+
+No permission is granted to use, copy, modify, or distribute this software
+except by explicit agreement from the repository owner.

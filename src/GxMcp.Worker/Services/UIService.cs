@@ -71,7 +71,7 @@ namespace GxMcp.Worker.Services
             if (part == null || part.Document == null || part.Document.DocumentElement == null) return new JObject();
 
             try {
-                var tree = WebFormHelper.GetWebTagTree(obj, part.Document.DocumentElement);
+                var tree = GxWebFormHelper.GetWebTagTree(obj, part.Document.DocumentElement);
                 if (tree != null && tree.Root != null) {
                     return RenderSimplifiedNode(tree);
                 }
@@ -79,7 +79,7 @@ namespace GxMcp.Worker.Services
             return new JObject();
         }
 
-        private JObject RenderSimplifiedNode(Tree<IWebTag> node)
+        private JObject RenderSimplifiedNode(GxMcp.Worker.Helpers.Tree<IWebTag> node)
         {
             var result = new JObject();
             if (node == null || node.Root == null) return result;
@@ -226,7 +226,7 @@ namespace GxMcp.Worker.Services
             sb.AppendLine("<div class='gx-design-canvas'>");
             
             try {
-                var tree = WebFormHelper.GetWebTagTree(obj, part.Document.DocumentElement);
+                var tree = GxWebFormHelper.GetWebTagTree(obj, part.Document.DocumentElement);
                 if (tree != null && tree.Root != null) {
                     RenderEnhancedNode(tree, sb, obj);
                 } else {
@@ -281,7 +281,7 @@ namespace GxMcp.Worker.Services
             return sb.ToString();
         }
 
-        private void RenderEnhancedNode(Tree<IWebTag> node, System.Text.StringBuilder sb, KBObject kbObj)
+        private void RenderEnhancedNode(GxMcp.Worker.Helpers.Tree<IWebTag> node, System.Text.StringBuilder sb, KBObject kbObj)
         {
             if (node == null) return;
             IWebTag tag = node.Root;

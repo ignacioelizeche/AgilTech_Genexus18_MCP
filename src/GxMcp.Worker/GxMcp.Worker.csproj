@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <OutputType>Exe</OutputType>
@@ -12,53 +12,57 @@
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <GX_PATH Condition="'$(GX_PATH)' == ''">C:\Program Files (x86)\GeneXus\GeneXus18</GX_PATH>
+  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="Artech.Architecture.Common">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Architecture.Common.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Architecture.Common.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Genexus.Common">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Genexus.Common.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Genexus.Common.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Udm.Framework">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Udm.Framework.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Udm.Framework.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Architecture.BL.Framework">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Architecture.BL.Framework.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Architecture.BL.Framework.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Architecture.Language">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Architecture.Language.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Architecture.Language.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Common.Language">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Common.Language.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Common.Language.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Architecture.Interfaces">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Architecture.Interfaces.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Architecture.Interfaces.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Common.Properties">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Common.Properties.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Common.Properties.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Common.Helpers">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Common.Helpers.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Common.Helpers.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Common.Controls">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Common.Controls.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Common.Controls.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Common">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Common.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Common.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Artech.Architecture.UI.Framework">
-      <HintPath>C:\Program Files (x86)\GeneXus\GeneXus18\Artech.Architecture.UI.Framework.dll</HintPath>
+      <HintPath>$(GX_PATH)\Artech.Architecture.UI.Framework.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.CSharp" />

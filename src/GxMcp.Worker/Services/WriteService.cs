@@ -252,13 +252,36 @@ namespace GxMcp.Worker.Services
 
                         // 3. Save Part (CRITICAL: Save the part explicitly first)
                         Logger.Info(string.Format("[DEBUG-SAVE] Invoking part.Save() for {0}...", part.TypeDescriptor?.Name));
-                        part.Save();
-                        Logger.Info("[DEBUG-SAVE] part.Save() completed.");
+                        try {
+                            part.Save();
+                            Logger.Info("[DEBUG-SAVE] part.Save() completed.");
+                        } catch (Exception exPart) {
+                            string partMsgs = part.GetSdkMessages();
+                            Logger.Warn($"[DEBUG-SAVE] part.Save() threw exception: {exPart.Message}. Messages: {partMsgs}");
+                            throw new Exception($"Part save failed: {exPart.Message}. Details: {partMsgs}", exPart);
+                        }
+
+                        // Check for messages even if it didn't throw (some SDK errors are non-throwing)
+                        string checkMsgs = part.GetSdkMessages();
+                        if (!string.IsNullOrEmpty(checkMsgs) && (checkMsgs.Contains("Erro") || checkMsgs.Contains("Error"))) {
+                            Logger.Warn($"[DEBUG-SAVE] part.Save() reported internal errors: {checkMsgs}");
+                            throw new Exception($"Part save reported errors: {checkMsgs}");
+                        }
 
                         // 4. Save Object (Unified approach)
-                        Logger.Info("[DEBUG-SAVE] Invoking obj.EnsureSave()...");
-                        obj.EnsureSave();
-                        Logger.Info("[DEBUG-SAVE] obj.EnsureSave() completed.");
+                        try 
+                        {
+                            Logger.Info("[DEBUG-SAVE] Invoking obj.EnsureSave(check: true)...");
+                            obj.EnsureSave(true);
+                            Logger.Info("[DEBUG-SAVE] obj.EnsureSave(true) completed.");
+                        }
+                        catch (Exception ex) when (ex.Message.Contains("Validation failed") || ex.Message.Contains("Save failed"))
+                        {
+                            Logger.Warn($"[DEBUG-SAVE] Standard save failed: {ex.Message}. Retrying with check=false...");
+                            // RETRY WITHOUT VALIDATION (User request)
+                            obj.EnsureSave(false);
+                            Logger.Info("[DEBUG-SAVE] obj.EnsureSave(false) completed successfully.");
+                        }
                         
                         // 5. Transaction Commit
                         Logger.Info("[DEBUG-SAVE] Committing SDK Transaction...");
@@ -267,12 +290,14 @@ namespace GxMcp.Worker.Services
                     }
                     catch (Exception ex)
                     {
+                        Logger.Error("[DEBUG-SAVE] SDK TRANSACTION ERROR: " + ex.ToString());
                         var issues = SdkDiagnosticsHelper.GetDiagnostics(obj);
                         transaction.Rollback();
 
                         var errorRes = new JObject();
                         errorRes["status"] = "Error";
                         errorRes["error"] = ex.Message;
+                        errorRes["stackTrace"] = ex.StackTrace;
                         errorRes["issues"] = issues;
                         return errorRes.ToString();
                     }
