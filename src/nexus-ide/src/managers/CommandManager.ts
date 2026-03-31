@@ -1,3 +1,4 @@
+import * as path from "path";
 import * as vscode from "vscode";
 import { GxFileSystemProvider, TYPE_SUFFIX } from "../gxFileSystem";
 import { GxTreeProvider, GxTreeItem } from "../gxTreeProvider";
@@ -767,7 +768,9 @@ export class CommandManager {
 
       vscode.commands.registerCommand("nexus-ide.copyMcpConfig", async () => {
         const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        const defaultPath = rootPath ? `${rootPath}\\publish\\start_mcp.bat` : "C:\\Projetos\\GenexusMCP\\publish\\start_mcp.bat";
+        const defaultPath = rootPath
+          ? path.join(rootPath, "publish", "start_mcp.bat")
+          : path.join(this.context.extensionPath, "backend", "start_mcp.bat");
         const snippet = JSON.stringify(
           {
             mcpServers: {

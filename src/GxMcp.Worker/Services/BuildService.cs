@@ -3,14 +3,18 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Linq;
+using System.Threading.Tasks;
 using GxMcp.Worker.Helpers;
 using Artech.Architecture.Common.Objects;
 using Artech.Genexus.Common.Objects;
 using Artech.Genexus.Common.Services;
 using Artech.Architecture.Common.Services;
 using Artech.Udm.Framework;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
 {
@@ -19,6 +23,20 @@ namespace GxMcp.Worker.Services
         private string _msbuildPath;
         private string _gxDir;
         private KbService _kbService;
+        private static readonly ConcurrentDictionary<string, BuildTaskStatus> _tasks = new ConcurrentDictionary<string, BuildTaskStatus>();
+
+        public class BuildTaskStatus
+        {
+            public string TaskId { get; set; }
+            public string Status { get; set; } // "Running", "Completed", "Error"
+            public string Action { get; set; }
+            public string Target { get; set; }
+            public string Output { get; set; }
+            public string StartTime { get; set; }
+            public string EndTime { get; set; }
+            public int ExitCode { get; set; }
+            public string Error { get; set; }
+        }
 
         public BuildService()
         {
@@ -39,33 +57,55 @@ namespace GxMcp.Worker.Services
 
         public string Build(string action, string target)
         {
-            try
-            {
-                var kb = _kbService.GetKB();
-                if (kb != null && action.Equals("Build", StringComparison.OrdinalIgnoreCase))
-                {
-                    Logger.Info("Attempting Native SDK Build for: " + target);
-                    IBuildService buildService = null;
-                    try {
-                        var model = kb.DesignModel.Environment.TargetModel;
-                        var method = model.GetType().GetMethod("GetService", new Type[] { typeof(Type) });
-                        if (method != null) buildService = method.Invoke(model, new object[] { typeof(IBuildService) }) as IBuildService;
-                    } catch { }
+            string taskId = Guid.NewGuid().ToString().Substring(0, 8);
+            var status = new BuildTaskStatus {
+                TaskId = taskId,
+                Action = action,
+                Target = target,
+                Status = "Running",
+                StartTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+            };
+            _tasks[taskId] = status;
 
-                    if (buildService != null)
-                    {
-                        KBObject obj = kb.DesignModel.Objects.Get(null, new QualifiedName(target));
-                        if (obj != null)
-                        {
-                            buildService.BuildWithTheseOnly(new List<EntityKey> { obj.Key });
-                            return "{\"status\": \"Success\", \"message\": \"Native Build triggered for " + target + "\"}";
-                        }
-                    }
+            // Run in background
+            Task.Run(() => {
+                try {
+                    string result = BuildWithMSBuild(action, target);
+                    var json = JObject.Parse(result);
+                    status.Status = json["status"]?.ToString() ?? "Unknown";
+                    status.Output = json["output"]?.ToString();
+                    status.Error = json["error"]?.ToString();
+                    status.EndTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                    Logger.Info($"Background Build {taskId} finished with status: {status.Status}");
                 }
-            }
-            catch (Exception ex) { Logger.Warn("Native Build failed: " + ex.Message); }
+                catch (Exception ex) {
+                    status.Status = "Error";
+                    status.Error = ex.Message;
+                    status.EndTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                    Logger.Error($"Background Build {taskId} FAILED: {ex.Message}");
+                }
+            });
 
-            return BuildWithMSBuild(action, target);
+            return JsonConvert.SerializeObject(new { 
+                status = "Accepted", 
+                message = "Build task started in background", 
+                taskId = taskId 
+            });
+        }
+
+        public string GetStatus(string taskId)
+        {
+            if (string.IsNullOrEmpty(taskId))
+            {
+                // Return all recent tasks
+                return JsonConvert.SerializeObject(new { tasks = _tasks.Values.OrderByDescending(t => t.StartTime).Take(10) });
+            }
+
+            if (_tasks.TryGetValue(taskId, out var status))
+            {
+                return JsonConvert.SerializeObject(status);
+            }
+            return "{\"error\": \"Task ID not found\"}";
         }
 
         private string BuildWithMSBuild(string action, string target)
@@ -91,13 +131,19 @@ namespace GxMcp.Worker.Services
                 sb.AppendLine("  <Import Project=\"" + Path.Combine(_gxDir, "Genexus.Tasks.targets") + "\" />");
                 sb.AppendLine("  <Target Name=\"Execute\">");
                 sb.AppendLine("    <OpenKnowledgeBase Directory=\"" + kbPath + "\" />");
+                
                 if (action.Equals("Build", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(target))
-                    sb.AppendLine("    <BuildOne BuildCalled=\"false\" CompileMains=\"false\" ObjectName=\"" + target + "\" ForceRebuild=\"false\" />");
+                    sb.AppendLine("    <BuildOne BuildCalled=\"false\" ObjectName=\"" + target + "\" ForceRebuild=\"false\" />");
                 else if (action.Equals("RebuildAll", StringComparison.OrdinalIgnoreCase))
                     sb.AppendLine("    <RebuildAll />");
                 else if (action.Equals("Reorg", StringComparison.OrdinalIgnoreCase))
                     sb.AppendLine("    <CheckAndInstallDatabase />");
+                else if (action.Equals("Validate", StringComparison.OrdinalIgnoreCase) || action.Equals("Check", StringComparison.OrdinalIgnoreCase))
+                    sb.AppendLine("    <CheckKnowledgeBase />");
+                else if (action.Equals("Sync", StringComparison.OrdinalIgnoreCase))
+                    sb.AppendLine("    <BuildAll />");
                 else sb.AppendLine("    <BuildAll />");
+
                 sb.AppendLine("    <CloseKnowledgeBase />");
                 sb.AppendLine("  </Target></Project>");
                 
@@ -105,16 +151,24 @@ namespace GxMcp.Worker.Services
 
                 var startInfo = new ProcessStartInfo {
                     FileName = _msbuildPath,
-                    Arguments = "/nologo /m /v:q /nodeReuse:false /target:Execute \"" + tempFile + "\"", // PERFORMANCE: /m (parallel) and /v:q (quiet) and /nodeReuse:false
+                    Arguments = "/nologo /m /v:q /nodeReuse:false /target:Execute \"" + tempFile + "\"", 
                     UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
                     CreateNoWindow = true, WorkingDirectory = _gxDir
                 };
 
                 using (var process = Process.Start(startInfo)) {
                     string output = process.StandardOutput.ReadToEnd();
+                    string error = process.StandardError.ReadToEnd();
                     process.WaitForExit();
                     try { File.Delete(tempFile); } catch { }
-                    return Newtonsoft.Json.JsonConvert.SerializeObject(new { status = process.ExitCode == 0 ? "Success" : "Error", output = output });
+                    
+                    if (!string.IsNullOrEmpty(error)) output += "\nERROR:\n" + error;
+
+                    return JsonConvert.SerializeObject(new { 
+                        status = process.ExitCode == 0 ? "Success" : "Error", 
+                        output = output,
+                        exitCode = process.ExitCode
+                    });
                 }
             }
             catch (Exception ex) { return "{\"status\": \"Error\", \"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}"; }
@@ -122,7 +176,6 @@ namespace GxMcp.Worker.Services
 
         public string GetKBPath()
         {
-            // UNIVERSAL: The Gateway injects this. No file searching anymore.
             return Environment.GetEnvironmentVariable("GX_KB_PATH") ?? "";
         }
     }

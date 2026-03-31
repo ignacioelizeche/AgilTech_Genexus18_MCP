@@ -92,6 +92,7 @@ See `GEMINI.md` for guidance. The main MCP tools are:
 - `genexus_query`
   - supports optional `typeFilter` and `domainFilter` for server-side narrowing before ranking/truncation
   - `genexus_read`
+  - defaults to a source-first first page for MCP clients when `offset` and `limit` are omitted
   - `genexus_batch_read`
 - `genexus_edit`
 - `genexus_batch_edit`
@@ -106,9 +107,14 @@ See `GEMINI.md` for guidance. The main MCP tools are:
 - `genexus_add_variable`
 - `genexus_format`
 - `genexus_properties`
+- `genexus_asset`
 - `genexus_history`
 - `genexus_structure`
 - `genexus_doc`
+
+`genexus_asset` is metadata-first by design. Use `action='read'` with `includeContent=true` only when the file is small enough to fit the MCP context budget. For larger assets, read metadata only and keep `maxBytes` explicit.
+
+`genexus_read` and `genexus_edit` also support XML metadata parts such as `Layout`, `WebForm`, and `PatternInstance`. For WorkWithPlus-owned panels, `PatternInstance` resolves through the authoritative `WorkWithPlus{Name}` object instead of the parent WebPanel preview.
 
 ## Architecture
 

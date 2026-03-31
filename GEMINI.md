@@ -17,9 +17,9 @@ This repository is MCP-first. The official transport is MCP over stdio or HTTP a
 ## Recommended tool usage
 
 - `genexus_query`: find objects, references, signatures, and dependency entry points. Supports optional `typeFilter` and `domainFilter` for server-side narrowing.
-- `genexus_read`: read object parts with pagination. Prefer this over large bulk reads.
+- `genexus_read`: read object parts with pagination. For MCP clients, keep reads paginated; the server intentionally returns a source-first first page when no explicit `offset`/`limit` is provided. For XML metadata parts such as `Layout`, `WebForm`, and `PatternInstance`, the gateway applies a larger metadata budget to avoid truncating the editable XML.
 - `genexus_batch_read`: fetch multiple parts when a workflow needs coordinated context.
-- `genexus_edit`: apply focused edits to a part or replace content through the MCP write path.
+- `genexus_edit`: apply focused edits to a part or replace content through the MCP write path. `PatternInstance` targets the authoritative WorkWithPlus instance when the requested object is a WebPanel managed by WorkWithPlus.
 - `genexus_batch_edit`: update multiple objects atomically.
 - `genexus_inspect`: get structured conversion or object context.
 - `genexus_analyze`: navigation, lint, UI, and summary analysis modes.
@@ -30,6 +30,7 @@ This repository is MCP-first. The official transport is MCP over stdio or HTTP a
 - `genexus_add_variable`: add variables through the worker contract.
 - `genexus_format`: format source through the worker formatter.
 - `genexus_properties`: get or set object properties.
+- `genexus_asset`: find, read, and write KB assets such as `.xlsx` templates. Reads are metadata-first; request `includeContent=true` only for files small enough to carry as Base64 safely.
 - `genexus_history`: list, read, save, and restore object history.
 - `genexus_structure`: read or update logical and visual structure.
 - `genexus_doc`: access documentation, health, and visualization flows.

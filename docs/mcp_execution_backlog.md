@@ -16,6 +16,8 @@ The following phases are already complete:
 
 The remaining work is not "migrate to MCP". The remaining work is hardening and expansion.
 
+Operational tracking for current MCP limitations and validation status lives in `docs/mcp_limitations_tracking.md`.
+
 ### Track 1: Harden MCP contracts
 
 Goal:

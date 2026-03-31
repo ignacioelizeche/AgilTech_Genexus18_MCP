@@ -395,7 +395,8 @@ namespace GxMcp.Gateway
             // Resource Calls
             if (method == "resources/read")
             {
-                var workerCmd = McpRouter.ConvertResourceCall(request) as JObject;
+                var rawWorkerCmd = McpRouter.ConvertResourceCall(request);
+                var workerCmd = rawWorkerCmd != null ? JObject.FromObject(rawWorkerCmd) : null;
                 if (workerCmd != null)
                 {
                     workerCmd["client"] = "mcp";
@@ -405,7 +406,26 @@ namespace GxMcp.Gateway
                         $"Timeout waiting for resource: {request["params"]?["uri"]}",
                         resultObj =>
                         {
-                            var content = resultObj["result"]?.ToString() ?? "";
+                            if (resultObj["error"] != null || resultObj["status"]?.ToString() == "Error")
+                            {
+                                string errorMsg = resultObj["error"]?.ToString() ?? resultObj["details"]?.ToString() ?? "Unknown error reading resource";
+                                
+                                // Enrich with suggestions if available (from HealingService)
+                                string? suggestion = resultObj["suggestion"]?.ToString();
+                                if (!string.IsNullOrEmpty(suggestion)) errorMsg += "\n" + suggestion;
+                                
+                                string? tip = resultObj["actionable_tip"]?.ToString();
+                                if (!string.IsNullOrEmpty(tip)) errorMsg += "\nTip: " + tip;
+
+                                return new JObject
+                                {
+                                    ["jsonrpc"] = "2.0",
+                                    ["id"] = idToken?.DeepClone(),
+                                    ["error"] = JToken.FromObject(new { code = -32603, message = $"GeneXus MCP Worker error: {errorMsg}" })
+                                };
+                            }
+
+                            var content = resultObj["result"]?.ToString() ?? resultObj["source"]?.ToString() ?? "";
                             return new JObject
                             {
                                 ["jsonrpc"] = "2.0",
@@ -428,7 +448,7 @@ namespace GxMcp.Gateway
                         {
                             ["jsonrpc"] = "2.0",
                             ["id"] = idToken?.DeepClone(),
-                            ["error"] = JToken.FromObject(new { code = -32603, message = "GeneXus MCP Worker timed out reading resource." })
+                            ["error"] = JToken.FromObject(new { code = -32000, message = "GeneXus MCP Worker timed out reading resource." })
                         });
                 }
             }
@@ -470,6 +490,17 @@ namespace GxMcp.Gateway
                     int timeoutMs = 60000;
                     if (toolName == "genexus_lifecycle" || toolName == "genexus_analyze" || toolName == "genexus_test")
                         timeoutMs = 600000; // 10 minutes for heavy operations
+                    else if (string.Equals(toolName, "genexus_edit", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string? editPart = args?["part"]?.ToString();
+                        if (string.Equals(editPart, "Layout", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(editPart, "WebForm", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(editPart, "PatternInstance", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(editPart, "PatternVirtual", StringComparison.OrdinalIgnoreCase))
+                        {
+                            timeoutMs = 180000; // SDK metadata saves can trigger slow pattern regeneration paths.
+                        }
+                    }
 
                     return await SendWorkerCommandAsync(
                         workerCmd,
@@ -491,7 +522,7 @@ namespace GxMcp.Gateway
                                 ["id"] = idToken?.DeepClone(),
                                 ["result"] = JToken.FromObject(new
                                 {
-                                    content = new[] { new { type = "text", text = finalResult.ToString() } },
+                                    content = new[] { new { type = "text", text = finalResult?.ToString() ?? string.Empty } },
                                     isError = resultObj["error"] != null
                                 })
                             };
@@ -529,13 +560,40 @@ namespace GxMcp.Gateway
         {
             if (result == null) return JValue.CreateNull();
             
+            string? readPart = (result as JObject)?["part"]?.ToString();
+            bool isXmlMetadataRead = string.Equals(toolName, "genexus_read", StringComparison.OrdinalIgnoreCase) &&
+                                     (string.Equals(readPart, "Layout", StringComparison.OrdinalIgnoreCase) ||
+                                      string.Equals(readPart, "WebForm", StringComparison.OrdinalIgnoreCase) ||
+                                      string.Equals(readPart, "PatternInstance", StringComparison.OrdinalIgnoreCase) ||
+                                      string.Equals(readPart, "PatternVirtual", StringComparison.OrdinalIgnoreCase));
+
             string raw = result.ToString(Formatting.None);
-            if (raw.Length < 60000) return result;
+            int softBudget = isXmlMetadataRead
+                ? 220000
+                : string.Equals(toolName, "genexus_read", StringComparison.OrdinalIgnoreCase)
+                ? 24000
+                : string.Equals(toolName, "genexus_asset", StringComparison.OrdinalIgnoreCase)
+                    ? 400000
+                    : 60000;
+            if (raw.Length < softBudget) return result;
 
             Log($"[Budget] Truncating response for {toolName} ({raw.Length} chars)");
 
             if (result is JObject obj)
             {
+                if (string.Equals(toolName, "genexus_read", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var metadataField in new[] { "variables", "calls", "dataSchema", "patternMetadata" })
+                    {
+                        if (obj[metadataField] != null)
+                        {
+                            obj.Remove(metadataField);
+                            obj["isTruncated"] = true;
+                            obj["message"] = "Gateway trimmed derived metadata from genexus_read to keep the response within the MCP context budget.";
+                        }
+                    }
+                }
+
                 if (obj["results"] is JArray searchResults && searchResults.Count > 10)
                 {
                     int originalCount = searchResults.Count;
@@ -560,11 +618,20 @@ namespace GxMcp.Gateway
                     if (fieldValue != null && fieldValue.Type == JTokenType.String)
                     {
                         string val = fieldValue.ToString();
-                        if (val.Length > 20000)
+                        int fieldBudget = isXmlMetadataRead
+                            ? 180000
+                            : string.Equals(toolName, "genexus_read", StringComparison.OrdinalIgnoreCase) ? 12000 : 20000;
+                        int headBudget = isXmlMetadataRead
+                            ? 140000
+                            : string.Equals(toolName, "genexus_read", StringComparison.OrdinalIgnoreCase) ? 9000 : 15000;
+                        int tailBudget = isXmlMetadataRead
+                            ? 40000
+                            : string.Equals(toolName, "genexus_read", StringComparison.OrdinalIgnoreCase) ? 3000 : 5000;
+                        if (val.Length > fieldBudget)
                         {
-                            obj[field] = val.Substring(0, 15000) + 
+                            obj[field] = val.Substring(0, headBudget) + 
                                            "\n\n[... TRUNCATED BY GATEWAY TOKEN BUDGET ...] \n\n" + 
-                                           val.Substring(val.Length - 5000);
+                                           val.Substring(val.Length - tailBudget);
                             obj["isTruncated"] = true;
                         }
                     }
@@ -618,6 +685,11 @@ namespace GxMcp.Gateway
             if (string.Equals(toolName, "genexus_properties", StringComparison.OrdinalIgnoreCase))
             {
                 return string.Equals(args?["action"]?.ToString(), "set", StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (string.Equals(toolName, "genexus_asset", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Equals(args?["action"]?.ToString(), "write", StringComparison.OrdinalIgnoreCase);
             }
 
             if (string.Equals(toolName, "genexus_history", StringComparison.OrdinalIgnoreCase))
@@ -778,7 +850,13 @@ namespace GxMcp.Gateway
                         Log($"[HTTP] Serializing response for {id}...");
                         string jsonResponse = response.ToString(Formatting.None);
                         Log($"[HTTP] Sending {jsonResponse.Length} bytes to {id}");
-                        return Results.Content(jsonResponse, "application/json");
+                        return Results.Content(jsonResponse, "application/json; charset=utf-8", Encoding.UTF8);
+                    }
+
+                    if (requestObj["id"] == null)
+                    {
+                        Log($"[HTTP] Notification {method} completed without response body.");
+                        return Results.NoContent();
                     }
 
                     return Results.BadRequest(new { error = "No response generated" });

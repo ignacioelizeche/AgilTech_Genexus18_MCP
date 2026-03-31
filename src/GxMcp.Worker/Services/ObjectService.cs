@@ -19,6 +19,7 @@ namespace GxMcp.Worker.Services
         private readonly BuildService _buildService;
         private DataInsightService _dataInsightService;
         private UIService _uiService;
+        private PatternAnalysisService _patternAnalysisService;
 
         public ObjectService(KbService kbService, BuildService buildService)
         {
@@ -28,6 +29,7 @@ namespace GxMcp.Worker.Services
 
         public void SetDataInsightService(DataInsightService ds) { _dataInsightService = ds; }
         public void SetUIService(UIService ui) { _uiService = ui; }
+        public void SetPatternAnalysisService(PatternAnalysisService patternAnalysisService) { _patternAnalysisService = patternAnalysisService; }
         public KbService GetKbService() { return _kbService; }
 
         public SearchIndex GetIndex() { return _kbService.GetIndexCache().GetIndex(); }
@@ -99,17 +101,17 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public KBObject FindObject(string target)
+        public KBObject FindObject(string target, string typeFilter = null)
         {
             if (string.IsNullOrEmpty(target)) return null;
             var sw = Stopwatch.StartNew();
             var kb = _kbService.GetKB();
             if (kb == null) return null;
 
-            string typePart = null;
+            string typePart = typeFilter;
             string namePart = target.Trim();
 
-            if (target.Contains(":"))
+            if (target.Contains(":") && typeFilter == null)
             {
                 var parts = target.Split(':');
                 typePart = parts[0].Trim();
@@ -135,30 +137,40 @@ namespace GxMcp.Worker.Services
                 else
                 {
                     // Global search in index
+                    // OPTIMIZATION: Prioritize logic types if no filter is provided
+                    var matches = new List<SearchIndex.IndexEntry>();
                     foreach (var entry in index.Objects.Values)
                     {
                         if (string.Equals(entry.Name, namePart, StringComparison.OrdinalIgnoreCase))
                         {
-                            // Favor non-folders/modules
-                            if (entry.Type != "Folder" && entry.Type != "Module" && !string.IsNullOrEmpty(entry.Guid))
-                            {
-                                var obj = kb.DesignModel.Objects.Get(new Guid(entry.Guid));
-                                if (obj != null) {
-                                    Logger.Debug(string.Format("FindObject '{0}' SUCCESS (Index-Global) in {1}ms", target, sw.ElapsedMilliseconds));
-                                    return obj;
-                                }
-                            }
+                            matches.Add(entry);
+                        }
+                    }
+
+                    if (matches.Count > 0)
+                    {
+                        // Order: 1. Non-Folders/Modules, 2. Logic Types (Procedure, WP, Trn), 3. Files/Images (last)
+                        var prioritizedMatch = matches
+                            .OrderBy(m => (m.Type == "Folder" || m.Type == "Module") ? 100 : 0)
+                            .ThenBy(m => (m.Type == "File" || m.Type == "Image") ? 50 : 0)
+                            .FirstOrDefault();
+
+                        if (prioritizedMatch != null && !string.IsNullOrEmpty(prioritizedMatch.Guid))
+                        {
+                             var obj = kb.DesignModel.Objects.Get(new Guid(prioritizedMatch.Guid));
+                             if (obj != null) return obj;
                         }
                     }
                 }
             }
 
             // 2. SLOW PATH: Fallback to SDK GetByName (for safety with new objects not yet indexed)
+            var sdkMatches = kb.DesignModel.Objects.GetByName(null, null, namePart);
             if (typePart != null)
             {
-                foreach (KBObject obj in kb.DesignModel.Objects.GetByName(null, null, namePart))
+                foreach (KBObject obj in sdkMatches)
                 {
-                    if (string.Equals(obj.TypeDescriptor.Name, typePart, StringComparison.OrdinalIgnoreCase))
+                    if (obj.TypeDescriptor != null && string.Equals(obj.TypeDescriptor.Name, typePart, StringComparison.OrdinalIgnoreCase))
                     {
                         Logger.Debug(string.Format("FindObject '{0}' SUCCESS (Typed-SDK) in {1}ms", target, sw.ElapsedMilliseconds));
                         return obj;
@@ -166,33 +178,35 @@ namespace GxMcp.Worker.Services
                 }
             }
 
-            // Global search, prioritizing non-container objects
+            // Global search, prioritizing non-container objects and avoiding Files if others exist
+            KBObject firstLogicMatch = null;
             KBObject firstMatch = null;
-            foreach (KBObject obj in kb.DesignModel.Objects.GetByName(null, null, namePart))
+
+            foreach (KBObject obj in sdkMatches)
             {
                 if (firstMatch == null) firstMatch = obj;
                 
-                string type = obj.TypeDescriptor.Name;
-                if (type != "Folder" && type != "Module")
+                string type = obj.TypeDescriptor?.Name;
+                if (type != "Folder" && type != "Module" && type != "File" && type != "Image")
                 {
-                    Logger.Debug(string.Format("FindObject '{0}' SUCCESS (Global-SDK) in {1}ms", target, sw.ElapsedMilliseconds));
-                    return obj;
+                    if (firstLogicMatch == null) firstLogicMatch = obj;
                 }
             }
 
-            if (firstMatch != null)
+            var result = firstLogicMatch ?? firstMatch;
+            if (result != null)
             {
-                Logger.Debug(string.Format("FindObject '{0}' SUCCESS (Container-SDK) in {1}ms", target, sw.ElapsedMilliseconds));
+                Logger.Debug(string.Format("FindObject '{0}' SUCCESS (SDK-Fallback) in {1}ms", target, sw.ElapsedMilliseconds));
             }
-            return firstMatch;
+            return result;
         }
 
-        public string ExtractAllParts(string target, string client = "ide")
+        public string ExtractAllParts(string target, string client = "ide", string typeFilter = null)
         {
             var sw = Stopwatch.StartNew();
             try
             {
-                var obj = FindObject(target);
+                var obj = FindObject(target, typeFilter);
                 if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
 
                 var result = new JObject { ["name"] = obj.Name, ["parts"] = new JObject() };
@@ -219,9 +233,9 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string ReadObject(string target)
+        public string ReadObject(string target, string typeFilter = null)
         {
-            var obj = FindObject(target);
+            var obj = FindObject(target, typeFilter);
             if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
 
             var parts = new JArray();
@@ -248,9 +262,9 @@ namespace GxMcp.Worker.Services
             }.ToString();
         }
 
-        public string ReadObjectSource(string target, string partName, int? offset = null, int? limit = null, string client = "ide", bool minimize = false)
+        public string ReadObjectSource(string target, string partName, int? offset = null, int? limit = null, string client = "ide", bool minimize = false, string typeFilter = null)
         {
-            var obj = FindObject(target);
+            var obj = FindObject(target, typeFilter);
             if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
             return ReadObjectSourceInternal(obj, partName, offset, limit, client, minimize);
         }
@@ -271,17 +285,63 @@ namespace GxMcp.Worker.Services
                 InvalidateCache(obj);
                 string targetName = obj.Name;
 
-                // Special handling for Layout
-                if (partName.Equals("layout", StringComparison.OrdinalIgnoreCase))
+                if (WebFormXmlHelper.IsVisualPart(partName))
                 {
-                    var uiContextJson = _uiService.GetUIContext(obj.Name);
-                    var uiObj = JObject.Parse(uiContextJson);
-                    if (uiObj["html"] != null)
+                    string xml = WebFormXmlHelper.ReadEditableXml(obj);
+                    if (string.IsNullOrEmpty(xml))
                     {
-                        var layoutResult = new JObject();
-                        layoutResult["source"] = uiObj["html"].ToString();
-                        return layoutResult.ToString();
+                        return Models.McpResponse.Error(
+                            "Visual XML not available",
+                            targetName,
+                            partName,
+                            "The object does not expose editable WebForm XML through the current SDK path.",
+                            obj.Name,
+                            obj.TypeDescriptor?.Name,
+                            new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
                     }
+
+                    var visualResult = new JObject
+                    {
+                        ["part"] = partName,
+                        ["contentType"] = "application/xml",
+                        ["xmlKind"] = "GxMultiForm"
+                    };
+                    ProcessTextResponse(xml, visualResult, client);
+                    return visualResult.ToString();
+                }
+
+                if (PatternAnalysisService.IsPatternPart(partName))
+                {
+                    global::Artech.Architecture.Common.Objects.KBObject resolvedObject = null;
+                    string resolvedPartName = partName;
+                    string patternXml = _patternAnalysisService?.ReadPatternPartXml(obj, partName, out resolvedObject, out resolvedPartName);
+                    if (string.IsNullOrEmpty(patternXml))
+                    {
+                        return Models.McpResponse.Error(
+                            "Pattern XML not available",
+                            targetName,
+                            partName,
+                            "The requested WorkWithPlus pattern part could not be resolved through the current SDK path.",
+                            obj.Name,
+                            obj.TypeDescriptor?.Name,
+                            new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
+                    }
+
+                    var patternResult = new JObject
+                    {
+                        ["part"] = partName,
+                        ["contentType"] = "application/xml",
+                        ["xmlKind"] = resolvedPartName
+                    };
+
+                    if (resolvedObject != null && resolvedObject.Guid != obj.Guid)
+                    {
+                        patternResult["resolvedObject"] = resolvedObject.Name;
+                        patternResult["resolvedType"] = resolvedObject.TypeDescriptor?.Name;
+                    }
+
+                    ProcessTextResponse(patternXml, patternResult, client);
+                    return patternResult.ToString();
                 }
 
                 Guid partGuid = GxMcp.Worker.Structure.PartAccessor.GetPartGuid(obj.TypeDescriptor.Name, partName);
@@ -289,6 +349,7 @@ namespace GxMcp.Worker.Services
                 KBObjectPart part = GxMcp.Worker.Structure.PartAccessor.GetPart(obj, partName);
 
                 JObject result = new JObject();
+                result["part"] = partName;
 
                 // Virtual/DSL Parts (Structure for Trn/Table/SDT) 
                 // We process this BEFORE the generic part check because Tables might not have a physical Part GUID mapped,
@@ -364,14 +425,14 @@ namespace GxMcp.Worker.Services
             {
                 int start = offset ?? 0;
                 int count = limit ?? int.MaxValue;
+                bool includeDerivedMetadata = client != "mcp";
                 
-                // AUTO-TRUNCATION for MCP: If no limits were provided but the file is large
-                if (!offset.HasValue && !limit.HasValue && client == "mcp" && content.Length > 250000)
+                if (!offset.HasValue && !limit.HasValue && client == "mcp")
                 {
                     start = 0;
-                    count = 2500;
+                    count = 200;
                     result["isTruncatedByWorker"] = true;
-                    result["message"] = "File is extremely large. Truncated to 2500 lines to prevent IPC buffer overflow. Use genexus_read with offset/limit to read more.";
+                    result["message"] = "MCP read defaulted to the first 200 lines to control context size. Use genexus_read with offset/limit to paginate.";
                 }
 
                 var paginatedLines = new List<string>();
@@ -405,13 +466,18 @@ namespace GxMcp.Worker.Services
                 result["limit"] = paginatedLines.Count;
                 result["totalLines"] = totalLinesInFile;
 
-                AddVariableMetadata(obj, paginatedContent, result);
-                AddCallSignatures(obj, paginatedContent, result);
+                if (includeDerivedMetadata)
+                {
+                    AddVariableMetadata(obj, paginatedContent, result);
+                    AddCallSignatures(obj, paginatedContent, result);
+                }
             }
         }
 
         private void ProcessTextResponse(string text, JObject result, string client)
         {
+            result["isEmpty"] = string.IsNullOrEmpty(text);
+
             if (client == "mcp")
             {
                 Logger.Debug("ProcessTextResponse: Using Plain Text for MCP");

@@ -386,7 +386,7 @@ export class GxShadowService {
       90000,
     );
 
-    if (!result?.source) {
+    if (!result || typeof result.source !== "string") {
       console.warn(
         `[GxShadow] genexus_read returned no source for ${target} (${info.part || "Source"})`,
       );

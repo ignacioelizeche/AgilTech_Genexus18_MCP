@@ -36,7 +36,7 @@ namespace GxMcp.Worker.Services
                 if (target == null) return "{\"status\":\"KB analysis not implemented for all objects yet\"}";
                 
                 var obj = _objectService.FindObject(target);
-                if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return HealingService.FormatNotFoundError(target, _indexCacheService.GetIndex());
 
                 var result = new JObject();
                 result["name"] = obj.Name;
@@ -240,19 +240,23 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(name);
-                if (obj == null) return Models.McpResponse.Error("Object not found", name, "Variables", "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
                 if (vPart == null) return Models.McpResponse.Error("Variables part not found", name, "Variables", "The object does not expose a Variables part.", obj.Name, obj.TypeDescriptor?.Name, new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
 
-                var result = new JArray();
+                var variables = new JArray();
                 foreach (Variable var in vPart.Variables)
                 {
                     var item = new JObject();
                     item["name"] = var.Name;
                     item["type"] = var.Type.ToString();
-                    result.Add(item);
+                    variables.Add(item);
                 }
+                
+                var result = new JObject();
+                result["variables"] = variables;
+                result["source"] = VariableInjector.GetVariablesAsText((dynamic)vPart);
                 return result.ToString();
             }
             catch (Exception ex)
@@ -267,7 +271,7 @@ namespace GxMcp.Worker.Services
             {
                 var kb = _kbService.GetKB();
                 var obj = _objectService.FindObject(name);
-                if (obj == null) return Models.McpResponse.Error("Object not found", name, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 var result = new JObject();
                 result["name"] = obj.Name;
@@ -312,7 +316,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(name);
-                if (obj == null) return Models.McpResponse.Error("Object not found", name, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 var result = new JObject();
                 result["name"] = obj.Name;
@@ -487,7 +491,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(name);
-                if (obj == null) return Models.McpResponse.Error("Object not found", name, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 var (parmRule, parms) = _objectService.GetParametersInternal(obj);
                 var result = new JObject();

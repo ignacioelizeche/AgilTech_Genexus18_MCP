@@ -93,7 +93,7 @@ namespace GxMcp.Gateway
                             string id = "unknown";
                             try {
                                 var json = JsonConvert.DeserializeObject<JObject>(jsonRpc);
-                                if (json?["id"] != null) id = json["id"].ToString();
+                                if (json?["id"] != null) id = json["id"]?.ToString() ?? "unknown";
                                 string method = json?["method"]?.ToString() ?? "unknown";
                                 _lastOperationInfo = $"{method} (ID: {id})";
                             } catch { /* ignore */ }
@@ -161,7 +161,7 @@ namespace GxMcp.Gateway
             }
         }
 
-        public static void KillOrphanGateways(string kbPath = null)
+        public static void KillOrphanGateways(string? kbPath = null)
         {
             try
             {

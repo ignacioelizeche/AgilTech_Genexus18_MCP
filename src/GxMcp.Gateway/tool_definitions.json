@@ -30,7 +30,7 @@
   },
   {
     "name": "genexus_read",
-    "description": "Reads source code from specific object parts (Source, Rules, Events). Supports pagination.",
+    "description": "Reads source code or editable metadata from object parts such as Source, Rules, Events, Layout, WebForm, and WorkWithPlus PatternInstance. Source-first for MCP usage and supports pagination.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -40,7 +40,7 @@
         },
         "part": {
           "type": "string",
-          "description": "Part (Source, Rules, Events).",
+          "description": "Part (for example Source, Rules, Events, Layout, WebForm, PatternInstance).",
           "default": "Source"
         },
         "offset": {
@@ -50,6 +50,10 @@
         "limit": {
           "type": "integer",
           "description": "Lines to read."
+        },
+        "type": {
+          "type": "string",
+          "description": "Optional object type (e.g., 'Procedure', 'File') to resolve name collisions."
         }
       },
       "required": [
@@ -91,7 +95,7 @@
   },
   {
     "name": "genexus_edit",
-    "description": "Updates object source code. Use 'mode=full' for complete overwrite or 'mode=patch' for surgical changes.",
+    "description": "Updates object source code or editable metadata parts. Use 'mode=full' for complete overwrite or 'mode=patch' for surgical changes.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -101,7 +105,7 @@
         },
         "part": {
           "type": "string",
-          "description": "Part name (e.g. Source, Rules).",
+          "description": "Part name (for example Source, Rules, Layout, WebForm, PatternInstance).",
           "default": "Source"
         },
         "mode": {
@@ -164,6 +168,10 @@
             ]
           },
           "description": "Batch of changes to apply to this object."
+        },
+        "type": {
+          "type": "string",
+          "description": "Optional object type to resolve name collisions."
         }
       },
       "required": [
@@ -266,6 +274,10 @@
             ]
           },
           "description": "Specific parts to include (defaults to all)."
+        },
+        "type": {
+          "type": "string",
+          "description": "Optional object type to resolve name collisions."
         }
       },
       "required": [
@@ -342,7 +354,7 @@
   },
   {
     "name": "genexus_lifecycle",
-    "description": "KB state management: build, validate, sync, and indexing.",
+    "description": "KB state management: build, validate, sync, and indexing. Operations are now asynchronous; call with action='status' and thetaskId returned to check progress.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -361,7 +373,7 @@
         },
         "target": {
           "type": "string",
-          "description": "Object or environment name."
+          "description": "Object or environment name, or taskId for action='status'."
         },
         "code": {
           "type": "string",
@@ -597,6 +609,57 @@
       "required": [
         "action",
         "name"
+      ]
+    }
+  },
+  {
+    "name": "genexus_asset",
+    "description": "Finds, reads, or writes binary assets stored inside the active Knowledge Base, including report templates such as .xlsx files.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "find",
+            "read",
+            "write"
+          ],
+          "description": "Asset operation."
+        },
+        "path": {
+          "type": "string",
+          "description": "Relative or absolute path inside the KB for read/write operations."
+        },
+        "includeContent": {
+          "type": "boolean",
+          "description": "For read operations, include Base64 file content. Defaults to false so large binary payloads do not flood the MCP context."
+        },
+        "maxBytes": {
+          "type": "integer",
+          "description": "For read operations with includeContent=true, maximum file size allowed before the worker returns a size error.",
+          "default": 131072
+        },
+        "pattern": {
+          "type": "string",
+          "description": "File glob pattern for find operations, for example '*.xlsx'."
+        },
+        "relativeRoot": {
+          "type": "string",
+          "description": "Optional relative folder inside the KB to scope find operations."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of files returned by find.",
+          "default": 20
+        },
+        "contentBase64": {
+          "type": "string",
+          "description": "Base64-encoded asset content for write operations."
+        }
+      },
+      "required": [
+        "action"
       ]
     }
   },

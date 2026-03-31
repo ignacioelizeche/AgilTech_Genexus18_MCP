@@ -46,5 +46,87 @@ namespace GxMcp.Gateway.Tests
             Assert.True(obj["isTruncated"]?.Value<bool>() ?? false);
             Assert.True(obj.ToString(Newtonsoft.Json.Formatting.None).Length <= 80000);
         }
+
+        [Fact]
+        public void TruncateResponseIfNeeded_ShouldDropDerivedReadMetadataBeforeTruncatingSource()
+        {
+            var payload = new JObject
+            {
+                ["name"] = "RelControleExtensaoHoras",
+                ["source"] = new string('S', 26000),
+                ["variables"] = new JArray(new JObject { ["name"] = "Linha", ["type"] = "Numeric(4)" }),
+                ["calls"] = new JArray(new JObject { ["name"] = "SubRotina", ["parmRule"] = "parm(in:&Linha);" }),
+                ["dataSchema"] = new JArray(new JObject { ["table"] = "Horas" }),
+                ["patternMetadata"] = new JObject { ["pattern"] = "WorkWithPlus" }
+            };
+
+            var method = typeof(Program).GetMethod(
+                "TruncateResponseIfNeeded",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var truncated = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_read" });
+
+            Assert.NotNull(truncated);
+            var obj = Assert.IsType<JObject>(truncated);
+            Assert.Null(obj["variables"]);
+            Assert.Null(obj["calls"]);
+            Assert.Null(obj["dataSchema"]);
+            Assert.Null(obj["patternMetadata"]);
+            Assert.NotNull(obj["source"]);
+            Assert.True(obj["isTruncated"]?.Value<bool>() ?? false);
+            Assert.Contains("Gateway trimmed derived metadata", obj["message"]?.Value<string>() ?? string.Empty);
+        }
+
+        [Fact]
+        public void TruncateResponseIfNeeded_ShouldPreserveLargeVisualLayoutXmlWithinVisualBudget()
+        {
+            var payload = new JObject
+            {
+                ["part"] = "Layout",
+                ["contentType"] = "application/xml",
+                ["source"] = new string('X', 50000)
+            };
+
+            var method = typeof(Program).GetMethod(
+                "TruncateResponseIfNeeded",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var truncated = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_read" });
+
+            Assert.NotNull(truncated);
+            var obj = Assert.IsType<JObject>(truncated);
+            Assert.Equal("Layout", obj["part"]?.ToString());
+            Assert.Equal(50000, obj["source"]?.Value<string>()?.Length);
+            Assert.Null(obj["isTruncated"]);
+        }
+
+        [Fact]
+        public void TruncateResponseIfNeeded_ShouldPreservePatternInstanceXmlWithinMetadataBudget()
+        {
+            var payload = new JObject
+            {
+                ["part"] = "PatternInstance",
+                ["contentType"] = "application/xml",
+                ["source"] = new string('P', 50000)
+            };
+
+            var method = typeof(Program).GetMethod(
+                "TruncateResponseIfNeeded",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var truncated = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_read" });
+
+            Assert.NotNull(truncated);
+            var obj = Assert.IsType<JObject>(truncated);
+            Assert.Equal("PatternInstance", obj["part"]?.ToString());
+            Assert.Equal(50000, obj["source"]?.Value<string>()?.Length);
+            Assert.Null(obj["isTruncated"]);
+        }
     }
 }

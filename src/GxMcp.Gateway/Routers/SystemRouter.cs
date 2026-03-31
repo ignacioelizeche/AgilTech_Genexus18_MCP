@@ -21,7 +21,10 @@ namespace GxMcp.Gateway.Routers
                         case "validate": return new { module = "Validation", action = "Check", target = target, payload = args?["code"]?.ToString() };
                         case "sync": return new { module = "Build", action = "Sync", target = target };
                         case "index": return new { module = "KB", action = "BulkIndex" };
-                        case "status": return new { module = "KB", action = "GetIndexStatus" };
+                        case "status": 
+                            if (!string.IsNullOrEmpty(target))
+                                return new { module = "Build", action = "Status", target = target };
+                            return new { module = "KB", action = "GetIndexStatus" };
                         default: return null;
                     }
 

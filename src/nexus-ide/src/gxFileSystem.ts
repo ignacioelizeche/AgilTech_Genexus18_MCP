@@ -225,7 +225,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         },
         15000,
       );
-      if (res && res.source) {
+      if (res && typeof res.source === "string") {
         let decoded = res.isBase64
           ? Buffer.from(res.source, "base64").toString("utf8")
           : res.source;
@@ -455,7 +455,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
           120000,
         );
         const data =
-          result && result.source
+          result && typeof result.source === "string"
             ? result.isBase64
               ? Buffer.from(result.source, "base64")
               : Buffer.from(result.source, "utf8")

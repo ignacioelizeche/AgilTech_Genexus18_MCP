@@ -60,6 +60,7 @@ namespace GxMcp.Worker.Structure
                 case "variables": return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
                 case "structure": return Guid.Parse("1608677c-a7a2-4a00-8809-6d2466085a5a");
                 case "webform": return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
+                case "patterninstance": return Guid.Parse("a51ced48-7bee-0001-ab12-04e9e32123d1");
                 case "help": return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
                 case "documentation": return Guid.Parse("26323631-6435-4235-3037-333036343530");
                 default: return Guid.Empty;

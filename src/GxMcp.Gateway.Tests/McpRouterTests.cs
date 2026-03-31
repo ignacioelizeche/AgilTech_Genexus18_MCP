@@ -91,6 +91,35 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
+        public void Handle_CompletionComplete_ShouldSuggestAssetActions()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"completion/complete","params":{"ref":{"type":"ref/tool","name":"genexus_asset"},"argument":{"name":"action","value":"r"}}}"""
+            );
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var values = (JArray)json["completion"]!["values"]!;
+            Assert.Contains(values, value => value?["value"]?.ToString() == "read");
+        }
+
+        [Fact]
+        public void Handle_CompletionComplete_ShouldSuggestPatternParts()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"completion/complete","params":{"ref":{"type":"ref/tool","name":"genexus_read"},"argument":{"name":"part","value":"Pattern"}}}"""
+            );
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var values = (JArray)json["completion"]!["values"]!;
+            Assert.Contains(values, value => value?["value"]?.ToString() == "PatternInstance");
+            Assert.Contains(values, value => value?["value"]?.ToString() == "PatternVirtual");
+        }
+
+        [Fact]
         public void ConvertResourceCall_ShouldMapIndexesResource()
         {
             var request = JObject.Parse(
@@ -118,6 +147,22 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal("Structure", json["module"]?.ToString());
             Assert.Equal("GetLogicStructure", json["action"]?.ToString());
             Assert.Equal("Customer", json["target"]?.ToString());
+        }
+
+        [Fact]
+        public void ConvertResourceCall_ShouldMapPatternInstancePartResource()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"resources/read","params":{"uri":"genexus://objects/ControleExtensaoHoras/part/PatternInstance"}}"""
+            );
+
+            var result = McpRouter.ConvertResourceCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Read", json["module"]?.ToString());
+            Assert.Equal("ExtractSource", json["action"]?.ToString());
+            Assert.Equal("ControleExtensaoHoras", json["target"]?.ToString());
+            Assert.Equal("PatternInstance", json["part"]?.ToString());
         }
 
         [Fact]
@@ -183,6 +228,21 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal("Formatting", json["module"]?.ToString());
             Assert.Equal("Format", json["action"]?.ToString());
             Assert.Contains("for each", json["payload"]?.ToString());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapAssetReadTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_asset","arguments":{"action":"read","path":"Web/Relatorios/RelControleExtensaoHoras.xlsx"}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Asset", json["module"]?.ToString());
+            Assert.Equal("Read", json["action"]?.ToString());
+            Assert.Equal("Web/Relatorios/RelControleExtensaoHoras.xlsx", json["target"]?.ToString());
         }
 
         [Fact]

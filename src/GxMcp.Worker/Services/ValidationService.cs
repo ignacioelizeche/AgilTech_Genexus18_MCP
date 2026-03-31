@@ -84,7 +84,12 @@ namespace GxMcp.Worker.Services
                             part.Save();
                         } catch (Exception saveEx) {
                             saveError = saveEx.Message;
-                            Logger.Debug("[VALIDATION] part.Save() threw: " + saveEx.Message);
+                            
+                            // Check for SDK messages even if it threw
+                            var sdkMsgs = part.GetSdkMessages();
+                            if (!string.IsNullOrEmpty(sdkMsgs)) saveError += " | Details: " + sdkMsgs;
+
+                            Logger.Debug("[VALIDATION] part.Save() threw: " + saveError);
                             
                             // Check for SDK lock common in GX18
                             if (saveError == "Erro" && _kbService.IsIndexing)
@@ -94,6 +99,17 @@ namespace GxMcp.Worker.Services
                         // 4. Capture diagnostics from ALL parts and the Object itself
                         var issues = SdkDiagnosticsHelper.GetDiagnostics(obj);
                         
+                        // Also check for part-local messages that might not be in the global list
+                        string localMsgs = part.GetSdkMessages();
+                        if (!string.IsNullOrEmpty(localMsgs) && !issues.Any(i => localMsgs.Contains(i["description"]?.ToString() ?? "???")))
+                        {
+                            var localIssue = new JObject();
+                            localIssue["description"] = localMsgs;
+                            localIssue["severity"] = "Error";
+                            localIssue["line"] = 1;
+                            issues.Add(localIssue);
+                        }
+
                         // Filter for errors
                         var errors = new JArray(issues.Where(i => i["severity"]?.ToString() == "Error"));
 

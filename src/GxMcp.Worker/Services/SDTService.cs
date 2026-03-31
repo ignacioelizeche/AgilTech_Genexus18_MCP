@@ -23,7 +23,7 @@ namespace GxMcp.Worker.Services
             try
             {
                 var obj = _objectService.FindObject(sdtName);
-                if (obj == null) return "{\"error\": \"SDT not found\"}";
+                if (obj == null) return HealingService.FormatNotFoundError(sdtName, _objectService.GetKbService().GetIndexCache().GetIndex());
 
                 if (obj.TypeDescriptor.Name.Equals("SDT", StringComparison.OrdinalIgnoreCase))
                 {

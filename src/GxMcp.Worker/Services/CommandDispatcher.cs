@@ -37,6 +37,7 @@ namespace GxMcp.Worker.Services
         private readonly StructureService _structureService;
         private readonly FormatService _formatService;
         private readonly PropertyService _propertyService;
+        private readonly AssetService _assetService;
         private readonly VersionControlService _versionControlService;
         private readonly ConversionService _conversionService;
         private readonly SelfTestService _selfTestService;
@@ -56,6 +57,7 @@ namespace GxMcp.Worker.Services
             _healthService = new HealthService();
             _formatService = new FormatService();
             _objectService = new ObjectService(_kbService, _buildService);
+            _assetService = new AssetService(_buildService);
             _navigationService = new NavigationService(_kbService);
             _listService = new ListService(_kbService, _indexCacheService);
             _uiService = new UIService(_kbService, _objectService);
@@ -91,6 +93,7 @@ namespace GxMcp.Worker.Services
             _writeService.SetValidationService(_validationService);
             _objectService.SetDataInsightService(_dataInsightService);
             _objectService.SetUIService(_uiService);
+            _objectService.SetPatternAnalysisService(_patternAnalysisService);
         }
 
         public static CommandDispatcher Instance
@@ -177,12 +180,12 @@ namespace GxMcp.Worker.Services
                             );
                         break;
                     case "read":
-                        if (action == "ExtractSource") return _objectService.ReadObjectSource(target, args?["part"]?.ToString(), args?["offset"]?.ToObject<int?>(), args?["limit"]?.ToObject<int?>(), "mcp");
+                        if (action == "ExtractSource") return _objectService.ReadObjectSource(target, args?["part"]?.ToString(), args?["offset"]?.ToObject<int?>(), args?["limit"]?.ToObject<int?>(), "mcp", false, args?["type"]?.ToString());
                         if (action == "GetVariables") return _analyzeService.GetVariables(target);
                         if (action == "GetAttribute") return _analyzeService.GetAttributeMetadata(target);
                         break;
                     case "object":
-                        if (action == "Read") return _objectService.ReadObject(target);
+                        if (action == "Read") return _objectService.ReadObject(target, args?["type"]?.ToString());
                         if (action == "Create") return _objectService.CreateObject(args?["type"]?.ToString(), target);
                         break;
                     case "write":
@@ -195,7 +198,7 @@ namespace GxMcp.Worker.Services
                         }
                         return _writeService.WriteObject(target, action, payload);
                     case "patch":
-                        if (action == "Apply") return _patchService.ApplyPatch(target, args?["part"]?.ToString(), args?["operation"]?.ToString(), payload, args?["context"]?.ToString());
+                        if (action == "Apply") return _patchService.ApplyPatch(target, args?["part"]?.ToString(), args?["operation"]?.ToString(), payload, args?["context"]?.ToString(), 1, args?["type"]?.ToString());
                         break;
                     case "analyze":
                         if (action == "GetNavigation") return _navigationService.GetNavigation(target);
@@ -243,10 +246,8 @@ namespace GxMcp.Worker.Services
                         if (action == "GetLogicStructure") return _structureService.GetLogicStructure(target);
                         break;
                     case "build":
-                        if (action == "Build") return _buildService.Build(action, target);
-                        if (action == "RebuildAll") return _buildService.Build("RebuildAll", null);
-                        if (action == "Sync") return _buildService.Build("BuildAll", null);
-                        break;
+                        if (action == "Status") return _buildService.GetStatus(target);
+                        return _buildService.Build(action, target);
                     case "validation":
                         return _validationService.ValidateCode(target, action, payload);
                     case "test":
@@ -270,6 +271,31 @@ namespace GxMcp.Worker.Services
                                 args?["control"]?.ToString());
                         }
                         return _propertyService.GetProperties(target, args?["control"]?.ToString());
+                    case "asset":
+                        if (action == "Find")
+                        {
+                            return _assetService.Find(
+                                args?["pattern"]?.ToString(),
+                                args?["relativeRoot"]?.ToString(),
+                                args?["limit"]?.ToObject<int?>() ?? 20);
+                        }
+
+                        if (action == "Read")
+                        {
+                            return _assetService.Read(
+                                target,
+                                args?["includeContent"]?.ToObject<bool?>() ?? false,
+                                args?["maxBytes"]?.ToObject<int?>());
+                        }
+
+                        if (action == "Write")
+                        {
+                            return _assetService.Write(
+                                target,
+                                args?["contentBase64"]?.ToString());
+                        }
+
+                        break;
                     case "formatting":
                         if (action == "Format") return _formatService.Format(payload);
                         break;

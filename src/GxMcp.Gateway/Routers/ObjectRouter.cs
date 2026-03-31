@@ -19,7 +19,8 @@ namespace GxMcp.Gateway.Routers
                         target = target, 
                         part = part,
                         offset = args?["offset"]?.ToObject<int?>(),
-                        limit = args?["limit"]?.ToObject<int?>()
+                        limit = args?["limit"]?.ToObject<int?>(),
+                        type = args?["type"]?.ToString()
                     };
 
                 case "genexus_edit":

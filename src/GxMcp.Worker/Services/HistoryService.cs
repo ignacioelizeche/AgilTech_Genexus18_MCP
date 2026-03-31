@@ -125,34 +125,43 @@ namespace GxMcp.Worker.Services
 
         private string SaveSnapshot(string target)
         {
+            var obj = _objectService.FindObject(target);
+            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+
             string histDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".history");
             if (!Directory.Exists(histDir)) Directory.CreateDirectory(histDir);
-            string sourceJson = _objectService.ReadObjectSource(target, "Source");
+            
+            string sourceJson = _objectService.ReadObjectSource(target, "Source", client: "mcp");
             if (sourceJson.Contains("\"error\"")) return sourceJson;
 
             var json = JObject.Parse(sourceJson);
             string code = json["source"] != null ? json["source"].ToString() : "";
 
             string ts = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string safeName = target.Replace(":", "_");
+            // Use canonical name: Type_Name
+            string safeName = $"{obj.TypeDescriptor.Name}_{obj.Name}".Replace(":", "_").Replace(" ", "_");
             string filePath = Path.Combine(histDir, string.Format("{0}_{1}.txt", safeName, ts));
             File.WriteAllText(filePath, code, Encoding.UTF8);
 
-            return "{\"status\": \"Snapshot saved\", \"file\": \"" + CommandDispatcher.EscapeJsonString(Path.GetFileName(filePath)) + "\", \"timestamp\": \"" + ts + "\"}";
+            return "{\"status\": \"Snapshot saved\", \"file\": \"" + CommandDispatcher.EscapeJsonString(Path.GetFileName(filePath)) + "\", \"timestamp\": \"" + ts + "\", \"canonicalName\": \"" + safeName + "\"}";
         }
 
         private string RestoreSnapshot(string target)
         {
+            var obj = _objectService.FindObject(target);
+            if (obj == null) return Models.McpResponse.Error("Object not found", target);
+
             string histDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".history");
             if (!Directory.Exists(histDir)) Directory.CreateDirectory(histDir);
 
-            string safeName = target.Replace(":", "_");
+            // Use canonical name: Type_Name
+            string safeName = $"{obj.TypeDescriptor.Name}_{obj.Name}".Replace(":", "_").Replace(" ", "_");
             var files = Directory.GetFiles(histDir, $"{safeName}_*.txt")
                 .OrderByDescending(f => f)
                 .ToArray();
 
             if (files.Length == 0)
-                return "{\"error\": \"No snapshots found for " + CommandDispatcher.EscapeJsonString(target) + "\"}";
+                return "{\"error\": \"No snapshots found for " + CommandDispatcher.EscapeJsonString(safeName) + " (Target: " + target + ")\"}";
 
             string lastFile = files.First();
             string code = File.ReadAllText(lastFile, Encoding.UTF8);

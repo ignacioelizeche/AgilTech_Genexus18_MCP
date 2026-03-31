@@ -12,7 +12,7 @@ namespace GxMcp.Gateway
     {
         public const string ServerVersion = "1.0.0";
         public const string SupportedProtocolVersion = "2025-06-18";
-        private static readonly string[] _objectParts = { "Source", "Rules", "Events", "Variables", "Structure", "Layout" };
+        private static readonly string[] _objectParts = { "Source", "Rules", "Events", "Variables", "Structure", "Layout", "WebForm", "PatternInstance", "PatternVirtual" };
         private static readonly string[] _analysisIncludes = { "metadata", "variables", "signature", "structure" };
         private static readonly string[] _targetLanguages = { "CSharp", "TypeScript", "Java", "Python" };
         private static readonly string[] _promptNames =
@@ -238,6 +238,8 @@ namespace GxMcp.Gateway
                     values = new[] { "build", "rebuild", "reorg", "validate", "sync", "index", "status" };
                 else if (refName == "genexus_properties")
                     values = new[] { "get", "set" };
+                else if (refName == "genexus_asset")
+                    values = new[] { "find", "read", "write" };
                 else if (refName == "genexus_history")
                     values = new[] { "list", "get_source", "save", "restore" };
                 else if (refName == "genexus_structure")

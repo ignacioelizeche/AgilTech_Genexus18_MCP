@@ -17,10 +17,8 @@ namespace GxMcp.Worker.Services
         private BuildService _buildService;
         private bool _initialized = false;
         private readonly object _lock = new object();
-        private string _lastSavedJsonHash = null;
         private DateTime _lastFlushTime = DateTime.MinValue;
         private bool _savingInProgress = false;
-        private bool _isDirty = false;
         private readonly VectorService _vectorService = new VectorService();
 
         public IndexCacheService()
@@ -159,7 +157,6 @@ namespace GxMcp.Worker.Services
                 _index = index;
             }
             // Fire and forget save to disk with throttling
-            _isDirty = true;
             if (!_savingInProgress && (DateTime.Now - _lastFlushTime).TotalSeconds > 10)
             {
                 Task.Run(() => FlushToDisk());
@@ -199,7 +196,6 @@ namespace GxMcp.Worker.Services
                 // Perform I/O OUTSIDE the lock
                 File.WriteAllText(_indexPath, json);
                 
-                _isDirty = false;
                 Logger.Info($"[INDEX-SAVE] Index flushed: {json.Length / 1024} KB saved.");
             }
             catch (Exception ex) { Logger.Error("Flush Error: " + ex.Message); }
@@ -297,8 +293,6 @@ namespace GxMcp.Worker.Services
 
             // Atomic update using ConcurrentDictionary
             index.Objects.AddOrUpdate(key, entry, (k, existing) => entry);
-            _isDirty = true;
-
             if (index.ChildrenByParent != null)
             {
                 AddOrUpdateEntryInParentIndex(index.ChildrenByParent, entry);

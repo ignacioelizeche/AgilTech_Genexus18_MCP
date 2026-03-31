@@ -26,7 +26,7 @@ namespace GxMcp.Worker.Services
         {
             try {
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return Models.McpResponse.Error("Object not found", targetName, "Structure", "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return HealingService.FormatNotFoundError(targetName, _objectService.GetKbService().GetIndexCache().GetIndex());
                 var trn = obj as Transaction;
                 if (trn == null) return Models.McpResponse.Error("Object is not a Transaction", targetName, "Structure", "Visual structure updates currently support Transaction objects only.", obj.Name, obj.TypeDescriptor?.Name);
 
@@ -57,10 +57,7 @@ namespace GxMcp.Worker.Services
             try {
                 Logger.Info($"[StructureService] Loading visual structure for: {targetName}");
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) {
-                    Logger.Error($"[StructureService] Object not found: {targetName}");
-                    return Models.McpResponse.Error("Object not found", targetName, "Structure", "The requested object is not available in the active Knowledge Base.");
-                }
+                if (obj == null) return HealingService.FormatNotFoundError(targetName, _objectService.GetKbService().GetIndexCache().GetIndex());
                 
                 Logger.Info($"[StructureService] Found object: {obj.Name} ({obj.TypeDescriptor.Name})");
 
@@ -97,7 +94,7 @@ namespace GxMcp.Worker.Services
         {
             try {
                 var obj = _objectService.FindObject(targetName);
-                if (obj == null) return Models.McpResponse.Error("Object not found", targetName, null, "The requested object is not available in the active Knowledge Base.");
+                if (obj == null) return HealingService.FormatNotFoundError(targetName, _objectService.GetKbService().GetIndexCache().GetIndex());
 
                 var result = new JObject { ["name"] = obj.Name, ["type"] = obj.TypeDescriptor.Name };
                 var subs = new JArray();
