@@ -1049,10 +1049,34 @@ export class CommandManager {
     const promptArgs = Array.isArray(prompt?.arguments) ? prompt.arguments : [];
 
     for (const arg of promptArgs) {
-      const value = await vscode.window.showInputBox({
-        prompt: arg.description || `Informe o valor para '${arg.name}'`,
-        placeHolder: arg.name,
-      });
+      const allowedValues: string[] = Array.isArray(arg?.allowedValues)
+        ? arg.allowedValues.filter(
+            (candidate: unknown): candidate is string =>
+              typeof candidate === "string" && candidate.length > 0,
+          )
+        : [];
+
+      let value: string | undefined;
+      if (allowedValues.length > 0) {
+        const options: vscode.QuickPickItem[] = allowedValues.map(
+          (allowedValue: string) => ({
+            label: allowedValue,
+            detail: arg.description || `Selecione um valor para '${arg.name}'`,
+          }),
+        );
+        const selected = await vscode.window.showQuickPick(
+          options,
+          {
+            placeHolder: arg.description || `Selecione um valor para '${arg.name}'`,
+          },
+        );
+        value = selected?.label;
+      } else {
+        value = await vscode.window.showInputBox({
+          prompt: arg.description || `Informe o valor para '${arg.name}'`,
+          placeHolder: arg.name,
+        });
+      }
 
       if (value === undefined) {
         return undefined;

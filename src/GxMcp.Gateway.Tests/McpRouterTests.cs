@@ -27,6 +27,7 @@ namespace GxMcp.Gateway.Tests
             var prompts = (JArray)json["prompts"]!;
             Assert.Contains(prompts, prompt => prompt?["name"]?.ToString() == "gx_convert_object");
             Assert.Contains(prompts, prompt => prompt?["name"]?.ToString() == "gx_trace_dependencies");
+            Assert.Contains(prompts, prompt => prompt?["name"]?.ToString() == "gx_agent_ship_change");
         }
 
         [Fact]
@@ -47,6 +48,49 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
+        public void Handle_PromptsGet_ShouldRejectMissingRequiredPromptArgument()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"prompts/get","params":{"name":"gx_agent_ship_change","arguments":{"objectName":"InvoiceEntry"}}}"""
+            );
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Invalid prompt arguments.", json["description"]?.ToString());
+            var text = json["messages"]![0]!["content"]?["text"]?.ToString() ?? string.Empty;
+            Assert.Contains("Missing required argument 'goal'", text);
+        }
+
+        [Fact]
+        public void Handle_ResourcesList_ShouldExposeAgentPlaybook()
+        {
+            var request = JObject.Parse("""{"jsonrpc":"2.0","id":"1","method":"resources/list"}""");
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var resources = (JArray)json["resources"]!;
+            Assert.Contains(resources, resource => resource?["uri"]?.ToString() == "genexus://kb/agent-playbook");
+        }
+
+        [Fact]
+        public void Handle_ResourcesRead_ShouldReturnAgentPlaybookContents()
+        {
+            var request = JObject.Parse("""{"jsonrpc":"2.0","id":"1","method":"resources/read","params":{"uri":"genexus://kb/agent-playbook"}}""");
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var contents = (JArray)json["contents"]!;
+            var first = (JObject)contents[0]!;
+            Assert.Equal("genexus://kb/agent-playbook", first["uri"]?.ToString());
+            Assert.Equal("text/markdown", first["mimeType"]?.ToString());
+            Assert.Contains("GeneXus Agent Playbook", first["text"]?.ToString());
+            Assert.Contains("Git-friendly", first["text"]?.ToString());
+        }
+
+        [Fact]
         public void Handle_CompletionComplete_ShouldSuggestPromptNames()
         {
             var request = JObject.Parse(
@@ -59,6 +103,20 @@ namespace GxMcp.Gateway.Tests
             var values = (JArray)json["completion"]!["values"]!;
             Assert.Contains(values, value => value?["value"]?.ToString() == "gx_explain_object");
             Assert.Contains(values, value => value?["value"]?.ToString() == "gx_generate_tests");
+        }
+
+        [Fact]
+        public void Handle_CompletionComplete_ShouldSuggestPromptArgumentAllowedValues()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"completion/complete","params":{"ref":{"type":"ref/prompt","name":"gx_convert_object"},"argument":{"name":"targetLanguage","value":"Ty"}}}"""
+            );
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var values = (JArray)json["completion"]!["values"]!;
+            Assert.Contains(values, value => value?["value"]?.ToString() == "TypeScript");
         }
 
         [Fact]

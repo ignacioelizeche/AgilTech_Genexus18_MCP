@@ -15,17 +15,43 @@ namespace GxMcp.Gateway
         private static readonly string[] _objectParts = { "Source", "Rules", "Events", "Variables", "Structure", "Layout", "WebForm", "PatternInstance", "PatternVirtual" };
         private static readonly string[] _analysisIncludes = { "metadata", "variables", "signature", "structure" };
         private static readonly string[] _targetLanguages = { "CSharp", "TypeScript", "Java", "Python" };
-        private static readonly string[] _promptNames =
-        {
-            "gx_explain_object",
-            "gx_convert_object",
-            "gx_review_transaction",
-            "gx_refactor_procedure",
-            "gx_generate_tests",
-            "gx_trace_dependencies"
-        };
+        private static readonly string[] _visualSurfaces = { "Layout", "WebForm", "PatternInstance", "PatternVirtual" };
+        private static readonly IReadOnlyDictionary<string, PromptDefinition> _promptDefinitions = BuildPromptDefinitions();
+        private static readonly string[] _promptNames = _promptDefinitions.Keys.ToArray();
         private static readonly List<IMcpModuleRouter> _routers;
         private static JArray _toolDefinitions = new JArray();
+
+        private sealed class PromptArgumentDefinition
+        {
+            public PromptArgumentDefinition(string name, string description, bool required, params string[] allowedValues)
+            {
+                Name = name;
+                Description = description;
+                Required = required;
+                AllowedValues = allowedValues?.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray() ?? Array.Empty<string>();
+            }
+
+            public string Name { get; }
+            public string Description { get; }
+            public bool Required { get; }
+            public string[] AllowedValues { get; }
+        }
+
+        private sealed class PromptDefinition
+        {
+            public PromptDefinition(string name, string description, Func<JObject, string> buildMessage, params PromptArgumentDefinition[] arguments)
+            {
+                Name = name;
+                Description = description;
+                BuildMessage = buildMessage;
+                Arguments = arguments ?? Array.Empty<PromptArgumentDefinition>();
+            }
+
+            public string Name { get; }
+            public string Description { get; }
+            public PromptArgumentDefinition[] Arguments { get; }
+            public Func<JObject, string> BuildMessage { get; }
+        }
 
         static McpRouter()
         {
@@ -91,12 +117,13 @@ namespace GxMcp.Gateway
                         {
                             new { uri = "genexus://kb/index-status", name = "KB Index Status", description = "Current indexing status for the active Knowledge Base." },
                             new { uri = "genexus://kb/health", name = "Gateway Health Report", description = "Health report for the GeneXus MCP worker and gateway." },
+                            new { uri = "genexus://kb/agent-playbook", name = "GeneXus Agent Playbook", description = "Recommended MCP workflow to operate this GeneXus server in an agent-native, Git-friendly way." },
                             new { uri = "genexus://objects", name = "GeneXus Objects Index", description = "Browsable index of all objects in the KB." },
                             new { uri = "genexus://attributes", name = "GeneXus Attributes", description = "Browsable list of all attributes." }
                         }
                     };
                 case "resources/read":
-                    return null;
+                    return BuildStaticResourceResponse(request);
                 case "resources/templates/list":
                     return new
                     {
@@ -226,6 +253,10 @@ namespace GxMcp.Gateway
                 else if (uriTemplate.Contains("/conversion-context", StringComparison.OrdinalIgnoreCase))
                     values = _analysisIncludes;
             }
+            else if (refType == "ref/prompt" && TryGetPromptArgumentDefinition(refName, argumentName, out var promptArgument))
+            {
+                values = promptArgument.AllowedValues;
+            }
             else if (refType == "ref/tool")
             {
                 if (refName == "genexus_read")
@@ -267,65 +298,21 @@ namespace GxMcp.Gateway
 
         private static object[] BuildPromptCatalog()
         {
-            return new object[]
-            {
-                new
+            return _promptDefinitions.Values
+                .Select(prompt => new
                 {
-                    name = "gx_explain_object",
-                    description = "Explain a GeneXus object using source, variables, navigation, and summary context.",
-                    arguments = new object[]
+                    name = prompt.Name,
+                    description = prompt.Description,
+                    arguments = prompt.Arguments.Select(argument => new
                     {
-                        new { name = "name", description = "GeneXus object name.", required = true },
-                        new { name = "part", description = "Primary part to emphasize during the explanation.", required = false }
-                    }
-                },
-                new
-                {
-                    name = "gx_convert_object",
-                    description = "Prepare a GeneXus object for conversion to another language using conversion context and target-specific guidance.",
-                    arguments = new object[]
-                    {
-                        new { name = "name", description = "GeneXus object name.", required = true },
-                        new { name = "targetLanguage", description = "Target language for conversion.", required = true }
-                    }
-                },
-                new
-                {
-                    name = "gx_review_transaction",
-                    description = "Review a Transaction object with focus on structure, rules, and generated impact.",
-                    arguments = new object[]
-                    {
-                        new { name = "name", description = "Transaction object name.", required = true }
-                    }
-                },
-                new
-                {
-                    name = "gx_refactor_procedure",
-                    description = "Refactor a Procedure with attention to readability, side effects, and migration safety.",
-                    arguments = new object[]
-                    {
-                        new { name = "name", description = "Procedure object name.", required = true }
-                    }
-                },
-                new
-                {
-                    name = "gx_generate_tests",
-                    description = "Generate a test plan from source, variables, navigation, and business context.",
-                    arguments = new object[]
-                    {
-                        new { name = "name", description = "GeneXus object name.", required = true }
-                    }
-                },
-                new
-                {
-                    name = "gx_trace_dependencies",
-                    description = "Trace upstream and downstream dependencies for a GeneXus object.",
-                    arguments = new object[]
-                    {
-                        new { name = "name", description = "GeneXus object name.", required = true }
-                    }
-                }
-            };
+                        name = argument.Name,
+                        description = argument.Description,
+                        required = argument.Required,
+                        allowedValues = argument.AllowedValues.Length > 0 ? argument.AllowedValues : null
+                    }).ToArray()
+                })
+                .Cast<object>()
+                .ToArray();
         }
 
         private static object BuildPromptResponse(JObject request)
@@ -333,68 +320,37 @@ namespace GxMcp.Gateway
             var paramsObj = request["params"] as JObject;
             string promptName = paramsObj?["name"]?.ToString() ?? "";
             var args = paramsObj?["arguments"] as JObject ?? new JObject();
-
-            return promptName switch
+            if (!_promptDefinitions.TryGetValue(promptName, out var prompt))
             {
-                "gx_explain_object" => new
-                {
-                    description = "Explain a GeneXus object with grounded context.",
-                    messages = new[]
-                    {
-                        CreatePromptMessage(BuildExplainObjectPrompt(
-                            args["name"]?.ToString() ?? "",
-                            args["part"]?.ToString() ?? "Source"))
-                    }
-                },
-                "gx_convert_object" => new
-                {
-                    description = "Guide an object conversion workflow with explicit review gates.",
-                    messages = new[]
-                    {
-                        CreatePromptMessage(BuildConvertObjectPrompt(
-                            args["name"]?.ToString() ?? "",
-                            args["targetLanguage"]?.ToString() ?? "CSharp"))
-                    }
-                },
-                "gx_review_transaction" => new
-                {
-                    description = "Review a Transaction object for correctness and migration readiness.",
-                    messages = new[]
-                    {
-                        CreatePromptMessage(BuildReviewTransactionPrompt(args["name"]?.ToString() ?? ""))
-                    }
-                },
-                "gx_refactor_procedure" => new
-                {
-                    description = "Refactor a Procedure while preserving behavior.",
-                    messages = new[]
-                    {
-                        CreatePromptMessage(BuildRefactorProcedurePrompt(args["name"]?.ToString() ?? ""))
-                    }
-                },
-                "gx_generate_tests" => new
-                {
-                    description = "Generate a test plan for a GeneXus object.",
-                    messages = new[]
-                    {
-                        CreatePromptMessage(BuildGenerateTestsPrompt(args["name"]?.ToString() ?? ""))
-                    }
-                },
-                "gx_trace_dependencies" => new
-                {
-                    description = "Trace dependencies and impact for a GeneXus object.",
-                    messages = new[]
-                    {
-                        CreatePromptMessage(BuildTraceDependenciesPrompt(args["name"]?.ToString() ?? ""))
-                    }
-                },
-                _ => new
+                return new
                 {
                     description = "Unknown prompt.",
                     messages = new[]
                     {
                         CreatePromptMessage($"Prompt '{promptName}' is not defined by this server.")
                     }
+                };
+            }
+
+            string? validationError = ValidatePromptArguments(prompt, args);
+            if (!string.IsNullOrWhiteSpace(validationError))
+            {
+                return new
+                {
+                    description = "Invalid prompt arguments.",
+                    messages = new[]
+                    {
+                        CreatePromptMessage(validationError)
+                    }
+                };
+            }
+
+            return new
+            {
+                description = prompt.Description,
+                messages = new[]
+                {
+                    CreatePromptMessage(prompt.BuildMessage(args))
                 }
             };
         }
@@ -470,6 +426,184 @@ namespace GxMcp.Gateway
                 $"'genexus://objects/{name}/summary', and if needed 'genexus_query' with 'usedby:{name}'. " +
                 "Separate direct dependencies, indirect dependencies, and likely impact zones. " +
                 "Call out where the trace is inferred versus explicitly grounded in retrieved data.";
+        }
+
+        private static string BuildAgentShipChangePrompt(string goal, string objectName, string part)
+        {
+            string normalizedPart = string.IsNullOrWhiteSpace(part) ? "Source" : part;
+            string objectSpecificGuidance = string.IsNullOrWhiteSpace(objectName)
+                ? "Start with `genexus_query` and the KB-level resources to identify the smallest object set involved before editing anything. "
+                : $"Treat '{objectName}' as the primary object. Read 'genexus://objects/{objectName}/summary', 'genexus://objects/{objectName}/part/{normalizedPart}', 'genexus://objects/{objectName}/variables', and 'genexus://objects/{objectName}/hierarchy' before proposing edits. ";
+
+            return
+                $"Execute a controlled GeneXus change with the goal '{goal}'. " +
+                "Start by reading 'genexus://kb/agent-playbook'. " +
+                objectSpecificGuidance +
+                "Use MCP discovery instead of hardcoded assumptions, keep the blast radius explicit, and prefer the smallest reversible change set. " +
+                "If editing is required, re-read the exact target before mutation, persist the change, then verify with a re-read plus the appropriate lifecycle command (`validate`, `build`, or `test`). " +
+                "Finish with a Git-ready change summary listing modified objects, verification evidence, and open risks.";
+        }
+
+        private static string BuildVisualChangePrompt(string name, string changeGoal, string preferredSurface)
+        {
+            string normalizedSurface = string.IsNullOrWhiteSpace(preferredSurface) ? "PatternInstance" : preferredSurface;
+            return
+                $"Plan and validate a GeneXus visual metadata change for '{name}' with the goal '{changeGoal}'. " +
+                "Start by reading 'genexus://kb/agent-playbook'. " +
+                $"Inspect 'genexus://objects/{name}/ui-context', 'genexus://objects/{name}/pattern-metadata', and 'genexus://objects/{name}/part/{normalizedSurface}' first. " +
+                "Determine the authoritative surface before editing: base layout, raw WebForm metadata, or pattern-owned metadata. " +
+                "If assets are involved, inspect `genexus_asset` metadata before changing any binary file. " +
+                "After the write, re-read the exact same surface and report whether persistence is confirmed or still blocked.";
+        }
+
+        private static IReadOnlyDictionary<string, PromptDefinition> BuildPromptDefinitions()
+        {
+            var prompts = new[]
+            {
+                new PromptDefinition(
+                    "gx_explain_object",
+                    "Explain a GeneXus object using source, variables, navigation, and summary context.",
+                    args => BuildExplainObjectPrompt(
+                        args["name"]?.ToString() ?? string.Empty,
+                        args["part"]?.ToString() ?? "Source"),
+                    new PromptArgumentDefinition("name", "GeneXus object name.", true),
+                    new PromptArgumentDefinition("part", "Primary part to emphasize during the explanation.", false, _objectParts)),
+                new PromptDefinition(
+                    "gx_convert_object",
+                    "Prepare a GeneXus object for conversion to another language using conversion context and target-specific guidance.",
+                    args => BuildConvertObjectPrompt(
+                        args["name"]?.ToString() ?? string.Empty,
+                        args["targetLanguage"]?.ToString() ?? "CSharp"),
+                    new PromptArgumentDefinition("name", "GeneXus object name.", true),
+                    new PromptArgumentDefinition("targetLanguage", "Target language for conversion.", true, _targetLanguages)),
+                new PromptDefinition(
+                    "gx_review_transaction",
+                    "Review a Transaction object with focus on structure, rules, and generated impact.",
+                    args => BuildReviewTransactionPrompt(args["name"]?.ToString() ?? string.Empty),
+                    new PromptArgumentDefinition("name", "Transaction object name.", true)),
+                new PromptDefinition(
+                    "gx_refactor_procedure",
+                    "Refactor a Procedure with attention to readability, side effects, and migration safety.",
+                    args => BuildRefactorProcedurePrompt(args["name"]?.ToString() ?? string.Empty),
+                    new PromptArgumentDefinition("name", "Procedure object name.", true)),
+                new PromptDefinition(
+                    "gx_generate_tests",
+                    "Generate a test plan from source, variables, navigation, and business context.",
+                    args => BuildGenerateTestsPrompt(args["name"]?.ToString() ?? string.Empty),
+                    new PromptArgumentDefinition("name", "GeneXus object name.", true)),
+                new PromptDefinition(
+                    "gx_trace_dependencies",
+                    "Trace upstream and downstream dependencies for a GeneXus object.",
+                    args => BuildTraceDependenciesPrompt(args["name"]?.ToString() ?? string.Empty),
+                    new PromptArgumentDefinition("name", "GeneXus object name.", true)),
+                new PromptDefinition(
+                    "gx_agent_ship_change",
+                    "Guide an agent through a controlled GeneXus change with MCP discovery, verification, and Git-ready reporting.",
+                    args => BuildAgentShipChangePrompt(
+                        args["goal"]?.ToString() ?? string.Empty,
+                        args["objectName"]?.ToString() ?? string.Empty,
+                        args["part"]?.ToString() ?? "Source"),
+                    new PromptArgumentDefinition("goal", "User-visible outcome or change objective.", true),
+                    new PromptArgumentDefinition("objectName", "Primary GeneXus object when the scope is already known.", false),
+                    new PromptArgumentDefinition("part", "Primary part to inspect first when an object is known.", false, _objectParts)),
+                new PromptDefinition(
+                    "gx_agent_visual_change",
+                    "Guide an agent through a visual metadata change while resolving the authoritative GeneXus surface first.",
+                    args => BuildVisualChangePrompt(
+                        args["name"]?.ToString() ?? string.Empty,
+                        args["changeGoal"]?.ToString() ?? string.Empty,
+                        args["preferredSurface"]?.ToString() ?? "PatternInstance"),
+                    new PromptArgumentDefinition("name", "GeneXus object name.", true),
+                    new PromptArgumentDefinition("changeGoal", "Requested UI or metadata change.", true),
+                    new PromptArgumentDefinition("preferredSurface", "Best initial guess for the authoritative editable surface.", false, _visualSurfaces))
+            };
+
+            return prompts.ToDictionary(prompt => prompt.Name, StringComparer.Ordinal);
+        }
+
+        private static string? ValidatePromptArguments(PromptDefinition prompt, JObject args)
+        {
+            foreach (var argument in prompt.Arguments)
+            {
+                string value = args[argument.Name]?.ToString() ?? string.Empty;
+                if (argument.Required && string.IsNullOrWhiteSpace(value))
+                {
+                    return $"Missing required argument '{argument.Name}' for prompt '{prompt.Name}'.";
+                }
+
+                if (!string.IsNullOrWhiteSpace(value) &&
+                    argument.AllowedValues.Length > 0 &&
+                    !argument.AllowedValues.Contains(value, StringComparer.OrdinalIgnoreCase))
+                {
+                    return $"Invalid value '{value}' for argument '{argument.Name}' in prompt '{prompt.Name}'. Allowed values: {string.Join(", ", argument.AllowedValues)}.";
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryGetPromptArgumentDefinition(string promptName, string argumentName, out PromptArgumentDefinition argument)
+        {
+            argument = null!;
+            if (!_promptDefinitions.TryGetValue(promptName, out var prompt))
+            {
+                return false;
+            }
+
+            var found = prompt.Arguments.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, argumentName, StringComparison.OrdinalIgnoreCase));
+
+            if (found == null)
+            {
+                return false;
+            }
+
+            argument = found;
+            return true;
+        }
+
+        private static object? BuildStaticResourceResponse(JObject request)
+        {
+            string uri = request["params"]?["uri"]?.ToString() ?? string.Empty;
+            if (!string.Equals(uri, "genexus://kb/agent-playbook", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return new
+            {
+                contents = new[]
+                {
+                    new
+                    {
+                        uri = "genexus://kb/agent-playbook",
+                        mimeType = "text/markdown",
+                        text = BuildAgentPlaybook()
+                    }
+                }
+            };
+        }
+
+        private static string BuildAgentPlaybook()
+        {
+            return
+                "# GeneXus Agent Playbook\n\n" +
+                "Use this server in an agent-native way:\n" +
+                "1. Start with MCP discovery (`tools/list`, `resources/list`, `resources/templates/list`, `prompts/list`).\n" +
+                "2. Prefer resources for read-only grounding and use tool calls only for mutations or deeper analysis.\n" +
+                "3. Keep GeneXus artifacts reviewable and Git-friendly: small diffs, explicit blast radius, and post-write verification.\n" +
+                "4. For code or metadata changes, re-read before editing, write once, then confirm persistence with a second read.\n" +
+                "5. Close the loop with the relevant lifecycle action (`validate`, `build`, `test`, or `index`) instead of stopping at a successful write.\n" +
+                "6. When the authoritative surface is unclear, inspect summary, hierarchy, ui-context, pattern metadata, and visual parts before mutating anything.\n" +
+                "7. Treat assets and visual metadata as first-class artifacts: inspect metadata first, then opt into heavy content only when necessary.\n\n" +
+                "Current server strengths:\n" +
+                "- MCP-first gateway and discovery\n" +
+                "- Source, metadata, pattern, and asset operations\n" +
+                "- Prompt and completion support\n\n" +
+                "Current caution points:\n" +
+                "- Some visual metadata flows still require practical persistence confirmation.\n" +
+                "- Extension lint warnings are legacy debt; runtime validation is stronger than stylistic cleanliness today.\n" +
+                "- Prompt flows are grounded, but the agent must still choose the smallest safe change set.";
         }
 
         public static object? ConvertResourceCall(JObject request)

@@ -50,6 +50,7 @@ Source of truth:
 | --- | --- | --- |
 | `genexus://kb/index-status` | active | KB indexing status |
 | `genexus://kb/health` | active | Gateway and worker health report |
+| `genexus://kb/agent-playbook` | active | Agent-native operating playbook for MCP, verification, and Git-friendly change control |
 | `genexus://objects` | active | Browsable index of objects |
 | `genexus://attributes` | active | Browsable attribute listing |
 | `genexus://objects/{name}/part/{part}` | active | Part-specific object reading |
@@ -76,6 +77,8 @@ Source of truth:
 | `gx_refactor_procedure` | active | Procedure refactor workflow focused on preserving behavior |
 | `gx_generate_tests` | active | Test-plan generation workflow |
 | `gx_trace_dependencies` | active | Dependency tracing workflow with impact analysis |
+| `gx_agent_ship_change` | active | Controlled-change workflow for agents with explicit verification and reporting |
+| `gx_agent_visual_change` | active | Visual metadata workflow that forces authoritative-surface resolution before editing |
 
 ## Completion
 
@@ -107,6 +110,6 @@ Source of truth:
 - Resource surface is still too small for rich object exploration.
 - Prompt catalog is still minimal.
 - Completions are currently static and schema-oriented; object-name completion is still pending.
-- Prompt workflows are now available, but prompt arguments are still validated loosely in the gateway.
+- Prompt workflows now validate required and enumerated arguments in the gateway, but object-name-aware completion is still pending.
 - Extension flows already migrated to MCP include discovery, prompts, resources, SQL, tests, build/rebuild, indexing, object creation, attribute rename, procedure extraction, properties, history, and structure/indexes views.
 - `genexus_forge` is reachable now, but code generation quality is still early-stage.
