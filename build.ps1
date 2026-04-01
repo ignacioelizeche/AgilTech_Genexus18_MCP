@@ -1,9 +1,25 @@
 # GeneXus MCP - Build & Deploy Script
 # ==========================================
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
+$ProgressPreference = "SilentlyContinue"
 $root = $PSScriptRoot
 $publishDir = Join-Path $root "publish"
+$gatewayProject = Join-Path $root "src\GxMcp.Gateway\GxMcp.Gateway.csproj"
+$workerProject = Join-Path $root "src\GxMcp.Worker\GxMcp.Worker.csproj"
+
+function Fail-Build([string]$message, [int]$exitCode = 1) {
+    Write-Host "[build] $message" -ForegroundColor Red
+    exit $exitCode
+}
+
+function Invoke-DotNet([string[]]$arguments, [string]$failureMessage) {
+    & dotnet @arguments
+    if ($LASTEXITCODE -ne 0) {
+        Fail-Build $failureMessage $LASTEXITCODE
+    }
+}
 
 Write-Host "[build] Preparing build..." -ForegroundColor Cyan
 
@@ -13,17 +29,20 @@ Stop-Process -Name GxMcp.Worker -ErrorAction SilentlyContinue
 Stop-Process -Name GxMcp.Gateway -ErrorAction SilentlyContinue
 
 # Verify prerequisites
+$dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
+if (-not $dotnetCommand) {
+    Fail-Build ".NET SDK was not found in PATH. Install .NET 8 SDK before running build.ps1."
+}
+
 $dotnetVersion = dotnet --version
 Write-Host "   > Found .NET SDK: $dotnetVersion" -ForegroundColor Gray
 
 # 0.1 Restore Dependencies
 Write-Host "   > Restoring Gateway dependencies..."
-dotnet restore "src\GxMcp.Gateway\GxMcp.Gateway.csproj"
-if ($LASTEXITCODE -ne 0) { throw "Gateway restore failed." }
+Invoke-DotNet @("restore", $gatewayProject) "Gateway restore failed."
 
 Write-Host "   > Restoring Worker dependencies..."
-dotnet restore "src\GxMcp.Worker\GxMcp.Worker.csproj"
-if ($LASTEXITCODE -ne 0) { throw "Worker restore failed." }
+Invoke-DotNet @("restore", $workerProject) "Worker restore failed."
 
 # Resolve GeneXus Path
 $gxPath = "C:\Program Files (x86)\GeneXus\GeneXus18"
@@ -32,6 +51,22 @@ if (Test-Path (Join-Path $root "config.json")) {
     if ($configData.GeneXus -and $configData.GeneXus.InstallationPath) {
         $gxPath = $configData.GeneXus.InstallationPath
     }
+}
+
+if (-not (Test-Path $gatewayProject)) {
+    Fail-Build "Gateway project file was not found at $gatewayProject."
+}
+
+if (-not (Test-Path $workerProject)) {
+    Fail-Build "Worker project file was not found at $workerProject."
+}
+
+if (-not (Test-Path $gxPath)) {
+    Fail-Build "GeneXus installation path was not found: $gxPath."
+}
+
+if (-not (Test-Path (Join-Path $gxPath "Definitions"))) {
+    Fail-Build "GeneXus Definitions folder was not found under $gxPath."
 }
 
 # Also stop dotnet processes running the Gateway (since we use 'dotnet GxMcp.Gateway.dll')
@@ -59,13 +94,8 @@ Write-Host "[build] Building solutions..." -ForegroundColor Cyan
 
 # 2. Build Gateway (.NET 8)
 Write-Host "   > Building Gateway (Release)..."
-$gwProj = "src\GxMcp.Gateway\GxMcp.Gateway.csproj"
 $tempGw = Join-Path $publishDir "temp_gw"
-dotnet publish $gwProj -c Release --nologo -o $tempGw
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[build] Gateway publish failed." -ForegroundColor Red
-    exit $LASTEXITCODE
-}
+Invoke-DotNet @("publish", $gatewayProject, "-c", "Release", "--nologo", "-o", $tempGw) "Gateway publish failed."
 
 if (Test-Path $tempGw) {
     Copy-Item "$tempGw\*" "$publishDir" -Force -Recurse
@@ -73,26 +103,14 @@ if (Test-Path $tempGw) {
 }
 
 Write-Host "   > Building Gateway (Debug)..."
-dotnet build $gwProj -c Debug --nologo
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[build] Gateway debug build failed." -ForegroundColor Red
-    exit $LASTEXITCODE
-}
+Invoke-DotNet @("build", $gatewayProject, "-c", "Debug", "--nologo") "Gateway debug build failed."
 
 # 3. Build Worker (.NET Framework 4.8)
 Write-Host "   > Building Worker (Release)..."
-dotnet build "src\GxMcp.Worker\GxMcp.Worker.csproj" -c Release --nologo -p:GX_PATH="$gxPath"
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[build] Worker build failed." -ForegroundColor Red
-    exit $LASTEXITCODE
-}
+Invoke-DotNet @("build", $workerProject, "-c", "Release", "--nologo", "-p:GX_PATH=$gxPath") "Worker build failed."
 
 Write-Host "   > Building Worker (Debug)..."
-dotnet build "src\GxMcp.Worker\GxMcp.Worker.csproj" -c Debug --nologo -p:GX_PATH="$gxPath"
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[build] Worker debug build failed." -ForegroundColor Red
-    exit $LASTEXITCODE
-}
+Invoke-DotNet @("build", $workerProject, "-c", "Debug", "--nologo", "-p:GX_PATH=$gxPath") "Worker debug build failed."
 
 # 4. Copy Worker Binaries to Publish
 $workerPublishDir = Join-Path $publishDir "worker"
@@ -100,9 +118,9 @@ if (-not (Test-Path $workerPublishDir)) {
     New-Item -Path $workerPublishDir -ItemType Directory | Out-Null
 }
 
-$workerBinRelease = Join-Path "src" "GxMcp.Worker" | Join-Path -ChildPath "bin\Release"
+$workerBinRelease = Join-Path $root "src\GxMcp.Worker\bin\Release"
 if (-not (Test-Path $workerBinRelease)) {
-    $workerBinRelease = Join-Path "src" "GxMcp.Worker" | Join-Path -ChildPath "bin\x86\Release"
+    $workerBinRelease = Join-Path $root "src\GxMcp.Worker\bin\x86\Release"
 }
 
 if (Test-Path $workerBinRelease) {
