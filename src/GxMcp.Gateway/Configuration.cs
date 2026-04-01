@@ -60,7 +60,7 @@ namespace GxMcp.Gateway
                 }
             }
 
-            Program.TryWriteStderr($"[Gateway] Loading config from: {CurrentConfigPath}");
+            Program.Log($"[Gateway] Loading config from: {CurrentConfigPath}");
             var config = ParseConfig(CurrentConfigPath);
 
             SetupWatcher(CurrentConfigPath);
@@ -80,16 +80,16 @@ namespace GxMcp.Gateway
                     if (config == null) throw new Exception("Failed to parse config.json");
                     
                     if (string.IsNullOrEmpty(config.Environment?.KBPath))
-                        Program.TryWriteStderr("[Gateway] WARNING: Environment.KBPath is missing in config.json!");
+                        Program.Log("[Gateway] WARNING: Environment.KBPath is missing in config.json!");
                     else 
-                        Program.TryWriteStderr($"[Gateway] KB Path configured: {config.Environment.KBPath}");
+                        Program.Log($"[Gateway] KB Path configured: {config.Environment.KBPath}");
 
                     string? portOverride = global::System.Environment.GetEnvironmentVariable("GX_MCP_PORT");
                     if (int.TryParse(portOverride, out int httpPortOverride) && httpPortOverride > 0)
                     {
                         config.Server ??= new ServerConfig();
                         config.Server.HttpPort = httpPortOverride;
-                        Program.TryWriteStderr($"[Gateway] HTTP port overridden by GX_MCP_PORT={httpPortOverride}");
+                        Program.Log($"[Gateway] HTTP port overridden by GX_MCP_PORT={httpPortOverride}");
                     }
 
                     string? stdioOverride = global::System.Environment.GetEnvironmentVariable("GX_MCP_STDIO");
@@ -97,7 +97,7 @@ namespace GxMcp.Gateway
                     {
                         config.Server ??= new ServerConfig();
                         config.Server.McpStdio = mcpStdioOverride;
-                        Program.TryWriteStderr($"[Gateway] MCP stdio overridden by GX_MCP_STDIO={mcpStdioOverride}");
+                        Program.Log($"[Gateway] MCP stdio overridden by GX_MCP_STDIO={mcpStdioOverride}");
                     }
                         
                     return config;
@@ -120,14 +120,14 @@ namespace GxMcp.Gateway
             _watcher = new FileSystemWatcher(dir, file);
             _watcher.NotifyFilter = NotifyFilters.LastWrite;
             _watcher.Changed += (s, e) => {
-                Program.TryWriteStderr($"[Gateway] Configuration file changed: {e.FullPath}");
+                Program.Log($"[Gateway] Configuration file changed: {e.FullPath}");
                 // Add a small delay to ensure writing process has released the lock
                 Thread.Sleep(200);
                 try {
                     var newConfig = ParseConfig(path);
                     OnConfigurationChanged?.Invoke(newConfig);
                 } catch (Exception ex) {
-                    Program.TryWriteStderr($"[Gateway] Failed to reload configuration: {ex.Message}");
+                    Program.Log($"[Gateway] Failed to reload configuration: {ex.Message}");
                 }
             };
             _watcher.EnableRaisingEvents = true;

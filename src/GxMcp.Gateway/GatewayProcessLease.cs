@@ -33,6 +33,16 @@ namespace GxMcp.Gateway
 
         internal static LeaseRegistrationResult TryRegisterCurrentProcess(Configuration config)
         {
+            return TryRegisterInternal(config, false);
+        }
+
+        internal static LeaseRegistrationResult ForceRegisterCurrentProcess(Configuration config)
+        {
+            return TryRegisterInternal(config, true);
+        }
+
+        private static LeaseRegistrationResult TryRegisterInternal(Configuration config, bool force)
+        {
             string instanceKey = BuildInstanceKey(config);
             string leasePath = GetLeasePath(instanceKey);
             using var mutex = CreateMutex(instanceKey);
@@ -45,12 +55,12 @@ namespace GxMcp.Gateway
             try
             {
                 var existing = TryReadLeaseFile(leasePath);
-                if (existing != null && existing.ProcessId != Environment.ProcessId && IsLeaseActive(existing))
+                if (!force && existing != null && existing.ProcessId != Environment.ProcessId && IsLeaseActive(existing))
                 {
                     return LeaseRegistrationResult.Duplicate(instanceKey, leasePath, existing);
                 }
 
-                var portConflict = FindActiveLeaseForPort(config.Server?.HttpPort ?? 0, Environment.ProcessId, leasePath);
+                var portConflict = !force ? FindActiveLeaseForPort(config.Server?.HttpPort ?? 0, Environment.ProcessId, leasePath) : null;
                 if (portConflict != null)
                 {
                     Program.Log($"[Gateway] duplicate_instance_prevented existingPid={portConflict.ProcessId} port={portConflict.HttpPort} existingKey={portConflict.InstanceKey}");
@@ -59,7 +69,7 @@ namespace GxMcp.Gateway
 
                 if (existing != null && existing.ProcessId != Environment.ProcessId)
                 {
-                    Program.Log($"[Gateway] lease_recovered key={instanceKey} previousPid={existing.ProcessId}");
+                    Program.Log($"[Gateway] lease_recovered key={instanceKey} previousPid={existing.ProcessId} forced={force}");
                 }
 
                 DeleteLeasesOwnedByCurrentProcessExcept(leasePath);

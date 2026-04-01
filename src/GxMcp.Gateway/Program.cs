@@ -13,6 +13,9 @@ using System.Collections.Concurrent;
 using Newtonsoft.Json.Linq;
 using Microsoft.Extensions.Logging;
 using System.Threading;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Diagnostics;
 
 namespace GxMcp.Gateway
 {
@@ -37,25 +40,16 @@ namespace GxMcp.Gateway
 
         public static void TryWriteStderr(string message)
         {
-            try
-            {
-                Console.Error.WriteLine(message);
-            }
-            catch
-            {
-            }
+            Log(message);
         }
 
-        public static void TryWriteStdout(string message)
+        public static async Task TryWriteStdout(string msg)
         {
-            try
-            {
-                Console.WriteLine(message);
-                Console.Out.Flush();
-            }
-            catch
-            {
-            }
+            if (string.IsNullOrWhiteSpace(msg)) return;
+            try { 
+                await Console.Out.WriteLineAsync(msg);
+                await Console.Out.FlushAsync();
+            } catch { }
         }
 
         private static void InitializeLogging()
@@ -148,9 +142,9 @@ namespace GxMcp.Gateway
 
         public static async Task Main(string[] args)
         {
-            AppDomain.CurrentDomain.UnhandledException += (s, e) => {
+            AppDomain.CurrentDomain.UnhandledException += async (s, e) => {
                 string msg = $"[{DateTime.Now}] FATAL UNHANDLED: {e.ExceptionObject}\n";
-                TryWriteStderr(msg);
+                await TryWriteStdout(msg);
                 try { File.AppendAllText("gateway_panic.log", msg); } catch { }
             };
 
@@ -180,20 +174,38 @@ namespace GxMcp.Gateway
             };
 
             var leaseRegistration = GatewayProcessLease.TryRegisterCurrentProcess(config);
-            if (!leaseRegistration.Success)
+            bool isMaster = leaseRegistration.Success;
+
+            if (!isMaster)
             {
                 if (leaseRegistration.IsDuplicate && leaseRegistration.Lease != null)
                 {
-                    Log($"[Gateway] duplicate_instance_prevented currentPid={Environment.ProcessId} existingPid={leaseRegistration.Lease.ProcessId} key={leaseRegistration.InstanceKey}");
-                    TryWriteStderr($"[Gateway] Reusing live gateway PID {leaseRegistration.Lease.ProcessId} for key {leaseRegistration.InstanceKey}.");
+                    Log($"[Gateway] existing_master_detected currentPid={Environment.ProcessId} masterPid={leaseRegistration.Lease.ProcessId}");
+                    
+                    if (leaseRegistration.Lease.HttpPort > 0) 
+                    {
+                        bool shouldPromote = await RunMcpProxyAsync(leaseRegistration.Lease, config);
+                        if (!shouldPromote) return;
+                        
+                        Log("[Gateway] Starting promotion to Master...");
+                        var forced = GatewayProcessLease.ForceRegisterCurrentProcess(config);
+                        if (!forced.Success) {
+                            Log("[Gateway] Promotion failed: lease acquisition blocked.");
+                            return;
+                        }
+                        isMaster = true;
+                    }
+                    else 
+                    {
+                        Log($"[Gateway] Existing master (PID {leaseRegistration.Lease.ProcessId}) has no HTTP port. Reusing or exiting.");
+                        return;
+                    }
+                }
+                else 
+                {
+                    Log($"[Gateway] Registration failed: {leaseRegistration.FailureReason}");
                     return;
                 }
-
-                Log($"[Gateway] Failed to register lease. reason={leaseRegistration.FailureReason} key={leaseRegistration.InstanceKey}");
-            }
-            else
-            {
-                Log($"[Gateway] gateway_spawned pid={Environment.ProcessId} key={leaseRegistration.InstanceKey}");
             }
 
             AppDomain.CurrentDomain.UnhandledException += (s, e) => {
@@ -205,7 +217,7 @@ namespace GxMcp.Gateway
                 e.SetObserved();
             };
 
-            TryWriteStderr("=== Gateway starting (Stdio Mode) ===");
+            Log("=== Gateway starting (Stdio Mode) ===");
             
             _httpSessions = new HttpSessionRegistry(TimeSpan.FromMinutes(config.Server?.SessionIdleTimeoutMinutes ?? 10));
             
@@ -232,15 +244,23 @@ namespace GxMcp.Gateway
             {
                 Log($"[Gateway] Starting HTTP server on port {config.Server.HttpPort}...");
                 _ = Task.Run(async () => {
-                    try { 
-                        await StartHttpServer(config); 
-                        Log("[Gateway] HTTP server bound and active.");
-                        while(true) {
-                            await Task.Delay(30000);
-                            Log("[Gateway] Heartbeat: HTTP server still active.");
+                    int retryCount = 0;
+                    while (retryCount < 5) {
+                        try { 
+                            await StartHttpServer(config); 
+                            Log("[Gateway] HTTP server bound and active.");
+                            while(true) {
+                                await Task.Delay(30000);
+                                Log("[Gateway] Heartbeat: HTTP server still active.");
+                            }
+                        }
+                        catch (Exception exHttp) { 
+                            Log($"[HTTP] Bind failure (5000): {exHttp.Message}. Attempting port recovery ({retryCount + 1}/5)...");
+                            TryKillProcessOnPort(config.Server?.HttpPort ?? 5000);
+                            retryCount++;
+                            await Task.Delay(1000);
                         }
                     }
-                    catch (Exception exHttp) { Log($"[HTTP] Fatal error: {exHttp.Message}"); }
                 });
             }
 
@@ -290,13 +310,20 @@ namespace GxMcp.Gateway
                         break;
                     }
 
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    if (!line.Trim().StartsWith("{")) {
+                        Log($"[Protocol] Ignored non-JSON noise on stdin: {line}");
+                        continue;
+                    }
+
                     try
                     {
                         var request = JObject.Parse(line);
+                        string requestId = request["id"]?.ToString() ?? "unknown";
                         var response = await ProcessMcpRequest(request);
                         if (response != null)
                         {
-                            TryWriteStdout(response.ToString(Formatting.None));
+                            await TryWriteStdout(response.ToString(Formatting.None));
                         }
                     }
                     catch (Exception ex)
@@ -309,6 +336,149 @@ namespace GxMcp.Gateway
             {
                 Log("[Gateway] MCP stdio disabled. Serving HTTP only.");
                 await Task.Delay(-1);
+            }
+        }
+
+        private static async Task<bool> RunMcpProxyAsync(GatewayLeaseRecord master, Configuration config)
+        {
+            string baseUrl = $"http://localhost:{master.HttpPort}/mcp";
+            using var httpClient = new HttpClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(30); // Do not let proxy hang forever if master is dead
+            httpClient.DefaultRequestHeaders.Add("MCP-Protocol-Version", McpRouter.SupportedProtocolVersion);
+            
+            string? sessionId = null;
+            var reader = Console.In;
+            var cts = new CancellationTokenSource();
+            var ct = cts.Token;
+
+            Log($"[Proxy] Proxy mode active (Master PID {master.ProcessId} on port {master.HttpPort}).");
+
+            while (true)
+            {
+                string? line = null;
+                try { line = await reader.ReadLineAsync(ct); } catch { break; }
+                if (line == null) break;
+
+                int retryCount = 0;
+                bool success = false;
+                while (retryCount < 3 && !success)
+                {
+                    try
+                    {
+                        string body = line;
+                        var request = JObject.Parse(body);
+                        string requestId = request["id"]?.ToString() ?? "unknown";
+                        var content = new StringContent(body, Encoding.UTF8, "application/json");
+                        
+                        if (sessionId != null) content.Headers.Add("MCP-Session-Id", sessionId);
+
+                        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, baseUrl) { Content = content };
+                        if (sessionId != null) requestMessage.Headers.Add("MCP-Session-Id", sessionId);
+
+                        var response = await httpClient.SendAsync(requestMessage, ct);
+                        
+                        if (sessionId == null && response.Headers.TryGetValues("MCP-Session-Id", out var values))
+                        {
+                            sessionId = values.FirstOrDefault();
+                            if (sessionId != null)
+                            {
+                                Log($"[Proxy] Handshake complete. ID: {sessionId}");
+                                // Wait a moment for master to stabilize before streaming notifications
+                                await Task.Delay(2000);
+                                _ = Task.Run(() => RunProxySseForwarderAsync(master.HttpPort, sessionId, cts.Token));
+                            }
+                        }
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            string responseBody = await response.Content.ReadAsStringAsync(ct);
+                            if (string.IsNullOrWhiteSpace(responseBody))
+                            {
+                                Log($"[Proxy] Master returned empty response for command {requestId}. Retrying...");
+                                throw new Exception("Empty response from master");
+                            }
+
+                            if (!responseBody.Trim().StartsWith("{"))
+                            {
+                                Log($"[Proxy] Master returned non-JSON response: {responseBody}");
+                                throw new Exception("Invalid response from master");
+                            }
+
+                            await TryWriteStdout(responseBody);
+                            success = true;
+                        }
+                        else
+                        {
+                            string remoteError = await response.Content.ReadAsStringAsync(ct);
+                            Log($"[Proxy] Master status {response.StatusCode}: {remoteError}");
+                            var id = request["id"];
+                            if (id != null)
+                            {
+                                var errorResponse = new JObject
+                                {
+                                    ["jsonrpc"] = "2.0",
+                                    ["id"] = id.DeepClone(),
+                                    ["error"] = new JObject { ["code"] = (int)response.StatusCode, ["message"] = $"Master error: {response.StatusCode}" }
+                                };
+                                await TryWriteStdout(errorResponse.ToString(Formatting.None));
+                            }
+                            success = true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        retryCount++;
+                        Log($"[Proxy] Connection failed to Master ({retryCount}/3): {ex.Message}");
+                        if (retryCount >= 3)
+                        {
+                            Log("[Proxy] Master unresponsive. Triggering promotion...");
+                            // We return true but we need to keep the last line for the Master to process!
+                            // To keep it simple, we let Main know to promote. 
+                            // The IDE will likely retry the last command or we can buffer it.
+                            return true; 
+                        }
+                        await Task.Delay(1000);
+                    }
+                }
+            }
+            cts.Cancel();
+            Log("[Proxy] Stdio closed.");
+            return false;
+        }
+
+        private static async Task RunProxySseForwarderAsync(int port, string sessionId, CancellationToken ct)
+        {
+            string url = $"http://localhost:{port}/mcp";
+            using var client = new HttpClient();
+            client.Timeout = Timeout.InfiniteTimeSpan;
+            client.DefaultRequestHeaders.Add("MCP-Session-Id", sessionId);
+            client.DefaultRequestHeaders.Add("MCP-Protocol-Version", McpRouter.SupportedProtocolVersion);
+
+            try
+            {
+                Log("[Proxy-SSE] Notification link active.");
+                using var stream = await client.GetStreamAsync(url, ct);
+                using var reader = new StreamReader(stream);
+                while (!ct.IsCancellationRequested)
+                {
+                    string? line = await reader.ReadLineAsync(ct);
+                    if (line == null) break;
+
+                    if (line.StartsWith("data: "))
+                    {
+                        string data = line.Substring(6).Trim();
+                        // SSE message events (notifications) usually come in formatted as data blocks
+                        if (data.StartsWith("{") && data.EndsWith("}"))
+                        {
+                            await TryWriteStdout(data);
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Log($"[Proxy-SSE] Background channel error: {ex.Message}");
             }
         }
 
@@ -714,6 +884,7 @@ namespace GxMcp.Gateway
                 {
                     // Fallback to ensuring valid JSON structure when heavily nested Strings overfill
                     return JToken.FromObject(new { 
+                        jsonrpc = "2.0",
                         error = "Response exceeded 80k token budget and could not be safely parsed. Try lower limits or pagination.", 
                         isTruncated = true 
                     });
@@ -1001,6 +1172,41 @@ namespace GxMcp.Gateway
             });
 
             return app.RunAsync();
+        }
+
+        private static void TryKillProcessOnPort(int port)
+        {
+            try {
+               Log($"[PortRecovery] Attempting to find process on port {port}...");
+               var process = new Process();
+               process.StartInfo.FileName = "netstat";
+               process.StartInfo.Arguments = "-ano";
+               process.StartInfo.RedirectStandardOutput = true;
+               process.StartInfo.UseShellExecute = false;
+               process.StartInfo.CreateNoWindow = true;
+               process.Start();
+               string output = process.StandardOutput.ReadToEnd();
+               process.WaitForExit();
+
+               var lines = output.Split('\n');
+               foreach (var line in lines)
+               {
+                   if (line.Contains($":{port}") && line.Contains("LISTENING"))
+                   {
+                       var parts = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                       var pidStr = parts.Last().Trim();
+                       if (int.TryParse(pidStr, out int pid) && pid != Environment.ProcessId)
+                       {
+                           Log($"[PortRecovery] Found zombie process {pid} on port {port}. Killing it...");
+                           try {
+                               var zombie = Process.GetProcessById(pid);
+                               zombie.Kill(true);
+                               zombie.WaitForExit(3000);
+                           } catch { } // Process might already be gone
+                       }
+                   }
+               }
+            } catch (Exception ex) { Log($"[PortRecovery] Error: {ex.Message}"); }
         }
     }
 }

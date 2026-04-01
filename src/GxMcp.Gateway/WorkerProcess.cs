@@ -68,7 +68,7 @@ namespace GxMcp.Gateway
 
                         if ((DateTime.UtcNow - _lastResponse).TotalSeconds > 45)
                         {
-                            Program.TryWriteStderr($"[Gateway] Warning: Worker unresponsive for 45s. Last activity: {_lastOperationInfo}. It may be processing a heavy load or a long KB operation.");
+                            Program.Log($"[Gateway] Warning: Worker unresponsive for 45s. Last activity: {_lastOperationInfo}. It may be processing a heavy load or a long KB operation.");
                         }
                         else
                         {
@@ -474,7 +474,7 @@ namespace GxMcp.Gateway
                         }
                         else
                         {
-                            Program.TryWriteStderr($"[Worker] {e.Data}");
+                            Program.Log($"[Worker] {e.Data}");
                         }
                     }
                 };
@@ -484,7 +484,7 @@ namespace GxMcp.Gateway
                     if (!string.IsNullOrEmpty(e.Data))
                     {
                         _lastResponse = DateTime.UtcNow;
-                        Program.TryWriteStderr($"[Worker-Err] {e.Data}");
+                        Program.Log($"[Worker-Err] {e.Data}");
                     }
                 };
 
