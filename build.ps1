@@ -12,6 +12,19 @@ Write-Host "   > Stopping running processes..."
 Stop-Process -Name GxMcp.Worker -ErrorAction SilentlyContinue
 Stop-Process -Name GxMcp.Gateway -ErrorAction SilentlyContinue
 
+# Verify prerequisites
+$dotnetVersion = dotnet --version
+Write-Host "   > Found .NET SDK: $dotnetVersion" -ForegroundColor Gray
+
+# 0.1 Restore Dependencies
+Write-Host "   > Restoring Gateway dependencies..."
+dotnet restore "src\GxMcp.Gateway\GxMcp.Gateway.csproj"
+if ($LASTEXITCODE -ne 0) { throw "Gateway restore failed." }
+
+Write-Host "   > Restoring Worker dependencies..."
+dotnet restore "src\GxMcp.Worker\GxMcp.Worker.csproj"
+if ($LASTEXITCODE -ne 0) { throw "Worker restore failed." }
+
 # Resolve GeneXus Path
 $gxPath = "C:\Program Files (x86)\GeneXus\GeneXus18"
 if (Test-Path (Join-Path $root "config.json")) {

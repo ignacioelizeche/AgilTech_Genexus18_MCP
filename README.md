@@ -23,17 +23,32 @@ The extension uses `/mcp` directly. The legacy `/api/command` path has been remo
 
 ## Installation
 
-### Fast path
+### One-Click (Recommended)
 
 1. Clone the repository.
-2. Run `.\install.ps1` in PowerShell.
-3. If your `config.json` values are invalid, the installer will prompt for the GeneXus installation path and the KB path.
-4. Restart Claude/Codex if they were already open.
-5. Open your KB folder in VS Code.
+2. Run `.\setup.bat` (Windows).
+   - This will check prerequisites, build all components, and configure your local tools (Claude, Codex, Antigravity, and Cursor/Cline when detected).
+3. If GeneXus or your KB are not auto-detected, follow the prompts to provide the paths.
+4. Restart your AI tools/IDE to pick up the new MCP server.
+
+### Agent-Led Installation (for AI Assistants)
+
+If you are using an AI agent (like Antigravity, Cline, or Roo), copy and paste the following prompt to have it handle everything for you:
+
+> [!TIP]
+> **Copy-Paste to your Agent:**
+> "Install the GeneXus MCP server in this repository.
+> 1. Auto-detect the GeneXus 18 installation path and the local KB path.
+> 2. Run `.\install.ps1` to build and register the server.
+> 3. Verify the `config.json` is valid.
+> 4. Update your own MCP configuration to include the 'genexus' server using the generated `start_mcp.bat`."
+
+### Manual path
 
 Notes:
 
-- The installer updates `config.json`, builds the gateway/worker, packages `src/nexus-ide/nexus-ide.vsix`, configures Claude Desktop, and configures Codex.
+- The installer updates `config.json`, builds the gateway/worker, packages `src/nexus-ide/nexus-ide.vsix`, configures Claude Desktop and Codex, and updates Antigravity plus Cursor/Cline settings when those clients are present.
+- `setup.bat` is a thin bootstrap wrapper that launches `install.ps1` through PowerShell with `-ExecutionPolicy Bypass`.
 - Automatic extension installation works with the editor CLIs found in `PATH` among `code`, `code-insiders`, `cursor`, `codium`, and `antigravity`. If none are present, install the generated `.vsix` manually.
 - The desktop launcher at `publish/start_mcp.bat` exports `GX_CONFIG_PATH` and reuses the current repository gateway build when available, so local MCP clients and the extension share the repository-root `config.json`.
 - `build.ps1` now refreshes both the publish/runtime artifacts and the debug-consumed artifacts in one pass, so `F5` and external MCP clients stop drifting onto different gateway/worker builds.
