@@ -1,5 +1,6 @@
 using Newtonsoft.Json.Linq;
 using Xunit;
+using System;
 
 namespace GxMcp.Gateway.Tests
 {
@@ -240,6 +241,58 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
+        public void ConvertToolCall_ShouldMapOpenKbTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_open_kb","arguments":{"path":"C:\\KBs\\SampleKB"}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("KB", json["module"]?.ToString());
+            Assert.Equal("Open", json["action"]?.ToString());
+            Assert.Equal(@"C:\KBs\SampleKB", json["target"]?.ToString());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapExportObjectTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_export_object","arguments":{"name":"InvoiceHelper","outputPath":"exports\\InvoiceHelper.txt","part":"Rules","type":"Procedure","overwrite":true}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Object", json["module"]?.ToString());
+            Assert.Equal("ExportText", json["action"]?.ToString());
+            Assert.Equal("InvoiceHelper", json["target"]?.ToString());
+            Assert.Equal(@"exports\InvoiceHelper.txt", json["outputPath"]?.ToString());
+            Assert.Equal("Rules", json["part"]?.ToString());
+            Assert.Equal("Procedure", json["type"]?.ToString());
+            Assert.True(json["overwrite"]?.Value<bool>() == true);
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapImportObjectTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_import_object","arguments":{"name":"InvoiceHelper","inputPath":"imports\\InvoiceHelper.txt","part":"Source","type":"Procedure"}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Object", json["module"]?.ToString());
+            Assert.Equal("ImportText", json["action"]?.ToString());
+            Assert.Equal("InvoiceHelper", json["target"]?.ToString());
+            Assert.Equal(@"imports\InvoiceHelper.txt", json["inputPath"]?.ToString());
+            Assert.Equal("Source", json["part"]?.ToString());
+            Assert.Equal("Procedure", json["type"]?.ToString());
+        }
+
+        [Fact]
         public void ConvertToolCall_ShouldMapRefactorRenameVariableTool()
         {
             var request = JObject.Parse(
@@ -350,6 +403,47 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal("get_source", json["action"]?.ToString());
             Assert.Equal("DebugGravar", json["target"]?.ToString());
             Assert.Equal(102, json["versionId"]?.Value<int>());
+        }
+
+        [Fact]
+        public void GatewayProcessLease_ShouldBuildStableInstanceKey()
+        {
+            var config = new Configuration
+            {
+                Server = new ServerConfig { HttpPort = 5000 },
+                GeneXus = new GeneXusConfig { InstallationPath = @"C:\GeneXus\GX18" },
+                Environment = new EnvironmentConfig { KBPath = @"C:\KBs\Sample", GX_SHADOW_PATH = @"C:\KBs\Sample\.gx_mirror" }
+            };
+
+            var key = GatewayProcessLease.BuildInstanceKey(config);
+
+            Assert.Equal("port=5000|kb=c:\\kbs\\sample|program=c:\\genexus\\gx18|shadow=c:\\kbs\\sample\\.gx_mirror", key);
+        }
+
+        [Fact]
+        public void GatewayProcessLease_ShouldMarkFreshCurrentProcessLeaseAsActive()
+        {
+            var lease = new GatewayLeaseRecord
+            {
+                InstanceKey = "test",
+                ProcessId = Environment.ProcessId,
+                UpdatedUtc = DateTime.UtcNow
+            };
+
+            Assert.True(GatewayProcessLease.IsLeaseActive(lease));
+        }
+
+        [Fact]
+        public void GatewayProcessLease_ShouldRejectStaleLease()
+        {
+            var lease = new GatewayLeaseRecord
+            {
+                InstanceKey = "test",
+                ProcessId = Environment.ProcessId,
+                UpdatedUtc = DateTime.UtcNow - GatewayProcessLease.LeaseStaleAfter - TimeSpan.FromSeconds(1)
+            };
+
+            Assert.False(GatewayProcessLease.IsLeaseActive(lease));
         }
     }
 }

@@ -18,7 +18,7 @@ The extension talks to the local GeneXus MCP gateway at `/mcp`.
 
 Core flow:
 
-1. start or reuse the local gateway
+1. start or reuse the local gateway lease for the current `port + KB + installation + shadow` identity
 2. initialize an MCP session
 3. discover tools/resources/prompts
 4. drive the virtual filesystem and editor providers through MCP
@@ -35,17 +35,19 @@ If the editor CLI is not available in `PATH`, install the generated VSIX manuall
 
 `F5` runs `Nexus IDE: Prepare Debug`, which:
 
-1. cleans stale MCP processes
+1. validates the local gateway lease for the active runtime identity
 2. builds the worker, gateway, and extension
 3. runs a short bootstrap task that starts a detached debug gateway wrapper on the same HTTP port defined in the repository root `config.json`
 4. launches the extension host, which reuses that gateway instead of spawning a second backend inside the host
 
 The bootstrap task only releases the debugger after the worker log reaches `Worker SDK ready.`.
 The long-lived gateway is owned by `src/nexus-ide/debug-gateway-wrapper.ps1`, which is launched outside the VS Code task job so the backend survives the end of the prelaunch step.
-If a ready gateway is already listening, the extension reuses it even when `genexus.autoStartBackend` is disabled.
+If a ready leased gateway is already listening, the extension reuses it even when `genexus.autoStartBackend` is disabled.
 If the backend drops during reindex, materialization, or file hydration, the extension recovers it by invoking the same `src/nexus-ide/start-debug-gateway.ps1` bootstrap path instead of using a separate in-host launcher.
 Each recovery rotates `gateway_debug.log` and `worker_debug.log` into `.prev.log` instead of truncating them, so the previous crash trail is preserved.
 `F5` now runs the repository `build.ps1` before launching, so the debug host, `publish/start_mcp.bat`, and the extension backend fallback all receive the same freshly built gateway/worker artifacts.
+
+The gateway stays warm by default. The worker is lazy and exits after `Server.WorkerIdleTimeoutMinutes` of inactivity, so a healthy gateway no longer implies a permanently resident worker process.
 
 ## Main Commands
 
@@ -70,6 +72,7 @@ The canonical runtime configuration is the repository root [`config.json`](../..
 
 - `F5` debug and extension runtime pass `GX_CONFIG_PATH` to the gateway so debug, packaged backend, and local scripts read the same file
 - the HTTP port defaults to `Server.HttpPort` from the canonical root `config.json`; `genexus.mcpPort` is only an explicit override
+- `Server.WorkerIdleTimeoutMinutes` controls how long the gateway keeps an idle worker alive before shutting it down and recreating it on demand
 - stdio mode remains a runtime override (`GX_MCP_STDIO`), not an edit to copied build artifacts
 - build output copies of `config.json` remain fallback artifacts only
 

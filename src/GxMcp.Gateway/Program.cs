@@ -12,6 +12,7 @@ using Newtonsoft.Json;
 using System.Collections.Concurrent;
 using Newtonsoft.Json.Linq;
 using Microsoft.Extensions.Logging;
+using System.Threading;
 
 namespace GxMcp.Gateway
 {
@@ -32,6 +33,7 @@ namespace GxMcp.Gateway
         };
 
         private static readonly object _logLock = new object();
+        private static Configuration? _activeConfig;
 
         public static void TryWriteStderr(string message)
         {
@@ -78,6 +80,11 @@ namespace GxMcp.Gateway
             {
                 while (await timer.WaitForNextTickAsync(cancellationToken))
                 {
+                    if (_activeConfig != null)
+                    {
+                        GatewayProcessLease.RefreshCurrentProcess(_activeConfig);
+                    }
+
                     int removed = _httpSessions.CleanupExpired();
                     if (removed > 0)
                     {
@@ -162,7 +169,32 @@ namespace GxMcp.Gateway
 
             InitializeLogging();
             var config = Configuration.Load();
+            _activeConfig = config;
             Log("[Gateway] Startup orphan-kill disabled. Existing gateway reuse is handled by the extension client.");
+            AppDomain.CurrentDomain.ProcessExit += (_, __) =>
+            {
+                if (_activeConfig != null)
+                {
+                    GatewayProcessLease.ReleaseCurrentProcess(_activeConfig);
+                }
+            };
+
+            var leaseRegistration = GatewayProcessLease.TryRegisterCurrentProcess(config);
+            if (!leaseRegistration.Success)
+            {
+                if (leaseRegistration.IsDuplicate && leaseRegistration.Lease != null)
+                {
+                    Log($"[Gateway] duplicate_instance_prevented currentPid={Environment.ProcessId} existingPid={leaseRegistration.Lease.ProcessId} key={leaseRegistration.InstanceKey}");
+                    TryWriteStderr($"[Gateway] Reusing live gateway PID {leaseRegistration.Lease.ProcessId} for key {leaseRegistration.InstanceKey}.");
+                    return;
+                }
+
+                Log($"[Gateway] Failed to register lease. reason={leaseRegistration.FailureReason} key={leaseRegistration.InstanceKey}");
+            }
+            else
+            {
+                Log($"[Gateway] gateway_spawned pid={Environment.ProcessId} key={leaseRegistration.InstanceKey}");
+            }
 
             AppDomain.CurrentDomain.UnhandledException += (s, e) => {
                 Log("FATAL UNHANDLED EXCEPTION: " + (e.ExceptionObject as Exception)?.ToString());
@@ -180,9 +212,14 @@ namespace GxMcp.Gateway
             // Subscribing to Configuration Changes
             Configuration.OnConfigurationChanged += (newConfig) => {
                 if (newConfig.Environment?.KBPath != config.Environment?.KBPath || 
-                    newConfig.GeneXus?.InstallationPath != config.GeneXus?.InstallationPath) {
+                    newConfig.GeneXus?.InstallationPath != config.GeneXus?.InstallationPath ||
+                    newConfig.Environment?.GX_SHADOW_PATH != config.Environment?.GX_SHADOW_PATH ||
+                    newConfig.Server?.HttpPort != config.Server?.HttpPort ||
+                    newConfig.Server?.WorkerIdleTimeoutMinutes != config.Server?.WorkerIdleTimeoutMinutes) {
                     Log($"[Gateway] Core configuration changed! Restarting Worker process...");
                     config = newConfig; // Update reference
+                    _activeConfig = config;
+                    GatewayProcessLease.RefreshCurrentProcess(config);
                     RestartWorker(config);
                     BroadcastResourcesListChanged("core_configuration_changed");
                 } else {
@@ -208,9 +245,9 @@ namespace GxMcp.Gateway
             }
 
             // 2. Start Worker in background
-            Log("[Gateway] Initializing Worker...");
+            Log("[Gateway] Initializing Worker lifecycle...");
             StartWorker(config);
-            Log("[Gateway] Worker started.");
+            Log("[Gateway] Worker lifecycle ready.");
 
             // 3. Subscribing to KB changes for Semantic Cache Invalidation
             if (!string.IsNullOrEmpty(config.Environment?.KBPath))
@@ -294,7 +331,6 @@ namespace GxMcp.Gateway
                     }
                 }
             };
-            _worker.Start();
         }
 
         private static void RestartWorker(Configuration config)
@@ -481,7 +517,43 @@ namespace GxMcp.Gateway
                     }
                 }
 
-                var rawWorkerCmd = McpRouter.ConvertToolCall(request);
+                object? rawWorkerCmd = null;
+                if (string.Equals(toolName, "genexus_open_kb", StringComparison.OrdinalIgnoreCase))
+                {
+                    rawWorkerCmd = new
+                    {
+                        module = "KB",
+                        action = "Open",
+                        target = args?["path"]?.ToString()
+                    };
+                }
+                else if (string.Equals(toolName, "genexus_export_object", StringComparison.OrdinalIgnoreCase))
+                {
+                    rawWorkerCmd = new
+                    {
+                        module = "Object",
+                        action = "ExportText",
+                        target = args?["name"]?.ToString(),
+                        path = args?["outputPath"]?.ToString(),
+                        part = args?["part"]?.ToString() ?? "Source",
+                        type = args?["type"]?.ToString(),
+                        overwrite = args?["overwrite"]?.ToObject<bool?>() ?? false
+                    };
+                }
+                else if (string.Equals(toolName, "genexus_import_object", StringComparison.OrdinalIgnoreCase))
+                {
+                    rawWorkerCmd = new
+                    {
+                        module = "Object",
+                        action = "ImportText",
+                        target = args?["name"]?.ToString(),
+                        path = args?["inputPath"]?.ToString(),
+                        part = args?["part"]?.ToString() ?? "Source",
+                        type = args?["type"]?.ToString()
+                    };
+                }
+
+                rawWorkerCmd ??= McpRouter.ConvertToolCall(request);
                 var workerCmd = rawWorkerCmd != null ? JObject.FromObject(rawWorkerCmd) : null;
                 if (workerCmd != null)
                 {
@@ -671,6 +743,12 @@ namespace GxMcp.Gateway
         private static bool IsMutatingTool(string toolName, JObject? args)
         {
             if (string.IsNullOrWhiteSpace(toolName)) return false;
+
+            if (string.Equals(toolName, "genexus_open_kb", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(toolName, "genexus_import_object", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
 
             if (toolName.Contains("write", StringComparison.OrdinalIgnoreCase) ||
                 toolName.Contains("edit", StringComparison.OrdinalIgnoreCase) ||

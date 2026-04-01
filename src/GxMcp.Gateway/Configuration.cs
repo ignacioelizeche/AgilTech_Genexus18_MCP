@@ -147,6 +147,7 @@ namespace GxMcp.Gateway
         public string BindAddress { get; set; } = "127.0.0.1";
         public List<string> AllowedOrigins { get; set; } = new List<string>();
         public int SessionIdleTimeoutMinutes { get; set; } = 10;
+        public int WorkerIdleTimeoutMinutes { get; set; } = 5;
     }
 
     public class LoggingConfig

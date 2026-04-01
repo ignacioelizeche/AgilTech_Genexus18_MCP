@@ -37,6 +37,8 @@ Notes:
 - Automatic extension installation works with the editor CLIs found in `PATH` among `code`, `code-insiders`, `cursor`, `codium`, and `antigravity`. If none are present, install the generated `.vsix` manually.
 - The desktop launcher at `publish/start_mcp.bat` exports `GX_CONFIG_PATH` and reuses the current repository gateway build when available, so local MCP clients and the extension share the repository-root `config.json`.
 - `build.ps1` now refreshes both the publish/runtime artifacts and the debug-consumed artifacts in one pass, so `F5` and external MCP clients stop drifting onto different gateway/worker builds.
+- The gateway now registers a local process lease keyed by `HttpPort + KBPath + InstallationPath + ShadowPath`, so duplicate launches can reuse a healthy live gateway instead of spawning another one.
+- The worker now starts lazily on the first real command and shuts down automatically after the configured idle timeout, which prevents idle `GxMcp.Worker.exe` instances from lingering and locking the build output.
 
 ### Development build
 
@@ -54,7 +56,8 @@ Edit `config.json`:
     "HttpPort": 5000,
     "BindAddress": "127.0.0.1",
     "AllowedOrigins": [],
-    "SessionIdleTimeoutMinutes": 10
+    "SessionIdleTimeoutMinutes": 10,
+    "WorkerIdleTimeoutMinutes": 5
   },
   "GeneXus": {
     "InstallationPath": "C:\\Program Files (x86)\\GeneXus\\GeneXus18",
@@ -85,6 +88,12 @@ HTTP MCP rules:
 
 The gateway is MCP-only on HTTP. Use `/mcp`.
 
+## Process Lifecycle
+
+- Gateway reuse is controlled by a local lease under `%LOCALAPPDATA%\\GenexusMCP\\gateway-leases`.
+- The launcher validates the lease identity and only removes stale or dead instances for that exact identity instead of killing every gateway/worker process.
+- The gateway stays resident by default; the worker is started on demand and is stopped after `Server.WorkerIdleTimeoutMinutes` of inactivity when there are no queued or in-flight requests.
+
 ## Tool Surface
 
 See `GEMINI.md` for guidance. The main MCP tools are:
@@ -96,6 +105,7 @@ See `GEMINI.md` for guidance. The main MCP tools are:
   - `genexus_batch_read`
 - `genexus_edit`
 - `genexus_batch_edit`
+- `genexus_open_kb`
 - `genexus_inspect`
 - `genexus_analyze`
 - `genexus_inject_context`
@@ -103,8 +113,13 @@ See `GEMINI.md` for guidance. The main MCP tools are:
 - `genexus_get_sql`
 - `genexus_test`
 - `genexus_create_object`
+- `genexus_export_object`
+- `genexus_import_object`
 - `genexus_refactor`
 - `genexus_add_variable`
+- `genexus_explain_code`
+- `genexus_summarize`
+- `genexus_forge`
 - `genexus_format`
 - `genexus_properties`
 - `genexus_asset`
@@ -116,6 +131,8 @@ See `GEMINI.md` for guidance. The main MCP tools are:
 
 `genexus_read` and `genexus_edit` also support XML metadata parts such as `Layout`, `WebForm`, and `PatternInstance`. For WorkWithPlus-owned panels, `PatternInstance` resolves through the authoritative `WorkWithPlus{Name}` object instead of the parent WebPanel preview.
 
+`genexus_open_kb` switches the active Knowledge Base for the current worker session. `genexus_export_object` writes an object part to a text file, and `genexus_import_object` reads a text file and applies it to the requested object part through the same write path used by `genexus_edit`.
+
 ## Architecture
 
 ```mermaid
@@ -124,6 +141,14 @@ graph LR
     B -->|JSON-RPC over process boundary| C[Worker .NET Framework 4.8]
     C -->|Native SDK| D[GeneXus KB]
 ```
+
+## Runtime Lifecycle
+
+- The gateway now writes a local lease keyed by `HttpPort + KBPath + InstallationPath + GX_SHADOW_PATH` and exits early when an identical live instance already owns that key.
+- Nexus-IDE reuses the leased gateway instead of relying only on a port probe, and startup cleanup is now selective to the leased PID instead of broad `taskkill` sweeps.
+- The worker is lazy: the gateway creates the worker on the first real command instead of at gateway boot.
+- The worker shuts down automatically after `Server.WorkerIdleTimeoutMinutes` of inactivity, then starts again on the next command.
+- Gateway lease files live under `%LOCALAPPDATA%\\GenexusMCP\\gateway-leases`.
 
 ## Current State
 

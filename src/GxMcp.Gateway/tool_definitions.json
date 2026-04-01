@@ -386,6 +386,22 @@
     }
   },
   {
+    "name": "genexus_open_kb",
+    "description": "Opens an existing GeneXus Knowledge Base for the active MCP session.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Absolute path to the GeneXus Knowledge Base directory."
+        }
+      },
+      "required": [
+        "path"
+      ]
+    }
+  },
+  {
     "name": "genexus_forge",
     "description": "Generation of new code and structures from templates or translations.",
     "inputSchema": {
@@ -468,6 +484,71 @@
       "required": [
         "type",
         "name"
+      ]
+    }
+  },
+  {
+    "name": "genexus_export_object",
+    "description": "Exports a GeneXus object part to a text file on disk.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Object name."
+        },
+        "outputPath": {
+          "type": "string",
+          "description": "Absolute or relative output file path."
+        },
+        "part": {
+          "type": "string",
+          "description": "Part to export, such as Source, Rules, Events, Structure, Layout, WebForm, or PatternInstance.",
+          "default": "Source"
+        },
+        "type": {
+          "type": "string",
+          "description": "Optional object type to resolve name collisions."
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "Whether to overwrite an existing file.",
+          "default": false
+        }
+      },
+      "required": [
+        "name",
+        "outputPath"
+      ]
+    }
+  },
+  {
+    "name": "genexus_import_object",
+    "description": "Imports a text file from disk into a GeneXus object part.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Object name."
+        },
+        "inputPath": {
+          "type": "string",
+          "description": "Absolute or relative input file path."
+        },
+        "part": {
+          "type": "string",
+          "description": "Part to import into, such as Source, Rules, Events, Structure, Layout, WebForm, or PatternInstance.",
+          "default": "Source"
+        },
+        "type": {
+          "type": "string",
+          "description": "Optional object type to resolve name collisions."
+        }
+      },
+      "required": [
+        "name",
+        "inputPath"
       ]
     }
   },

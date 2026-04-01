@@ -91,6 +91,7 @@ namespace GxMcp.Worker.Services
             _indexCacheService.SetBuildService(_buildService);
             _validationService.SetObjectService(_objectService);
             _writeService.SetValidationService(_validationService);
+            _objectService.SetWriteService(_writeService);
             _objectService.SetDataInsightService(_dataInsightService);
             _objectService.SetUIService(_uiService);
             _objectService.SetPatternAnalysisService(_patternAnalysisService);
@@ -149,7 +150,23 @@ namespace GxMcp.Worker.Services
                 {
                     case "ping": return "{\"status\":\"pong\"}";
                     case "kb":
-                        if (action == "Open") return _kbService.OpenKB(target);
+                        if (action == "Open")
+                        {
+                            string result = _kbService.OpenKB(target);
+                            try
+                            {
+                                var openResult = JObject.Parse(result);
+                                if (string.Equals(openResult["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    Environment.SetEnvironmentVariable("GX_KB_PATH", target);
+                                }
+                            }
+                            catch
+                            {
+                            }
+
+                            return result;
+                        }
                         if (action == "BulkIndex") return _kbService.BulkIndex();
                         if (action == "SelfTest") return _selfTestService.RunAllTests();
                         if (action == "GetIndexStatus") return _kbService.GetIndexStatus();
@@ -187,6 +204,16 @@ namespace GxMcp.Worker.Services
                     case "object":
                         if (action == "Read") return _objectService.ReadObject(target, args?["type"]?.ToString());
                         if (action == "Create") return _objectService.CreateObject(args?["type"]?.ToString(), target);
+                        if (action == "ExportText")
+                        {
+                            return _objectService.ExportObjectToText(
+                                target,
+                                args?["outputPath"]?.ToString() ?? args?["path"]?.ToString(),
+                                args?["part"]?.ToString(),
+                                args?["type"]?.ToString(),
+                                args?["overwrite"]?.ToObject<bool?>() ?? false);
+                        }
+                        if (action == "ImportText") return _objectService.ImportObjectFromText(target, args?["inputPath"]?.ToString() ?? args?["path"]?.ToString(), args?["part"]?.ToString(), args?["type"]?.ToString());
                         break;
                     case "write":
                         if (action == "AddVariable")

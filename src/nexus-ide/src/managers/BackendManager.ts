@@ -3,7 +3,15 @@ import * as path from "path";
 import * as fs from "fs";
 import * as cp from "child_process";
 import { GxFileSystemProvider } from "../gxFileSystem";
-import { readJsonFile, resolveGatewayConfigPath, resolveGatewayHttpPort } from "../utils/GatewayConfig";
+import {
+  buildGatewayIdentity,
+  GATEWAY_LEASE_STALE_AFTER_MS,
+  GatewayIdentity,
+  readGatewayLease,
+  readJsonFile,
+  resolveGatewayConfigPath,
+  resolveGatewayHttpPort,
+} from "../utils/GatewayConfig";
 import { 
   CONFIG_SECTION, 
   CONFIG_AUTO_START, 
@@ -34,31 +42,11 @@ export class BackendManager {
   async start(provider: GxFileSystemProvider, forceStart = false): Promise<boolean> {
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
     const developmentBackendActive = this.hasDevelopmentGatewayAvailable();
-
-    if (await this.isGatewayAlreadyReady(provider)) {
-      console.log("[BackendManager] Reusing already running MCP Gateway.");
-      this.trace(
-        `Reusing already running MCP Gateway on port ${this.getEffectivePort(config)}.`,
-      );
-      this.ownsBackendProcess = false;
-      this.healthMonitor = new BackendHealthMonitor(provider, this.context, this);
-      this.healthMonitor.start();
-      return true;
-    }
-
     const autoStart = config.get(CONFIG_AUTO_START);
-    if (!forceStart && !autoStart) {
-      this.trace("Auto-start disabled and no ready gateway was detected.");
-      return false;
-    }
 
     const resolvedBackend = this.resolveBackendDirectory();
     let backendDir = resolvedBackend.backendDir;
     let gatewayExe = resolvedBackend.gatewayExe;
-
-    if (developmentBackendActive) {
-      this.killStaleGatewayProcesses();
-    }
 
     const configFile = resolveGatewayConfigPath(this.context.extensionPath);
 
@@ -106,11 +94,37 @@ export class BackendManager {
         currentConfig.Server = currentConfig.Server || {};
         currentConfig.GeneXus.InstallationPath = installationPath;
         currentConfig.Environment.KBPath = kbPath;
+        currentConfig.Server.HttpPort = this.getEffectivePort(config);
         fs.writeFileSync(configFile, JSON.stringify(currentConfig, null, 2));
       } catch (e) {
         console.error("[BackendManager] Failed to update canonical config.json:", e);
       }
     }
+
+    const gatewayIdentity = buildGatewayIdentity(
+      this.context.extensionPath,
+      config,
+      kbPath,
+      installationPath,
+    );
+
+    if (await this.isGatewayAlreadyReady(provider, gatewayIdentity)) {
+      console.log("[BackendManager] Reusing already running MCP Gateway.");
+      this.trace(
+        `gateway_reused pid=${readGatewayLease(gatewayIdentity.leasePath)?.processId ?? "unknown"} key=${gatewayIdentity.instanceKey}`,
+      );
+      this.ownsBackendProcess = false;
+      this.healthMonitor = new BackendHealthMonitor(provider, this.context, this);
+      this.healthMonitor.start();
+      return true;
+    }
+
+    if (!forceStart && !autoStart) {
+      this.trace("Auto-start disabled and no ready gateway was detected.");
+      return false;
+    }
+
+    await this.cleanupBrokenGatewayInstance(gatewayIdentity, provider);
 
     console.log("[BackendManager] Starting MCP Gateway...");
     this.trace(`Starting MCP Gateway. backendDir='${backendDir}' configFile='${configFile}' effectivePort='${effectivePortPreview(config)}'`);
@@ -370,25 +384,49 @@ export class BackendManager {
     this.trace("Development gateway launched via start-debug-gateway.ps1.");
   }
 
-  private killStaleGatewayProcesses(): void {
-    try {
-      const windowsKillScript = [
-        "taskkill /F /IM GxMcp.Gateway.exe /T 2>$null",
-        "taskkill /F /IM GxMcp.Worker.exe /T 2>$null",
-        "$gatewayDotnet = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq 'dotnet.exe' -and $_.CommandLine -match 'GxMcp\\.Gateway\\.dll' }",
-        "foreach ($proc in $gatewayDotnet) { try { Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop } catch {} }",
-        "$gatewayWrappers = Get-CimInstance Win32_Process | Where-Object { $_.Name -ieq 'powershell.exe' -and $_.CommandLine -match 'debug-gateway-wrapper\\.ps1' }",
-        "foreach ($proc in $gatewayWrappers) { try { Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop } catch {} }",
-      ].join("; ");
+  private async cleanupBrokenGatewayInstance(
+    gatewayIdentity: GatewayIdentity,
+    provider: GxFileSystemProvider,
+  ): Promise<void> {
+    const lease = readGatewayLease(gatewayIdentity.leasePath);
+    if (!lease) {
+      return;
+    }
 
-      cp.spawnSync("powershell.exe", ["-NoProfile", "-Command", windowsKillScript], {
-        stdio: "ignore",
-      });
-      this.trace("Development startup cleanup completed.");
-      console.log("[BackendManager] Development startup cleanup completed.");
+    if (lease.instanceKey !== gatewayIdentity.instanceKey) {
+      return;
+    }
+
+    const leaseAgeMs = Date.now() - Date.parse(lease.updatedUtc);
+    const processAlive = this.isProcessAlive(lease.processId);
+    if (!processAlive) {
+      this.trace(`lease_recovered pid=${lease.processId} key=${gatewayIdentity.instanceKey}`);
+      this.deleteLeaseFile(gatewayIdentity.leasePath);
+      return;
+    }
+
+    if (leaseAgeMs <= GATEWAY_LEASE_STALE_AFTER_MS) {
+      return;
+    }
+
+    try {
+      const status = await provider.callMcpMethod("ping", undefined, 2000);
+      if (status) {
+        return;
+      }
+    } catch {
+    }
+
+    try {
+      cp.spawnSync(
+        "taskkill.exe",
+        ["/PID", String(lease.processId), "/T", "/F"],
+        { stdio: "ignore", windowsHide: true },
+      );
+      this.trace(`duplicate_instance_prevented pid=${lease.processId} key=${gatewayIdentity.instanceKey}`);
+      this.deleteLeaseFile(gatewayIdentity.leasePath);
     } catch (error) {
-      this.trace(`Failed to kill stale gateway processes: ${String(error)}`);
-      console.error("[BackendManager] Failed to kill stale gateway processes:", error);
+      this.trace(`Failed to cleanup stale gateway pid=${lease.processId}: ${String(error)}`);
     }
   }
 
@@ -420,13 +458,45 @@ export class BackendManager {
     );
   }
 
-  private async isGatewayAlreadyReady(provider: GxFileSystemProvider): Promise<boolean> {
+  private async isGatewayAlreadyReady(
+    provider: GxFileSystemProvider,
+    gatewayIdentity: GatewayIdentity,
+  ): Promise<boolean> {
     try {
       const status = await provider.callMcpMethod("ping", undefined, 5000);
-      return Boolean(status);
+      if (!status) {
+        return false;
+      }
     } catch {
       return false;
     }
+
+    const lease = readGatewayLease(gatewayIdentity.leasePath);
+    if (!lease) {
+      this.trace(`gateway_reused port_only port=${gatewayIdentity.port}`);
+      return true;
+    }
+
+    if (lease.instanceKey !== gatewayIdentity.instanceKey) {
+      this.trace(
+        `gateway_reused lease_mismatch port=${gatewayIdentity.port} liveKey=${lease.instanceKey} expectedKey=${gatewayIdentity.instanceKey}`,
+      );
+      return true;
+    }
+
+    if (!this.isProcessAlive(lease.processId)) {
+      this.trace(`lease_recovered pid=${lease.processId} key=${gatewayIdentity.instanceKey}`);
+      this.deleteLeaseFile(gatewayIdentity.leasePath);
+      return false;
+    }
+
+    const leaseAgeMs = Date.now() - Date.parse(lease.updatedUtc);
+    if (leaseAgeMs > GATEWAY_LEASE_STALE_AFTER_MS) {
+      this.trace(`Lease is stale for key=${gatewayIdentity.instanceKey} pid=${lease.processId}`);
+      return false;
+    }
+
+    return true;
   }
 
   private trace(message: string): void {
@@ -435,6 +505,27 @@ export class BackendManager {
         this.backendLogPath,
         `[${new Date().toISOString()}] ${message}\n`,
       );
+    } catch {}
+  }
+
+  private isProcessAlive(processId: number): boolean {
+    if (!Number.isInteger(processId) || processId <= 0) {
+      return false;
+    }
+
+    try {
+      process.kill(processId, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private deleteLeaseFile(leasePath: string): void {
+    try {
+      if (fs.existsSync(leasePath)) {
+        fs.unlinkSync(leasePath);
+      }
     } catch {}
   }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Artech.Architecture.Common.Objects;
@@ -20,6 +21,7 @@ namespace GxMcp.Worker.Services
         private DataInsightService _dataInsightService;
         private UIService _uiService;
         private PatternAnalysisService _patternAnalysisService;
+        private WriteService _writeService;
 
         public ObjectService(KbService kbService, BuildService buildService)
         {
@@ -30,6 +32,7 @@ namespace GxMcp.Worker.Services
         public void SetDataInsightService(DataInsightService ds) { _dataInsightService = ds; }
         public void SetUIService(UIService ui) { _uiService = ui; }
         public void SetPatternAnalysisService(PatternAnalysisService patternAnalysisService) { _patternAnalysisService = patternAnalysisService; }
+        public void SetWriteService(WriteService writeService) { _writeService = writeService; }
         public KbService GetKbService() { return _kbService; }
 
         public SearchIndex GetIndex() { return _kbService.GetIndexCache().GetIndex(); }
@@ -267,6 +270,107 @@ namespace GxMcp.Worker.Services
             var obj = FindObject(target, typeFilter);
             if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
             return ReadObjectSourceInternal(obj, partName, offset, limit, client, minimize);
+        }
+
+        public string ExportObjectToText(string target, string outputPath, string partName = null, string typeFilter = null, bool overwrite = false)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(outputPath))
+                    return Models.McpResponse.Error("Output path is required.", target);
+
+                var obj = FindObject(target, typeFilter);
+                if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
+
+                string normalizedPart = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
+                string exportJson = ReadObjectSourceInternal(obj, normalizedPart, 0, int.MaxValue, "mcp", false);
+                JObject exportResult = JObject.Parse(exportJson);
+                string source = exportResult["source"]?.ToString();
+                if (string.IsNullOrEmpty(source))
+                {
+                    return Models.McpResponse.Error(
+                        "Export failed",
+                        target,
+                        normalizedPart,
+                        exportResult["error"]?.ToString() ?? "The object part did not return text content.",
+                        obj.Name,
+                        obj.TypeDescriptor?.Name);
+                }
+
+                string fullPath = Path.GetFullPath(outputPath);
+                string directory = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
+                    Directory.CreateDirectory(directory);
+
+                if (File.Exists(fullPath) && !overwrite)
+                    return Models.McpResponse.Error("Output file already exists. Set overwrite=true to replace it.", fullPath);
+
+                File.WriteAllText(fullPath, source, new UTF8Encoding(false));
+                return Models.McpResponse.Success("ExportText", target, new JObject
+                {
+                    ["part"] = normalizedPart,
+                    ["path"] = fullPath,
+                    ["bytes"] = new FileInfo(fullPath).Length
+                });
+            }
+            catch (Exception ex)
+            {
+                return Models.McpResponse.Error("Export failed", target, partName, ex.Message);
+            }
+        }
+
+        public string ImportObjectFromText(string target, string inputPath, string partName = null, string typeFilter = null)
+        {
+            try
+            {
+                if (_writeService == null)
+                    return Models.McpResponse.Error("Import failed", target, partName, "Write service is not available.");
+
+                if (string.IsNullOrWhiteSpace(inputPath))
+                    return Models.McpResponse.Error("Input path is required.", target);
+
+                string fullPath = Path.GetFullPath(inputPath);
+                if (!File.Exists(fullPath))
+                    return Models.McpResponse.Error("Input file not found.", fullPath);
+
+                string normalizedPart = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
+                var obj = FindObject(target, typeFilter);
+                if (obj == null)
+                {
+                    if (string.IsNullOrWhiteSpace(typeFilter))
+                    {
+                        return Models.McpResponse.Error(
+                            "Import failed",
+                            target,
+                            normalizedPart,
+                            "Object not found. Provide 'type' to create it before importing.");
+                    }
+
+                    string createResult = CreateObject(typeFilter, target);
+                    JObject createJson = JObject.Parse(createResult);
+                    if (!string.Equals(createJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return createResult;
+                    }
+                }
+
+                string importedText = File.ReadAllText(fullPath);
+                string writeResult = _writeService.WriteObject(target, normalizedPart, importedText, typeFilter);
+                JObject writeJson = JObject.Parse(writeResult);
+
+                if (string.Equals(writeJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                {
+                    writeJson["path"] = fullPath;
+                    writeJson["part"] = normalizedPart;
+                    writeJson["importedBytes"] = new FileInfo(fullPath).Length;
+                }
+
+                return writeJson.ToString();
+            }
+            catch (Exception ex)
+            {
+                return Models.McpResponse.Error("Import failed", target, partName, ex.Message);
+            }
         }
 
         private string ReadObjectSourceInternal(KBObject obj, string partName, int? offset = null, int? limit = null, string client = "ide", bool minimize = false)

@@ -12,6 +12,14 @@ namespace GxMcp.Gateway.Routers
 
             switch (toolName)
             {
+                case "genexus_open_kb":
+                    return new
+                    {
+                        module = "KB",
+                        action = "Open",
+                        target = args?["path"]?.ToString()
+                    };
+
                 case "genexus_read":
                     return new { 
                         module = "Read", 
@@ -72,6 +80,29 @@ namespace GxMcp.Gateway.Routers
 
                 case "genexus_batch_read":
                     return new { module = "Batch", action = "BatchRead", items = args?["items"] };
+
+                case "genexus_export_object":
+                    return new
+                    {
+                        module = "Object",
+                        action = "ExportText",
+                        target = target,
+                        outputPath = args?["outputPath"]?.ToString(),
+                        part = part,
+                        type = args?["type"]?.ToString(),
+                        overwrite = args?["overwrite"]?.ToObject<bool?>() ?? false
+                    };
+
+                case "genexus_import_object":
+                    return new
+                    {
+                        module = "Object",
+                        action = "ImportText",
+                        target = target,
+                        inputPath = args?["inputPath"]?.ToString(),
+                        part = part,
+                        type = args?["type"]?.ToString()
+                    };
 
                 default:
                     return null;
