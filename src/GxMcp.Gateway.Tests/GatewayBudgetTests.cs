@@ -7,6 +7,32 @@ namespace GxMcp.Gateway.Tests
 {
     public class GatewayBudgetTests
     {
+        [Theory]
+        [InlineData("genexus_edit", "Events", 180000)]
+        [InlineData("genexus_edit", "Source", 180000)]
+        [InlineData("genexus_import_object", "Events", 300000)]
+        [InlineData("genexus_import_object", "Rules", 300000)]
+        [InlineData("genexus_query", null, 60000)]
+        public void GetToolTimeoutMs_ShouldApplyPartAwareTimeoutPolicy(string toolName, string? part, int expected)
+        {
+            JObject? args = part == null ? null : new JObject { ["part"] = part };
+
+            int timeoutMs = Program.GetToolTimeoutMs(toolName, args);
+
+            Assert.Equal(expected, timeoutMs);
+        }
+
+        [Theory]
+        [InlineData("genexus_lifecycle")]
+        [InlineData("genexus_analyze")]
+        [InlineData("genexus_test")]
+        public void GetToolTimeoutMs_ShouldApplyHeavyOperationBudget(string toolName)
+        {
+            int timeoutMs = Program.GetToolTimeoutMs(toolName, null);
+
+            Assert.Equal(600000, timeoutMs);
+        }
+
         [Fact]
         public void TruncateResponseIfNeeded_ShouldPreserveSearchResultsInsteadOfReturningErrorEnvelope()
         {

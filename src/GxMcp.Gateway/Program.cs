@@ -580,6 +580,41 @@ namespace GxMcp.Gateway
             return onTimeout();
         }
 
+        internal static int GetToolTimeoutMs(string? toolName, JObject? args)
+        {
+            if (toolName == "genexus_lifecycle" || toolName == "genexus_analyze" || toolName == "genexus_test")
+            {
+                return 600000;
+            }
+
+            string? part = args?["part"]?.ToString();
+            if (string.Equals(toolName, "genexus_edit", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(part, "Layout", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(part, "WebForm", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(part, "Source", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(part, "Events", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(part, "PatternInstance", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(part, "PatternVirtual", StringComparison.OrdinalIgnoreCase))
+                {
+                    return 180000;
+                }
+            }
+
+            if (string.Equals(toolName, "genexus_import_object", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(part, "Source", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(part, "Events", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(part, "Rules", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(part, "Variables", StringComparison.OrdinalIgnoreCase))
+                {
+                    return 300000;
+                }
+            }
+
+            return 60000;
+        }
+
         private static async Task<JObject?> ProcessMcpRequest(JObject request)
         {
             string? method = request["method"]?.ToString();
@@ -728,21 +763,7 @@ namespace GxMcp.Gateway
                 if (workerCmd != null)
                 {
                     workerCmd["client"] = "mcp";
-
-                    int timeoutMs = 60000;
-                    if (toolName == "genexus_lifecycle" || toolName == "genexus_analyze" || toolName == "genexus_test")
-                        timeoutMs = 600000; // 10 minutes for heavy operations
-                    else if (string.Equals(toolName, "genexus_edit", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string? editPart = args?["part"]?.ToString();
-                        if (string.Equals(editPart, "Layout", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(editPart, "WebForm", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(editPart, "PatternInstance", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(editPart, "PatternVirtual", StringComparison.OrdinalIgnoreCase))
-                        {
-                            timeoutMs = 180000; // SDK metadata saves can trigger slow pattern regeneration paths.
-                        }
-                    }
+                    int timeoutMs = GetToolTimeoutMs(toolName, args);
 
                     return await SendWorkerCommandAsync(
                         workerCmd,

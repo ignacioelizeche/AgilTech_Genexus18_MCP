@@ -81,11 +81,73 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private void ScheduleFlush()
+        private static string GetSdkMessagesSafe(object target)
         {
-            _pendingCommit = true;
-            _flushTimer.Stop();
-            _flushTimer.Start();
+            try
+            {
+                return target?.GetSdkMessages();
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static bool ShouldRetryWithoutPartSave(string partName, global::Artech.Architecture.Common.Objects.KBObjectPart part, Exception ex, string partMessages, JArray issues)
+        {
+            if (!(part is global::Artech.Architecture.Common.Objects.ISource)) return false;
+            if (!WritePolicy.IsLogicalSourcePart(partName))
+            {
+                return false;
+            }
+
+            string exceptionMessage = ex?.Message ?? string.Empty;
+            string diagnosticText = WritePolicy.BuildFailureDetails(partMessages, issues);
+            return WritePolicy.ShouldRetryWithoutPartSave(partName, exceptionMessage, diagnosticText);
+        }
+
+        private static JObject CreateTransactionErrorResponse(string target, string partName, string stage, Exception ex, JArray issues, string retryStrategy, string sdkMessages)
+        {
+            var errorRes = new JObject
+            {
+                ["status"] = "Error",
+                ["error"] = ex.Message
+            };
+
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                errorRes["target"] = target;
+            }
+
+            if (!string.IsNullOrWhiteSpace(partName))
+            {
+                errorRes["part"] = partName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(stage))
+            {
+                errorRes["stage"] = stage;
+            }
+
+            if (!string.IsNullOrWhiteSpace(retryStrategy))
+            {
+                errorRes["retryStrategy"] = retryStrategy;
+            }
+
+            string detailText = WritePolicy.BuildFailureDetails(sdkMessages, issues);
+            if (!string.IsNullOrWhiteSpace(detailText))
+            {
+                errorRes["details"] = detailText;
+            }
+
+            if (!string.IsNullOrWhiteSpace(sdkMessages))
+            {
+                errorRes["sdkMessages"] = sdkMessages;
+            }
+
+            errorRes["stackTrace"] = ex.StackTrace;
+            errorRes["issues"] = issues;
+            return errorRes;
         }
 
         public string WriteObject(string target, string partName, string code, string typeFilter = null, bool autoValidate = true)
@@ -104,20 +166,8 @@ namespace GxMcp.Worker.Services
                     } catch { /* Not base64, use as is */ }
                 }
 
-                // Nirvana v19.4: Auto-Healing (Pre-save validation)
-                if (autoValidate && _validationService != null && !partName.Equals("Variables", StringComparison.OrdinalIgnoreCase) && !partName.Equals("Structure", StringComparison.OrdinalIgnoreCase))
-                {
-                    string validationRes = _validationService.ValidateCode(target, partName, decodedCode);
-                    var valJson = JObject.Parse(validationRes);
-                    if (valJson["status"]?.ToString() == "Error")
-                    {
-                        Logger.Warn($"[AUTO-HEALING] Blocked invalid code for {target} ({partName}): {valJson["errors"]?[0]?["message"]}");
-                        return validationRes; // Return the error immediately to the LLM
-                    }
-                }
-
                 Logger.Info(string.Format("[DEBUG-SAVE] Request received for {0} (Part: {1}, Code Length: {2})", target, partName, decodedCode?.Length ?? 0));
-                
+
                 var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null) {
                     Logger.Error("[DEBUG-SAVE] Object NOT FOUND: " + target);
@@ -172,6 +222,29 @@ namespace GxMcp.Worker.Services
                         obj
                     );
                 }
+
+                if (part is global::Artech.Architecture.Common.Objects.ISource existingSourcePart &&
+                    WritePolicy.IsUnchangedSourceWrite(existingSourcePart.Source, decodedCode))
+                {
+                    Logger.Info("[DEBUG-SAVE] Content is identical. Skipping validation and Save.");
+                    return Models.McpResponse.Success("Write", target, new JObject { ["details"] = "No change" });
+                }
+
+                // Nirvana v19.4: Auto-Healing (Pre-save validation)
+                if (autoValidate && _validationService != null && !partName.Equals("Variables", StringComparison.OrdinalIgnoreCase) && !partName.Equals("Structure", StringComparison.OrdinalIgnoreCase))
+                {
+                    string validationRes = _validationService.ValidateCode(target, partName, decodedCode);
+                    var valJson = JObject.Parse(validationRes);
+                    if (valJson["status"]?.ToString() == "Error")
+                    {
+                        string firstError = valJson["errors"]?[0]?["description"]?.ToString()
+                            ?? valJson["error"]?.ToString()
+                            ?? "Validation failed.";
+                        Logger.Warn($"[AUTO-HEALING] Blocked invalid code for {target} ({partName}): {firstError}");
+                        return validationRes; // Return the error immediately to the LLM
+                    }
+                }
+
                 // 1. SET CONTENT
                 bool contentSet = false;
                 if (part is global::Artech.Genexus.Common.Parts.VariablesPart varPart)
@@ -181,13 +254,6 @@ namespace GxMcp.Worker.Services
                 }
                 else if (part is global::Artech.Architecture.Common.Objects.ISource sourcePart)
                 {
-                    // NO-CHANGE SKIP: If code is identical, don't trigger Save/Commit
-                    if (sourcePart.Source == decodedCode)
-                    {
-                        Logger.Info("[DEBUG-SAVE] Content is identical. Skipping Save.");
-                        return Models.McpResponse.Success("Write", target, new JObject { ["details"] = "No change" });
-                    }
-
                     sourcePart.Source = decodedCode;
                     
                     // Auto-inject variables based on the new code (Optimized with Index)
@@ -250,6 +316,9 @@ namespace GxMcp.Worker.Services
                     // 1. Start Transaction
                     Logger.Info("[DEBUG-SAVE] Starting SDK Transaction...");
                     var transaction = kb.BeginTransaction();
+                    string failureStage = "transaction";
+                    string retryStrategy = "standard";
+                    string lastSdkMessages = string.Empty;
 
                     try {
                         // 2. Checkout
@@ -260,19 +329,38 @@ namespace GxMcp.Worker.Services
                         } catch { }
 
                         // 3. Save Part (CRITICAL: Save the part explicitly first)
+                        failureStage = "part_save";
                         Logger.Info(string.Format("[DEBUG-SAVE] Invoking part.Save() for {0}...", part.TypeDescriptor?.Name));
+                        bool skippedPartSave = false;
                         try {
                             part.Save();
                             Logger.Info("[DEBUG-SAVE] part.Save() completed.");
                         } catch (Exception exPart) {
-                            string partMsgs = part.GetSdkMessages();
-                            Logger.Warn($"[DEBUG-SAVE] part.Save() threw exception: {exPart.Message}. Messages: {partMsgs}");
-                            throw new Exception($"Part save failed: {exPart.Message}. Details: {partMsgs}", exPart);
+                            string partMsgs = GetSdkMessagesSafe(part);
+                            lastSdkMessages = partMsgs;
+                            var saveIssues = SdkDiagnosticsHelper.GetDiagnostics(obj);
+                            if (ShouldRetryWithoutPartSave(partName, part, exPart, partMsgs, saveIssues))
+                            {
+                                skippedPartSave = true;
+                                retryStrategy = "object_save_only";
+                                Logger.Warn($"[DEBUG-SAVE] part.Save() failed generically for {target} ({partName}). Retrying with object-level save only.");
+                            }
+                            else
+                            {
+                                string detailText = WritePolicy.BuildFailureDetails(partMsgs, saveIssues);
+                                Logger.Warn($"[DEBUG-SAVE] part.Save() threw exception: {exPart.Message}. Details: {detailText}");
+                                throw new Exception(
+                                    string.IsNullOrWhiteSpace(detailText)
+                                        ? $"Part save failed: {exPart.Message}"
+                                        : $"Part save failed: {exPart.Message}. Details: {detailText}",
+                                    exPart);
+                            }
                         }
 
                         // Check for messages even if it didn't throw (some SDK errors are non-throwing)
-                        string checkMsgs = part.GetSdkMessages();
-                        if (!string.IsNullOrEmpty(checkMsgs) && (checkMsgs.Contains("Erro") || checkMsgs.Contains("Error"))) {
+                        string checkMsgs = GetSdkMessagesSafe(part);
+                        lastSdkMessages = checkMsgs;
+                        if (!skippedPartSave && !string.IsNullOrEmpty(checkMsgs) && (checkMsgs.Contains("Erro") || checkMsgs.Contains("Error"))) {
                             Logger.Warn($"[DEBUG-SAVE] part.Save() reported internal errors: {checkMsgs}");
                             throw new Exception($"Part save reported errors: {checkMsgs}");
                         }
@@ -280,6 +368,7 @@ namespace GxMcp.Worker.Services
                         // 4. Save Object (Unified approach)
                         try 
                         {
+                            failureStage = "object_save";
                             Logger.Info("[DEBUG-SAVE] Invoking obj.EnsureSave(check: true)...");
                             obj.EnsureSave(true);
                             Logger.Info("[DEBUG-SAVE] obj.EnsureSave(true) completed.");
@@ -288,11 +377,13 @@ namespace GxMcp.Worker.Services
                         {
                             Logger.Warn($"[DEBUG-SAVE] Standard save failed: {ex.Message}. Retrying with check=false...");
                             // RETRY WITHOUT VALIDATION (User request)
+                            retryStrategy = retryStrategy == "standard" ? "ensure_save_without_validation" : $"{retryStrategy}+ensure_save_without_validation";
                             obj.EnsureSave(false);
                             Logger.Info("[DEBUG-SAVE] obj.EnsureSave(false) completed successfully.");
                         }
                         
                         // 5. Transaction Commit
+                        failureStage = "commit";
                         Logger.Info("[DEBUG-SAVE] Committing SDK Transaction...");
                         transaction.Commit();
                         Logger.Info("[DEBUG-SAVE] SDK Transaction Committed.");
@@ -302,13 +393,8 @@ namespace GxMcp.Worker.Services
                         Logger.Error("[DEBUG-SAVE] SDK TRANSACTION ERROR: " + ex.ToString());
                         var issues = SdkDiagnosticsHelper.GetDiagnostics(obj);
                         transaction.Rollback();
-
-                        var errorRes = new JObject();
-                        errorRes["status"] = "Error";
-                        errorRes["error"] = ex.Message;
-                        errorRes["stackTrace"] = ex.StackTrace;
-                        errorRes["issues"] = issues;
-                        return errorRes.ToString();
+                        lastSdkMessages = string.IsNullOrWhiteSpace(lastSdkMessages) ? GetSdkMessagesSafe(part) : lastSdkMessages;
+                        return CreateTransactionErrorResponse(target, partName, failureStage, ex, issues, retryStrategy, lastSdkMessages).ToString();
                     }
 
                     // FAST SAVE: Run heavy indexing in background
@@ -441,14 +527,12 @@ namespace GxMcp.Worker.Services
                 }
                 else
                 {
-                    // Use intelligent creation (attribute inheritance + heuristics)
                     var newVar = VariableInjector.CreateVariable(varPart, varName);
                     varPart.Variables.Add(newVar);
                 }
 
                 obj.EnsureSave();
-                // ScheduleFlush(); // Previous behavior
-                FlushBackground(); // Explicit commit right away for safety
+                FlushBackground();
                 
                 return "{\"status\": \"Success\"}";
             }
