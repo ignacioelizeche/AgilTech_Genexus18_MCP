@@ -60,51 +60,12 @@
             }
         },
         {
-            "label": "Nexus IDE: Run Debug Gateway",
-            "type": "shell",
-            "command": "powershell",
-            "args": [
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                "\"${workspaceFolder}\\src\\nexus-ide\\start-debug-gateway.ps1\""
-            ],
-            "options": {
-                "shell": {
-                    "executable": "powershell.exe",
-                    "args": [
-                        "-NoProfile",
-                        "-Command"
-                    ]
-                }
-            },
-            "isBackground": true,
-            "problemMatcher": {
-                "owner": "custom",
-                "pattern": {
-                    "regexp": "^(.*)$",
-                    "message": 1
-                },
-                "background": {
-                    "activeOnStart": true,
-                    "beginsPattern": "DEBUG_GATEWAY_STARTING",
-                    "endsPattern": "DEBUG_GATEWAY_READY"
-                }
-            },
-            "presentation": {
-                "reveal": "silent",
-                "panel": "shared"
-            }
-        },
-        {
             "label": "Nexus IDE: Prepare Debug",
             "dependsOrder": "sequence",
             "dependsOn": [
                 "Nexus IDE: Cleanup Services",
                 "Nexus IDE: Build Backends",
-                "Nexus IDE: Compile",
-                "Nexus IDE: Run Debug Gateway"
+                "Nexus IDE: Compile"
             ]
         }
     ]

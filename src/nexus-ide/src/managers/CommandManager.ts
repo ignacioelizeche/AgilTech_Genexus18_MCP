@@ -161,8 +161,11 @@ export class CommandManager {
       vscode.commands.registerCommand(
         "nexus-ide.repairVirtualFolder",
         async () => {
-          const { addKbFolder } = require("../extension");
-          await addKbFolder(this.context);
+          const { ensureKbExplorerReady } = require("../extension");
+          await ensureKbExplorerReady(this.context, {
+            forceRematerialize: false,
+            reason: "Repair Virtual Folder",
+          });
           vscode.window.showInformationMessage(
             "Attempted to repair Virtual Folder mount. Check Explorer.",
           );
@@ -682,11 +685,22 @@ export class CommandManager {
       }),
 
       vscode.commands.registerCommand("nexus-ide.refreshTree", () => {
-        this.provider.clearDirCache();
-        this.treeProvider.refresh();
-        this.contextManager.setStatusBarMessage(
-          "$(refresh) Nexus IDE: Tree refreshed",
-          3000,
+        return vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Window,
+            title: "GeneXus KB",
+          },
+          async () => {
+            const { ensureKbExplorerReady } = require("../extension");
+            await ensureKbExplorerReady(this.context, {
+              forceRematerialize: true,
+              reason: "Refresh Tree",
+            });
+            this.contextManager.setStatusBarMessage(
+              "$(refresh) Nexus IDE: Tree refreshed",
+              3000,
+            );
+          },
         );
       }),
 

@@ -51,7 +51,18 @@ namespace GxMcp.Worker.Services
 
                 IEnumerable<SearchIndex.IndexEntry> sourceSet = null;
 
-                if (!string.IsNullOrEmpty(criteria.ParentFilter) && index.ChildrenByParent != null)
+                if (criteria.ParentPathFilter != null && index.ChildrenByParent != null)
+                {
+                    if (index.ChildrenByParent.TryGetValue(criteria.ParentPathFilter, out var children))
+                    {
+                        sourceSet = children;
+                    }
+                    else
+                    {
+                        sourceSet = Enumerable.Empty<SearchIndex.IndexEntry>();
+                    }
+                }
+                else if (!string.IsNullOrEmpty(criteria.ParentFilter) && index.ChildrenByParent != null)
                 {
                     if (index.ChildrenByParent.TryGetValue(criteria.ParentFilter, out var children))
                     {
@@ -84,6 +95,9 @@ namespace GxMcp.Worker.Services
                         (e.DataType ?? "").IndexOf(criteria.MetadataFilter, StringComparison.OrdinalIgnoreCase) >= 0 ||
                         (e.RootTable ?? "").IndexOf(criteria.MetadataFilter, StringComparison.OrdinalIgnoreCase) >= 0
                     );
+
+                if (criteria.ParentPathFilter != null && (sourceSet == index.Objects.Values))
+                    queryResults = queryResults.Where(e => string.Equals(e.ParentPath ?? string.Empty, criteria.ParentPathFilter, StringComparison.OrdinalIgnoreCase));
 
                 if (!string.IsNullOrEmpty(criteria.ParentFilter) && (sourceSet == index.Objects.Values))
                     queryResults = queryResults.Where(e => string.Equals(e.Parent, criteria.ParentFilter, StringComparison.OrdinalIgnoreCase));
@@ -148,7 +162,10 @@ namespace GxMcp.Worker.Services
                             guid = r.Entry.Guid,
                             name = r.Entry.Name,
                             type = r.Entry.Type,
-                            parent = r.Entry.Parent
+                            parent = r.Entry.Parent,
+                            module = r.Entry.Module,
+                            path = r.Entry.Path,
+                            parentPath = r.Entry.ParentPath
                         })
                     });
                 }
@@ -164,6 +181,9 @@ namespace GxMcp.Worker.Services
                             parm = r.Entry.ParmRule,
                             snippet = r.Entry.SourceSnippet,
                             parent = r.Entry.Parent,
+                            module = r.Entry.Module,
+                            path = r.Entry.Path,
+                            parentPath = r.Entry.ParentPath,
                             dataType = r.Entry.DataType,
                             length = r.Entry.Length,
                             decimals = r.Entry.Decimals,
@@ -243,6 +263,7 @@ namespace GxMcp.Worker.Services
             query = ExtractFilter(query, "description", value => c.DescriptionFilter = value);
             query = ExtractFilter(query, "metadata", value => c.MetadataFilter = value);
             query = ExtractFilter(query, "usedby", value => c.UsedByFilter = value);
+            query = ExtractFilter(query, "parentPath", value => c.ParentPathFilter = value);
             query = ExtractFilter(query, "parent", value => c.ParentFilter = value);
             query = ExtractFilter(query, "type", value => c.TypeFilter = value);
 
@@ -272,7 +293,7 @@ namespace GxMcp.Worker.Services
 
         private class RankedResult { public SearchIndex.IndexEntry Entry { get; set; } public int Score { get; set; } public float VectorSimilarity { get; set; } }
         private class SearchCriteria { 
-            public string TypeFilter { get; set; } public string ParentFilter { get; set; } 
+            public string TypeFilter { get; set; } public string ParentFilter { get; set; } public string ParentPathFilter { get; set; }
             public string UsedByFilter { get; set; } public string DomainFilter { get; set; } 
             public string DescriptionFilter { get; set; } public string MetadataFilter { get; set; }
             public HashSet<string> Terms { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase); 

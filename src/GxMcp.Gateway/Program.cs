@@ -193,7 +193,8 @@ namespace GxMcp.Gateway
         {
             AppDomain.CurrentDomain.UnhandledException += async (s, e) => {
                 string msg = $"[{DateTime.Now}] FATAL UNHANDLED: {e.ExceptionObject}\n";
-                await TryWriteStdout(msg);
+                var errorObj = new { jsonrpc = "2.0", method = "notifications/message", @params = new { level = "error", logger = "gateway", data = msg } };
+                await TryWriteStdout(Newtonsoft.Json.JsonConvert.SerializeObject(errorObj));
                 try { File.AppendAllText("gateway_panic.log", msg); } catch { }
             };
 
@@ -517,7 +518,8 @@ namespace GxMcp.Gateway
                     {
                         string data = line.Substring(6).Trim();
                         // SSE message events (notifications) usually come in formatted as data blocks
-                        if (data.StartsWith("{") && data.EndsWith("}"))
+                        // We must enforce jsonrpc wrapper to avoid client parsing errors on metadata like {"sessionId":"..."}
+                        if (data.StartsWith("{") && data.EndsWith("}") && data.Contains("\"jsonrpc\""))
                         {
                             await TryWriteStdout(data);
                         }
@@ -1254,16 +1256,16 @@ namespace GxMcp.Gateway
                 try
                 {
                     var requestObj = JsonConvert.DeserializeObject<JObject>(body);
-                    if (requestObj == null) return Results.BadRequest(new { error = "Invalid JSON" });
+                    if (requestObj == null) return Results.Json(new { jsonrpc = "2.0", id = (string?)null, error = new { code = -32700, message = "Invalid JSON" } }, statusCode: 400);
 
                     id = requestObj["id"]?.ToString() ?? "no-id";
                     var sessionError = McpHttpProtocol.TryGetValidSession(_httpSessions, request, requestObj, out var session);
                     if (sessionError != null)
-                        return Results.Json(new { error = sessionError.Value.Message }, statusCode: sessionError.Value.StatusCode);
+                        return Results.Json(new { jsonrpc = "2.0", id = id, error = new { code = -32001, message = sessionError.Value.Message } }, statusCode: sessionError.Value.StatusCode);
 
                     var protocolError = McpHttpProtocol.TryApplyProtocol(request, request.HttpContext.Response.Headers);
                     if (protocolError != null)
-                        return Results.Json(new { error = protocolError.Value.Message }, statusCode: protocolError.Value.StatusCode);
+                        return Results.Json(new { jsonrpc = "2.0", id = id, error = new { code = -32002, message = protocolError.Value.Message } }, statusCode: protocolError.Value.StatusCode);
 
                     id = requestObj["id"]?.ToString() ?? "no-id";
                     string method = requestObj["method"]?.ToString() ?? "unknown";

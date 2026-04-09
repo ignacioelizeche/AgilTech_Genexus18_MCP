@@ -41,7 +41,6 @@ export class BackendManager {
 
   async start(provider: GxFileSystemProvider, forceStart = false): Promise<boolean> {
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-    const developmentBackendActive = this.hasDevelopmentGatewayAvailable();
     const autoStart = config.get(CONFIG_AUTO_START);
 
     const resolvedBackend = this.resolveBackendDirectory();
@@ -138,26 +137,19 @@ export class BackendManager {
         `Launch command: ${launchSpec.command} ${launchSpec.args.join(" ")}`.trim(),
       );
 
-      if (developmentBackendActive) {
-        this.launchDevelopmentGateway(configFile, effectivePort);
-
-        this.backendProcess = undefined;
-        this.ownsBackendProcess = false;
-      } else {
-        this.backendProcess = cp.spawn(launchSpec.command, launchSpec.args, {
-          cwd: backendDir,
-          detached: false,
-          stdio: ["pipe", "ignore", "ignore"],
-          windowsHide: true,
-          env: {
-            ...process.env,
-            GX_CONFIG_PATH: configFile,
-            GX_MCP_PORT: String(effectivePort),
-            GX_MCP_STDIO: "false",
-          },
-        });
-        this.ownsBackendProcess = true;
-      }
+      this.backendProcess = cp.spawn(launchSpec.command, launchSpec.args, {
+        cwd: backendDir,
+        detached: false,
+        stdio: ["pipe", "ignore", "ignore"],
+        windowsHide: true,
+        env: {
+          ...process.env,
+          GX_CONFIG_PATH: configFile,
+          GX_MCP_PORT: String(effectivePort),
+          GX_MCP_STDIO: "false",
+        },
+      });
+      this.ownsBackendProcess = true;
       this.trace(`Spawned gateway PID=${this.backendProcess?.pid ?? "unknown"}`);
 
       if (this.backendProcess) {
@@ -307,81 +299,6 @@ export class BackendManager {
       backendDir: packagedBackendDir,
       gatewayExe: packagedGatewayExe,
     };
-  }
-
-  private hasDevelopmentGatewayAvailable(): boolean {
-    const devGatewayExe = path.join(
-      this.context.extensionPath,
-      "..",
-      "GxMcp.Gateway",
-      "bin",
-      "Debug",
-      "net8.0-windows",
-      "GxMcp.Gateway.exe",
-    );
-
-    return fs.existsSync(devGatewayExe);
-  }
-
-  private launchDevelopmentGateway(configFile: string, effectivePort: number): void {
-    const bootstrapScript = path.join(
-      this.context.extensionPath,
-      "start-debug-gateway.ps1",
-    );
-
-    if (!fs.existsSync(bootstrapScript)) {
-      throw new Error(`Debug gateway bootstrap script not found: ${bootstrapScript}`);
-    }
-
-    const launchResult = cp.spawnSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        bootstrapScript,
-        "-ConfigPath",
-        configFile,
-        "-Port",
-        String(effectivePort),
-      ],
-      {
-        cwd: this.context.extensionPath,
-        stdio: "pipe",
-        encoding: "utf8",
-        windowsHide: true,
-        env: {
-          ...process.env,
-          GX_CONFIG_PATH: configFile,
-          GX_MCP_PORT: String(effectivePort),
-          GX_MCP_STDIO: "false",
-        },
-      },
-    );
-
-    const stdout = launchResult.stdout?.trim();
-    const stderr = launchResult.stderr?.trim();
-
-    if (stdout) {
-      this.trace(`Debug bootstrap stdout: ${stdout}`);
-    }
-
-    if (stderr) {
-      this.trace(`Debug bootstrap stderr: ${stderr}`);
-    }
-
-    if (launchResult.error) {
-      throw launchResult.error;
-    }
-
-    if (launchResult.status !== 0) {
-      throw new Error(
-        `Debug gateway bootstrap failed with exit code ${launchResult.status}. ${stderr || stdout || ""}`.trim(),
-      );
-    }
-
-    this.trace("Development gateway launched via start-debug-gateway.ps1.");
   }
 
   private async cleanupBrokenGatewayInstance(

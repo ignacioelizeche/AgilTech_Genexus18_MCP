@@ -95,7 +95,7 @@ namespace GxMcp.Worker.Services
             
             foreach (var entry in index.Objects.Values)
             {
-                string parent = entry.Parent ?? "";
+                string parent = entry.ParentPath ?? entry.Parent ?? "";
                 if (!byParent.TryGetValue(parent, out var list))
                 {
                     list = new System.Collections.Generic.List<SearchIndex.IndexEntry>();
@@ -109,18 +109,179 @@ namespace GxMcp.Worker.Services
             index.ChildrenByParent = byParent;
         }
 
+        private string GetEntryStorageKey(SearchIndex.IndexEntry entry)
+        {
+            if (entry == null) return string.Empty;
+            if (string.Equals(entry.Type, "Folder", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(entry.Type, "Module", StringComparison.OrdinalIgnoreCase))
+            {
+                string scopedPath = entry.Path ?? entry.Name ?? string.Empty;
+                return string.Format("{0}:{1}", entry.Type ?? string.Empty, scopedPath);
+            }
+
+            return string.Format("{0}:{1}", entry.Type ?? string.Empty, entry.Name ?? string.Empty);
+        }
+
+        private void NormalizeLegacyHierarchy(SearchIndex index)
+        {
+            if (index?.Objects == null) return;
+
+            foreach (var entry in index.Objects.Values)
+            {
+                if (string.IsNullOrWhiteSpace(entry.ParentPath))
+                {
+                    entry.ParentPath = InferLegacyParentPath(entry);
+                }
+
+                if (string.IsNullOrWhiteSpace(entry.Path))
+                {
+                    entry.Path = InferLegacyPath(entry);
+                }
+            }
+        }
+
+        private string InferLegacyParentPath(SearchIndex.IndexEntry entry)
+        {
+            if (entry == null) return string.Empty;
+
+            if (string.IsNullOrWhiteSpace(entry.Parent) ||
+                string.Equals(entry.Parent, "Root Module", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.Module) &&
+                string.Equals(entry.Parent, entry.Module, StringComparison.OrdinalIgnoreCase))
+            {
+                return entry.Module;
+            }
+
+            return entry.Parent;
+        }
+
+        private string InferLegacyPath(SearchIndex.IndexEntry entry)
+        {
+            if (entry == null) return string.Empty;
+
+            var parentPath = entry.ParentPath ?? InferLegacyParentPath(entry);
+            if (string.IsNullOrWhiteSpace(parentPath))
+            {
+                return entry.Name ?? string.Empty;
+            }
+
+            return string.Format("{0}/{1}", parentPath, entry.Name ?? string.Empty);
+        }
+
         private void AddOrUpdateEntryInParentIndex(System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Generic.List<SearchIndex.IndexEntry>> byParent, SearchIndex.IndexEntry entry)
         {
-            string parent = entry.Parent ?? "";
+            string parent = entry.ParentPath ?? entry.Parent ?? "";
             var list = byParent.GetOrAdd(parent, _ => new System.Collections.Generic.List<SearchIndex.IndexEntry>());
             
             lock (list)
             {
-                if (!list.Any(e => e.Name == entry.Name && e.Type == entry.Type))
+                string entryKey = GetEntryStorageKey(entry);
+                if (!list.Any(e => string.Equals(GetEntryStorageKey(e), entryKey, StringComparison.OrdinalIgnoreCase)))
                 {
                     list.Add(entry);
                 }
             }
+        }
+
+        private (string ParentName, string ParentPath, string Path, string ModuleName) ResolveHierarchy(global::Artech.Architecture.Common.Objects.KBObject obj)
+        {
+            string parentName = string.Empty;
+            string moduleName = null;
+            var parentSegments = new System.Collections.Generic.List<string>();
+
+            try
+            {
+                dynamic currentParent = obj?.Parent;
+                bool isImmediateParent = true;
+
+                while (currentParent != null)
+                {
+                    try
+                    {
+                        if (currentParent.Guid == obj.Guid)
+                        {
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                    }
+
+                    string parentTypeName = null;
+                    try { parentTypeName = currentParent.TypeDescriptor?.Name; } catch { }
+
+                    if (string.Equals(parentTypeName, "DesignModel", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (isImmediateParent)
+                        {
+                            parentName = "Root Module";
+                        }
+                        break;
+                    }
+
+                    bool isContainer =
+                        currentParent is global::Artech.Architecture.Common.Objects.Module ||
+                        currentParent is global::Artech.Architecture.Common.Objects.Folder;
+
+                    if (!isContainer)
+                    {
+                        currentParent = currentParent.Parent;
+                        isImmediateParent = false;
+                        continue;
+                    }
+
+                    string currentName = null;
+                    try { currentName = currentParent.Name; } catch { }
+
+                    if (!string.IsNullOrWhiteSpace(currentName))
+                    {
+                        parentSegments.Insert(0, currentName);
+                        if (isImmediateParent)
+                        {
+                            parentName = currentName;
+                        }
+
+                        if (moduleName == null &&
+                            currentParent is global::Artech.Architecture.Common.Objects.Module)
+                        {
+                            moduleName = currentName;
+                        }
+                    }
+
+                    currentParent = currentParent.Parent;
+                    isImmediateParent = false;
+                }
+            }
+            catch
+            {
+            }
+
+            if (string.IsNullOrWhiteSpace(moduleName))
+            {
+                try
+                {
+                    if (obj?.Module != null && obj.Module.Guid != obj.Guid)
+                    {
+                        moduleName = obj.Module.Name;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            string parentPath = string.Join("/", parentSegments.Where(segment => !string.IsNullOrWhiteSpace(segment)));
+            string path = parentPath;
+            if (!string.IsNullOrWhiteSpace(obj?.Name))
+            {
+                path = string.IsNullOrEmpty(parentPath) ? obj.Name : parentPath + "/" + obj.Name;
+            }
+
+            return (parentName, parentPath, path, moduleName);
         }
 
         public SearchIndex GetIndex()
@@ -138,6 +299,7 @@ namespace GxMcp.Worker.Services
                         Logger.Debug(string.Format("Loading index from disk: {0}", _indexPath));
                         string json = File.ReadAllText(_indexPath);
                         _index = SearchIndex.FromJson(json);
+                        NormalizeLegacyHierarchy(_index);
                         BuildParentIndex(_index);
                         Logger.Info(string.Format("Index loaded. Objects: {0}", _index.Objects.Count));
                     }
@@ -217,16 +379,7 @@ namespace GxMcp.Worker.Services
         public void UpdateEntry(global::Artech.Architecture.Common.Objects.KBObject obj)
         {
             var index = GetIndex();
-            string parentName = null;
-            string moduleName = null;
-            try {
-                if (obj.Parent != null && obj.Parent.Guid != obj.Guid) {
-                    if (obj.Parent.TypeDescriptor.Name == "DesignModel") parentName = "Root Module";
-                    else if (obj.Parent is global::Artech.Architecture.Common.Objects.Module || obj.Parent is global::Artech.Architecture.Common.Objects.Folder)
-                        parentName = obj.Parent.Name;
-                }
-            } catch { }
-            try { if (obj.Module != null && obj.Module.Guid != obj.Guid) moduleName = obj.Module.Name; } catch { }
+            var hierarchy = ResolveHierarchy(obj);
 
             var entry = new SearchIndex.IndexEntry
             {
@@ -234,8 +387,10 @@ namespace GxMcp.Worker.Services
                 Name = obj.Name,
                 Type = obj.TypeDescriptor.Name,
                 Description = obj.Description,
-                Parent = parentName,
-                Module = moduleName
+                Parent = hierarchy.ParentName,
+                ParentPath = hierarchy.ParentPath,
+                Path = hierarchy.Path,
+                Module = hierarchy.ModuleName
             };
 
             if (obj is global::Artech.Genexus.Common.Objects.Attribute attr)
@@ -285,7 +440,7 @@ namespace GxMcp.Worker.Services
                 } catch { }
             }
 
-            string key = string.Format("{0}:{1}", entry.Type, entry.Name);
+            string key = GetEntryStorageKey(entry);
             
             // Compute Embedding
             string semanticText = $"{entry.Name} {entry.Type} {entry.Description} {entry.RootTable} {entry.ParmRule}";
@@ -355,10 +510,22 @@ namespace GxMcp.Worker.Services
         public void RemoveEntry(string type, string name)
         {
             var index = GetIndex();
-            string key = string.Format("{0}:{1}", type, name);
             lock (_lock)
             {
-                if (index.Objects.TryRemove(key, out _)) UpdateIndex(index);
+                var keysToRemove = index.Objects
+                    .Where(pair =>
+                        string.Equals(pair.Value.Type, type, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(pair.Value.Name, name, StringComparison.OrdinalIgnoreCase))
+                    .Select(pair => pair.Key)
+                    .ToList();
+
+                var removed = false;
+                foreach (var key in keysToRemove)
+                {
+                    removed |= index.Objects.TryRemove(key, out _);
+                }
+
+                if (removed) UpdateIndex(index);
             }
         }
 

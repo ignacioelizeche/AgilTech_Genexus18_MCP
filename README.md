@@ -1,5 +1,7 @@
 # GeneXus 18 MCP Server (Genexus18MCP)
 
+[![MCP Badge](https://lobehub.com/badge/mcp/lennix1337-genexus18mcp?style=for-the-badge)](https://lobehub.com/mcp/lennix1337-genexus18mcp)
+
 A Model Context Protocol (MCP) server for GeneXus 18 with a .NET 8 gateway, a .NET Framework 4.8 worker, and a VS Code extension that operates directly against the MCP surface.
 
 ## Key Features
@@ -23,7 +25,25 @@ The extension uses `/mcp` directly. The legacy `/api/command` path has been remo
 
 ## Installation
 
-### One-Click (Recommended)
+### NPX (Fastest)
+
+If you have Node.js installed, you can run the server directly from the npm registry without cloning the repository! Just create your "config.json" file in any directory and run:
+
+`ash
+npx genexus-mcp
+``n
+For **Claude Desktop** or other MCP clients, simply configure it like this:
+
+`json
+"genexus": {
+  "command": "npx",
+  "args": ["-y", "genexus-mcp"],
+  "env": {
+    "GX_CONFIG_PATH": "C:\\path\\to\\your\\config.json"
+  }
+}
+``n
+### One-Click (From Source)
 
 1. Clone the repository.
 2. Run `.\setup.bat` (Windows).

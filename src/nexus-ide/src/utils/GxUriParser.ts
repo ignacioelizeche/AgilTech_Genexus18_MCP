@@ -9,6 +9,8 @@ export interface GxUriInfo {
   name: string;
   part: string;
   path: string;
+  parentPath?: string;
+  containerPath?: string;
 }
 
 type MirrorIndexEntry = GxUriInfo & {

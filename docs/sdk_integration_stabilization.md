@@ -21,6 +21,8 @@ The stable SDK foundation now backs the MCP contracts used by the repository, in
 - `genexus_history`
 - `genexus_structure`
 
+`genexus_query` supports hierarchical structural filters such as `parentPath:"ModuloA/Procs"` when callers need to distinguish folders with the same name under different modules.
+
 ## Documentation note
 
 Older document names such as `genexus_list_objects`, `genexus_read_object`, and `genexus_write_object` refer to pre-MCP or early-wrapper phases and should not be used as current contract names.

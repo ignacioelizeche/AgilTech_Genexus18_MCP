@@ -10,12 +10,22 @@ import { ROOT_PARENT_NAME } from "./constants";
 
 const PLACEHOLDER_PREFIX = "// GXMCP_PLACEHOLDER:";
 const INDEX_FILE = ".gx_index.json";
+const CONTAINER_INDEX_FILE = ".gx_containers.json";
 
 type MirrorIndexEntry = {
   type: string;
   name: string;
   part: string;
   path: string;
+  parentPath?: string;
+  containerPath?: string;
+};
+
+type ContainerIndexEntry = {
+  type: string;
+  name: string;
+  path: string;
+  parentPath?: string;
 };
 
 type HydrationTargetInfo = {
@@ -126,11 +136,10 @@ export class GxShadowService {
   ): string {
     const lowered = name.toLowerCase();
 
-    // Escape reserved names that break VS Code or Antigravity
-    const isReserved = 
-      lowered === ".git" || 
-      lowered === ".vscode" || 
-      lowered === ".github" || 
+    const isReserved =
+      lowered === ".git" ||
+      lowered === ".vscode" ||
+      lowered === ".github" ||
       lowered === ".antigravity";
 
     if (!isReserved && !siblingNames.has(lowered)) {
@@ -169,13 +178,17 @@ export class GxShadowService {
     return path.join(this._shadowRoot, INDEX_FILE);
   }
 
+  private getContainerIndexPath(): string {
+    return path.join(this._shadowRoot, CONTAINER_INDEX_FILE);
+  }
+
   private toRelativeShadowPath(targetPath: string): string {
     return path.relative(this._shadowRoot, targetPath).replace(/\\/g, "/");
   }
 
   private buildIndexEntry(
     filePath: string,
-    obj: { name: string; type: string },
+    obj: { name: string; type: string; parentPath?: string; path?: string },
     part = "Source",
   ): MirrorIndexEntry {
     return {
@@ -183,6 +196,8 @@ export class GxShadowService {
       name: obj.name,
       part,
       path: this.toRelativeShadowPath(filePath),
+      parentPath: obj.parentPath,
+      containerPath: obj.path,
     };
   }
 
@@ -193,6 +208,29 @@ export class GxShadowService {
       .sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: "base" }));
     this.writeTrackedFile(indexPath, JSON.stringify(sorted, null, 2));
     GxUriParser.loadMirrorIndex(this._shadowRoot);
+  }
+
+  private writeContainerIndex(entries: ContainerIndexEntry[]): void {
+    const indexPath = this.getContainerIndexPath();
+    const sorted = entries
+      .slice()
+      .sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: "base" }));
+    this.writeTrackedFile(indexPath, JSON.stringify(sorted, null, 2));
+  }
+
+  private hasContainerIndex(): boolean {
+    const indexPath = this.getContainerIndexPath();
+    if (!fs.existsSync(indexPath)) {
+      return false;
+    }
+
+    try {
+      const raw = fs.readFileSync(indexPath, "utf8");
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed);
+    } catch {
+      return false;
+    }
   }
 
   private findIndexedShadowPath(
@@ -410,6 +448,7 @@ export class GxShadowService {
     onProgress?: (progress: MaterializationProgress) => void,
   ): Promise<void> {
     const indexEntries: MirrorIndexEntry[] = [];
+    const containerEntries: ContainerIndexEntry[] = [];
     let directoriesCreated = 0;
     let filesPrepared = 0;
 
@@ -421,15 +460,16 @@ export class GxShadowService {
       });
     };
 
-    const walk = async (parentName: string, parentDir: string) => {
-      reportProgress(parentName);
+    const walk = async (parentPath: string, parentDir: string) => {
+      const progressLabel = parentPath || ROOT_PARENT_NAME;
+      reportProgress(progressLabel);
       const browseStartedAt = Date.now();
-      const children = await provider.browseObjects(parentName);
+      const children = await provider.browseObjects(parentPath);
       const browseElapsedMs = Date.now() - browseStartedAt;
       console.log(
-        `[GxShadow] browseObjects(${parentName}) returned ${children.length} item(s) in ${browseElapsedMs}ms.`,
+        `[GxShadow] browseObjects(${progressLabel}) returned ${children.length} item(s) in ${browseElapsedMs}ms.`,
       );
-      if (parentName === ROOT_PARENT_NAME && children.length === 0) {
+      if (parentPath.length === 0 && children.length === 0) {
         throw new Error(
           "Materialization root browse returned 0 objects. Search index is reachable, but the root query produced no children.",
         );
@@ -446,12 +486,18 @@ export class GxShadowService {
             siblingNames,
           );
           const nextDir = path.join(parentDir, displayName);
+          containerEntries.push({
+            type: child.type,
+            name: child.name,
+            path: this.toRelativeShadowPath(nextDir),
+            parentPath: child.parentPath,
+          });
           if (!fs.existsSync(nextDir)) {
             fs.mkdirSync(nextDir, { recursive: true });
             directoriesCreated++;
-            reportProgress(child.name);
+            reportProgress(child.path || child.name);
           }
-          await walk(child.name, nextDir);
+          await walk(child.path || child.name, nextDir);
           continue;
         }
 
@@ -462,7 +508,7 @@ export class GxShadowService {
         indexEntries.push(this.buildIndexEntry(filePath, child));
         filesPrepared++;
         if (filesPrepared % 25 === 0) {
-          reportProgress(parentName);
+          reportProgress(progressLabel);
         }
       }
     };
@@ -471,13 +517,14 @@ export class GxShadowService {
       fs.mkdirSync(this._shadowRoot, { recursive: true });
     }
 
-    await walk(ROOT_PARENT_NAME, this._shadowRoot);
+    await walk("", this._shadowRoot);
     if (indexEntries.length === 0) {
       throw new Error(
         "Materialization produced 0 entries. Mirror index was not written to avoid a false-ready state.",
       );
     }
     this.writeMirrorIndex(indexEntries);
+    this.writeContainerIndex(containerEntries);
     reportProgress("Complete");
   }
 
@@ -653,17 +700,19 @@ export class GxShadowService {
   }
 
   public hasMaterializedWorkspace(): boolean {
+    if (!this.hasContainerIndex()) {
+      return false;
+    }
+
     const index = this.readCurrentMirrorIndex();
     if (index.length === 0) return false;
 
-    // Adicional: Verificar se pelo menos alguns arquivos do índice existem no disco
     const sampleSize = Math.min(index.length, 5);
     for (let i = 0; i < sampleSize; i++) {
-        const fullPath = path.join(this._shadowRoot, index[i].path);
-        if (fs.existsSync(fullPath)) return true;
+      const fullPath = path.join(this._shadowRoot, index[i].path);
+      if (fs.existsSync(fullPath)) return true;
     }
 
-    // Se nenhum dos primeiros 5 arquivos existe, considerar como não materializado
     return false;
   }
 

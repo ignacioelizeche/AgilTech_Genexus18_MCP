@@ -1,0 +1,25 @@
+{
+  "name": "genexus-mcp",
+  "version": "1.1.0",
+  "description": "A high-performance Model Context Protocol (MCP) server for GeneXus 18",
+  "bin": {
+    "genexus-mcp": "cli/run.js"
+  },
+  "files": [
+    "cli",
+    "publish"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "lennix1337",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lennix1337/Genexus18MCP.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lennix1337/Genexus18MCP/issues"
+  },
+  "homepage": "https://github.com/lennix1337/Genexus18MCP#readme"
+}

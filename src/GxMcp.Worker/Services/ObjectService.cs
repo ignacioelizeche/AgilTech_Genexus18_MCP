@@ -355,7 +355,7 @@ namespace GxMcp.Worker.Services
                 }
 
                 string importedText = File.ReadAllText(fullPath);
-                string writeResult = _writeService.WriteObject(target, normalizedPart, importedText, typeFilter);
+                string writeResult = _writeService.WriteObject(target, normalizedPart, importedText, typeFilter, autoValidate: false);
                 JObject writeJson = JObject.Parse(writeResult);
 
                 if (string.Equals(writeJson["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))

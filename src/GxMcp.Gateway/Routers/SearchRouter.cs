@@ -30,6 +30,7 @@ namespace GxMcp.Gateway.Routers
                         limit = args?["limit"]?.ToObject<int?>() ?? 5000,
                         offset = args?["offset"]?.ToObject<int?>() ?? 0,
                         parent = args?["parent"]?.ToString(),
+                        parentPath = args?["parentPath"]?.ToString(),
                         typeFilter = args?["typeFilter"]?.ToString(),
                     };
                 default:

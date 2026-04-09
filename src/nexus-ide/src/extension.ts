@@ -31,8 +31,13 @@ const IS_TEST_MODE = process.env.NEXUS_IDE_TEST_MODE === "1";
 let isActivated = false;
 let activeShadowRoot: string | undefined;
 let pendingMountPromise: Promise<void> | undefined;
+let pendingKbBootstrapPromise: Promise<void> | undefined;
 let bootstrapOutput: vscode.OutputChannel | undefined;
 let lifecycleLogPath: string | undefined;
+let activeProvider: GxFileSystemProvider | undefined;
+let activeTreeProvider: GxTreeProvider | undefined;
+let activeShadowService: GxShadowService | undefined;
+let initializationPromise: Promise<void> | undefined;
 
 type BootstrapReporter = (message: string) => void;
 
@@ -112,6 +117,20 @@ function isGatewayConnectionRefused(error: unknown): boolean {
   return message.includes("connect econnrefused");
 }
 
+function isRootBrowseEntry(entry: any): boolean {
+  if (!entry?.name || !entry?.type) {
+    return false;
+  }
+
+  if (typeof entry?.parentPath === "string") {
+    return entry.parentPath.trim().length === 0;
+  }
+
+  const entryParent =
+    typeof entry?.parent === "string" ? entry.parent.trim() : "";
+  return entryParent.length === 0 || entryParent === ROOT_PARENT_NAME;
+}
+
 function containsReplacementCharacter(text: string | undefined): boolean {
   return typeof text === "string" && text.includes("\uFFFD");
 }
@@ -128,6 +147,40 @@ async function readIndexStatus(provider: GxFileSystemProvider): Promise<any> {
   }
 
   return status;
+}
+
+export async function hasUsableSearchIndex(
+  provider: Pick<GxFileSystemProvider, "browseObjects">,
+  status: any,
+): Promise<boolean> {
+  const initialProcessed = Number(status?.processed ?? 0);
+  const initialTotal = Number(status?.total ?? 0);
+  const initialStatusText =
+    typeof status?.status === "string" ? status.status : "";
+
+  if (
+    status?.isIndexing !== true &&
+    initialTotal > 0 &&
+    initialStatusText.toLowerCase() !== "error"
+  ) {
+    return true;
+  }
+
+  if (
+    status?.isIndexing === true ||
+    initialTotal !== 0 ||
+    initialProcessed !== 0 ||
+    initialStatusText.toLowerCase() === "complete"
+  ) {
+    return false;
+  }
+
+  try {
+    const rootEntries = await provider.browseObjects("");
+    return Array.isArray(rootEntries) && rootEntries.some(isRootBrowseEntry);
+  } catch {
+    return false;
+  }
 }
 
 async function rebuildSearchIndex(
@@ -209,13 +262,11 @@ async function ensureSearchIndexReady(
   const initialStatusText =
     typeof initialStatus?.status === "string" ? initialStatus.status : "";
 
-  if (
-    initialStatus?.isIndexing !== true &&
-    initialTotal > 0 &&
-    initialStatusText.toLowerCase() !== "error"
-  ) {
+  if (await hasUsableSearchIndex(provider, initialStatus)) {
     reportBootstrapStatus(
-      `Search index already available (${initialProcessed}/${initialTotal}${initialStatusText ? ` - ${initialStatusText}` : ""}).`,
+      initialTotal > 0
+        ? `Search index already available (${initialProcessed}/${initialTotal}${initialStatusText ? ` - ${initialStatusText}` : ""}).`
+        : "Search index counters were reset, but root browse already returns objects. Reusing the existing index.",
       report,
     );
     return;
@@ -259,6 +310,118 @@ async function mountMaterializedMirror(
   await pendingMountPromise;
 }
 
+type BootstrapKbOptions = {
+  forceRematerialize?: boolean;
+  reason?: string;
+  skipBackendStart?: boolean;
+};
+
+async function bootstrapKbExplorer(
+  context: vscode.ExtensionContext,
+  provider: GxFileSystemProvider,
+  shadowService: GxShadowService,
+  treeProvider: GxTreeProvider,
+  options: BootstrapKbOptions = {},
+): Promise<void> {
+  if (!pendingKbBootstrapPromise) {
+    const forceRematerialize = options.forceRematerialize === true;
+    const reason = options.reason ?? "manual request";
+    const skipBackendStart = options.skipBackendStart === true;
+
+    pendingKbBootstrapPromise = (async () => {
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Window,
+            title: "GeneXus KB",
+          },
+          async (progress) => {
+            const report: BootstrapReporter = (message) => {
+              progress.report({ message });
+            };
+
+            reportBootstrapStatus(`Preparing KB Explorer for ${reason}.`, report);
+
+            if (!skipBackendStart) {
+              const started = await backendManager.start(provider, true);
+              if (!started) {
+                throw new Error(`Backend could not be started for ${reason}.`);
+              }
+            }
+
+            await provider.initKb();
+            shadowService.consolidateLegacyMirrorFiles();
+
+            const shadowDirExists = fs.existsSync(shadowService.shadowRoot);
+            const mirrorReady =
+              shadowDirExists && shadowService.hasMaterializedWorkspace();
+
+            if (!forceRematerialize && mirrorReady) {
+              reportBootstrapStatus("Existing mirror is valid. Refreshing Explorer views.", report);
+              treeProvider.refresh();
+              provider.clearDirCache();
+              await mountMaterializedMirror(context, provider, shadowService.shadowRoot);
+              provider.warmMetadataAfterBootstrap();
+              return;
+            }
+
+            provider.isWorkspaceHydrating = true;
+            try {
+              shadowService.resetMirrorWorkspace();
+              reportBootstrapStatus("Mirror reset complete. Ensuring search index is ready...", report);
+              await ensureSearchIndexReady(provider, report);
+              reportBootstrapStatus("Materializing workspace mirror...", report);
+              await shadowService.materializeWorkspaceWithProgress(provider, (state) => {
+                const currentParent =
+                  state.currentParent === ROOT_PARENT_NAME ? "KB root" : state.currentParent;
+                report(
+                  `${state.directoriesCreated} pastas, ${state.filesPrepared} arquivos, atual: ${currentParent}`,
+                );
+              });
+            } finally {
+              provider.isWorkspaceHydrating = false;
+            }
+
+            treeProvider.refresh();
+            provider.clearDirCache();
+            await mountMaterializedMirror(context, provider, shadowService.shadowRoot);
+            provider.warmMetadataAfterBootstrap();
+            vscode.window.setStatusBarMessage(
+              "$(check) GeneXus: Workspace espelho pronto",
+              DEFAULT_STATUS_BAR_TIMEOUT,
+            );
+          },
+        );
+      } finally {
+        pendingKbBootstrapPromise = undefined;
+      }
+    })();
+  }
+
+  await pendingKbBootstrapPromise;
+}
+
+export async function ensureKbExplorerReady(
+  context: vscode.ExtensionContext,
+  options: BootstrapKbOptions = {},
+): Promise<void> {
+  if (initializationPromise) {
+    await initializationPromise;
+  }
+
+  if (!activeProvider || !activeTreeProvider || !activeShadowService) {
+    throw new Error("Extension services are not ready yet.");
+  }
+
+  await bootstrapKbExplorer(
+    context,
+    activeProvider,
+    activeShadowService,
+    activeTreeProvider,
+    options,
+  );
+}
+
 export function activate(context: vscode.ExtensionContext) {
   if (isActivated) {
     console.log("[Nexus IDE] Activation skipped; extension already initialized.");
@@ -271,23 +434,33 @@ export function activate(context: vscode.ExtensionContext) {
   appendLifecycleLog("[Nexus IDE] activate()");
 
   const provider = new GxFileSystemProvider();
+  activeProvider = provider;
   context.subscriptions.push(getBootstrapOutput());
 
   // 1. REGISTER COMMANDS FIRST (Ensure they are always available)
   context.subscriptions.push(
-    vscode.commands.registerCommand("nexus-ide.openKb", () => {
+    vscode.commands.registerCommand("nexus-ide.openKb", async () => {
       console.log("[Nexus IDE] Command 'nexus-ide.openKb' triggered.");
-      addKbFolder(context, 5, 2000, provider);
+      await ensureKbExplorerReady(context, {
+        forceRematerialize: false,
+        reason: "Open KB",
+      });
     }),
-    vscode.commands.registerCommand("nexus-ide.addKbFolder", () => {
+    vscode.commands.registerCommand("nexus-ide.addKbFolder", async () => {
       console.log("[Nexus IDE] Manual 'nexus-ide.addKbFolder' triggered.");
-      addKbFolder(context, 5, 2000, provider);
+      await ensureKbExplorerReady(context, {
+        forceRematerialize: false,
+        reason: "Force Add KB Folder",
+      });
     }),
-    vscode.commands.registerCommand("nexus-ide.refreshFilesystem", () => {
+    vscode.commands.registerCommand("nexus-ide.refreshFilesystem", async () => {
       console.log(
         "[Nexus IDE] Command 'nexus-ide.refreshFilesystem' triggered.",
       );
-      provider.clearDirCache();
+      await ensureKbExplorerReady(context, {
+        forceRematerialize: true,
+        reason: "Refresh KB Explorer",
+      });
     }),
   );
 
@@ -315,7 +488,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // 3. DEFERRED INITIALIZATION
-  setImmediate(async () => {
+  initializationPromise = (async () => {
     try {
       await initializeExtension(context, provider);
       console.log("[Nexus IDE] Initialization complete.");
@@ -325,6 +498,10 @@ export function activate(context: vscode.ExtensionContext) {
         console.error(`[Nexus IDE] Stack: ${e.stack}`);
       }
     }
+  })();
+
+  setImmediate(async () => {
+    await initializationPromise;
   });
 
   // Auto-add folder will now happen inside initializeExtension or on command
@@ -367,7 +544,7 @@ export async function addKbFolder(
 
     try {
       provider?.clearDirCache?.();
-      await vscode.commands.executeCommand("nexus-ide.refreshTree");
+      activeTreeProvider?.refresh();
     } catch (e) {
       console.warn("[Nexus IDE] Failed to refresh mounted mirror folder:", e);
       getBootstrapOutput().appendLine(
@@ -454,6 +631,8 @@ function initializeExtension(
     shadowService.shadowRoot,
     context.extensionUri,
   );
+  activeTreeProvider = treeProvider;
+  activeShadowService = shadowService;
 
   const shadowManager = new ShadowManager(
     context,
@@ -580,126 +759,11 @@ function initializeExtension(
         discoveryManager.register();
       }
 
-      // KB Initialization (Unified Flow) - Moved INSIDE .then to ensure backend is READY
-      console.log("[Nexus IDE] Initiating KB Initialization...");
       try {
-        await provider.initKb();
-        console.log("[Nexus IDE] KB background init complete.");
-
-        // Phase 1: Materialization (critical)
-        try {
-          console.log("[Nexus IDE] Phase 1: Checking mirror status...");
-          shadowService.consolidateLegacyMirrorFiles();
-          let mirrorReady = shadowService.hasMaterializedWorkspace();
-          const shadowDirExists = fs.existsSync(shadowService.shadowRoot);
-          
-          console.log(`[Nexus IDE] Mirror status: exists=${shadowDirExists}, ready=${mirrorReady}, path=${shadowService.shadowRoot}`);
-
-            if (shadowDirExists && mirrorReady) {
-              console.log("[Nexus IDE] Mirror already exists and is valid. Refreshing views...");
-              treeProvider.refresh();
-              provider.clearDirCache();
-              await mountMaterializedMirror(context, provider, shadowService.shadowRoot);
-              provider.warmMetadataAfterBootstrap();
-              vscode.window.setStatusBarMessage(
-                "$(check) GeneXus: Mirror pronto",
-                DEFAULT_STATUS_BAR_TIMEOUT,
-              );
-          } else {
-            // Final attempt at materialization with retry
-            reportBootstrapStatus("Mirror missing or empty. Starting materialization...");
-            provider.isWorkspaceHydrating = true;
-            vscode.window.setStatusBarMessage(
-              "$(sync~spin) GeneXus: Materializando workspace espelho...",
-              5000,
-            );
-            const matSuccess = await vscode.window.withProgress(
-              {
-                location: vscode.ProgressLocation.Window,
-                title: "GeneXus KB",
-              },
-              async (progress) => {
-                let success = false;
-                for (let attempt = 1; attempt <= 3; attempt++) {
-                  const attemptReporter: BootstrapReporter = (message) => {
-                    progress.report({ message: `Tentativa ${attempt}/3: ${message}` });
-                  };
-                  try {
-                    reportBootstrapStatus(`Materialization attempt ${attempt}/3...`, attemptReporter);
-                    if (attempt === 1) {
-                      shadowService.resetMirrorWorkspace();
-                      reportBootstrapStatus("Cleared stale mirror contents before materialization.", attemptReporter);
-                    }
-                    await ensureSearchIndexReady(provider, attemptReporter);
-                    progress.report({ message: `Tentativa ${attempt}/3: Montando estrutura do mirror...` });
-                    await shadowService.materializeWorkspaceWithProgress(provider, (state) => {
-                      const currentParent =
-                        state.currentParent === ROOT_PARENT_NAME ? "KB root" : state.currentParent;
-                      const progressMessage =
-                        `Tentativa ${attempt}/3: ${state.directoriesCreated} pastas, ${state.filesPrepared} arquivos, atual: ${currentParent}`;
-                      progress.report({ message: progressMessage });
-                      reportBootstrapStatus(
-                        `Materializing mirror: directories=${state.directoriesCreated}, files=${state.filesPrepared}, current=${currentParent}`,
-                      );
-                    });
-                    success = true;
-                    reportBootstrapStatus("Materialization successful.", attemptReporter);
-                    break;
-                  } catch (e) {
-                    console.error(`[Nexus IDE] Materialization attempt ${attempt} failed:`, e);
-                    reportBootstrapStatus(
-                      `Materialization attempt ${attempt}/3 failed: ${getErrorMessage(e)}`,
-                      (message) => progress.report({ message }),
-                    );
-                    if (isRootBrowseEmpty(e)) {
-                      reportBootstrapStatus(
-                        "Materialization detected an inconsistent root hierarchy. Forcing a KB reindex before retrying.",
-                        (message) => progress.report({ message }),
-                      );
-                      await rebuildSearchIndex(provider, attemptReporter);
-                      continue;
-                    }
-                    if (isGatewayConnectionRefused(e)) {
-                      const recovered = await recoverBackend(
-                        "materialization",
-                        (message) => progress.report({ message }),
-                      );
-                      if (recovered) {
-                        continue;
-                      }
-                    }
-                    if (attempt < 3) {
-                      await new Promise((r) => setTimeout(r, 4000));
-                    }
-                  }
-                }
-
-                return success;
-              },
-            );
-
-              if (matSuccess) {
-                 reportBootstrapStatus("Finalizing materialization: refreshing tree and cache.");
-                 treeProvider.refresh();
-                 provider.clearDirCache();
-                 await mountMaterializedMirror(context, provider, shadowService.shadowRoot);
-                 provider.warmMetadataAfterBootstrap();
-                  vscode.window.setStatusBarMessage(
-                    "$(check) GeneXus: Workspace espelho pronto",
-                    DEFAULT_STATUS_BAR_TIMEOUT,
-                  );
-            } else {
-                throw new Error("Maximum materialization attempts reached.");
-            }
-          }
-        } catch (matError) {
-          console.error("[Nexus IDE] Materialization failed:", matError);
-          vscode.window.showWarningMessage(
-            "GeneXus: Falha ao materializar workspace. Tente 'GeneXus: Open KB' manualmente.",
-          );
-        } finally {
-          provider.isWorkspaceHydrating = false;
-        }
+        await bootstrapKbExplorer(context, provider, shadowService, treeProvider, {
+          reason: "startup",
+          skipBackendStart: true,
+        });
       } catch (kbError) {
         console.error("[Nexus IDE] KB init failed:", kbError);
       }

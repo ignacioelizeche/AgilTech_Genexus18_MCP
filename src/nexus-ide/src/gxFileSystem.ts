@@ -8,14 +8,14 @@ import { GxUriParser } from "./utils/GxUriParser";
 import { formatMcpErrorMessage } from "./utils/McpErrorFormatter";
 import { GxPartMapper, TYPE_SUFFIX, VALID_TYPES } from "./utils/GxPartMapper";
 import { GxCacheManager } from "./managers/GxCacheManager";
-import { 
-  GX_SCHEME, 
-  DEFAULT_MCP_PORT, 
-  MODULE_SEARCH, 
-  MODULE_KB, 
+import {
+  GX_SCHEME,
+  DEFAULT_MCP_PORT,
+  MODULE_SEARCH,
+  MODULE_KB,
   MODULE_HEALTH,
   DEFAULT_STATUS_BAR_TIMEOUT,
-  ROOT_PARENT_NAME
+  ROOT_PARENT_NAME,
 } from "./constants";
 
 export { TYPE_SUFFIX };
@@ -242,9 +242,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
   }
 
   stat(uri: vscode.Uri): vscode.FileStat {
-    console.log(`[GxFS] stat: ${uri.toString()}`);
     const info = GxUriParser.parse(uri);
-    const pathStr = info ? info.path : "";
 
     // Support IDE metadata probes (VS Code / Antigravity)
     if (
@@ -313,10 +311,8 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
   async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
     try {
-      console.log(`[GxFS] readDirectory START: ${uri.toString()}`);
       const info = GxUriParser.parse(uri);
       const pathStr = info ? info.path : "";
-      console.log(`[GxFS] readDirectory pathStr: "${pathStr}"`);
 
       const parentName = (info?.path === "" || !info)
         ? ROOT_PARENT_NAME
@@ -328,11 +324,9 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
       const cached = this._cache.dirCache.get(cacheKey);
       if (cached && Date.now() - cached.time < 300000) {
-        console.log(`[GxFS] readDirectory CACHE HIT: ${cacheKey}`);
         return cached.entries;
       }
 
-      console.log(`[GxFS] readDirectory Fetching: ${parentName}`);
       let objects: any[] = [];
 
       if (VALID_TYPES.has(parentName) && pathSegments.length > 0) {
@@ -347,16 +341,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
             ? result
             : [];
       } else {
-        objects = await this.browseObjects(parentName);
-      }
-
-      console.log(
-        `[GxFS] readDirectory Gateway returned ${objects.length || 0} objects for ${parentName}`,
-      );
-      if (objects.length > 0) {
-        console.log(
-          `[GxFS] readDirectory First object example: ${JSON.stringify(objects[0]).substring(0, 100)}`,
-        );
+        objects = await this.browseObjects(pathStr);
       }
 
       if (Array.isArray(objects)) {
@@ -371,9 +356,6 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
           ];
         }) as [string, vscode.FileType][];
 
-        console.log(
-          `[GxFS] readDirectory Mapped ${mapped.length} entries. Updating cache.`,
-        );
         this._cache.dirCache.set(cacheKey, {
           entries: mapped,
           time: Date.now(),
@@ -639,6 +621,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
       limit?: number;
       offset?: number;
       parent?: string;
+      parentPath?: string;
       typeFilter?: string;
     },
     customTimeout?: number,
@@ -649,7 +632,8 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         ...(options?.filter ? { filter: options.filter } : {}),
         ...(options?.limit !== undefined ? { limit: options.limit } : {}),
         ...(options?.offset !== undefined ? { offset: options.offset } : {}),
-        ...(options?.parent ? { parent: options.parent } : {}),
+        ...(options?.parent !== undefined ? { parent: options.parent } : {}),
+        ...(options?.parentPath !== undefined ? { parentPath: options.parentPath } : {}),
         ...(options?.typeFilter ? { typeFilter: options.typeFilter } : {}),
       },
       customTimeout,
@@ -666,7 +650,10 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         : [];
   }
 
-  public async browseObjects(parentName: string): Promise<any[]> {
+  public async browseObjects(parentPath: string): Promise<any[]> {
+    const parentName = parentPath.length > 0
+      ? parentPath.split("/").filter((segment) => segment.length > 0).pop() ?? ROOT_PARENT_NAME
+      : ROOT_PARENT_NAME;
     const normalizeQueryResults = (result: any): any[] =>
       Array.isArray(result?.results)
         ? result.results
@@ -675,7 +662,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
             : [];
 
     const getEntryKey = (entry: any): string =>
-      `${String(entry?.type ?? "")}:${String(entry?.name ?? "")}`.toLowerCase();
+      `${String(entry?.type ?? "")}:${String(entry?.path ?? entry?.name ?? "")}`.toLowerCase();
 
     const getTypeSortBucket = (type: unknown): number => {
       const normalized = typeof type === "string" ? type.toLowerCase() : "";
@@ -750,9 +737,6 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
           const entries = normalizeQueryResults(typedResult);
           if (entries.length > 0) {
-            console.log(
-              `[GxFS] ${options?.scopeLabel ?? "typed browse"}: ${typeFilter} returned ${entries.length} item(s).`,
-            );
             collected.push(...entries);
             if (options?.stopOnFirstMatch) {
               break;
@@ -773,9 +757,31 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     };
 
     const isRootEntry = (entry: any): boolean => {
+      if (typeof entry?.parentPath === "string") {
+        return entry.parentPath.trim().length === 0;
+      }
       const entryParent =
         typeof entry?.parent === "string" ? entry.parent.trim() : "";
       return entryParent.length === 0 || entryParent === ROOT_PARENT_NAME;
+    };
+
+    const isDirectChild = (entry: any): boolean => {
+      if (!entry?.name || !entry?.type) {
+        return false;
+      }
+
+      if (typeof entry?.parentPath === "string") {
+        return entry.parentPath.trim() === parentPath;
+      }
+
+      const entryParent =
+        typeof entry?.parent === "string" ? entry.parent.trim() : "";
+
+      if (parentPath.length === 0) {
+        return entryParent.length === 0 || entryParent === ROOT_PARENT_NAME;
+      }
+
+      return entryParent === parentName;
     };
 
     const loadChildrenFromStructuralList = async (): Promise<any[]> => {
@@ -789,6 +795,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         const entries = await this.listObjects(
           {
             parent: parentName,
+            parentPath,
             limit: BROWSE_QUERY_LIMIT,
             offset,
           },
@@ -799,20 +806,9 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
           break;
         }
 
-        const normalizedPage = dedupeEntries(entries).filter((entry) => {
-          if (!entry?.name || !entry?.type) {
-            return false;
-          }
-
-          const entryParent =
-            typeof entry?.parent === "string" ? entry.parent.trim() : "";
-
-          if (parentName === ROOT_PARENT_NAME) {
-            return entryParent.length === 0 || entryParent === ROOT_PARENT_NAME;
-          }
-
-          return entryParent === parentName;
-        });
+        const normalizedPage = dedupeEntries(entries).filter((entry) =>
+          isDirectChild(entry),
+        );
 
         let pageAdded = 0;
         for (const entry of normalizedPage) {
@@ -929,13 +925,16 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
 
     let result: any;
     try {
+      const scopedQuery = parentPath.length === 0
+        ? "@quick"
+        : `parentPath:"${parentPath}" @quick`;
       result = await this.queryObjects(
-        `parent:"${parentName}" @quick`,
+        scopedQuery,
         BROWSE_QUERY_LIMIT,
         90000,
       );
     } catch (error) {
-      if (parentName === ROOT_PARENT_NAME) {
+      if (parentPath.length === 0) {
         const fallbackObjects = await loadRootFallback();
         if (fallbackObjects.length > 0) {
           console.warn(
@@ -948,7 +947,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
     }
 
     if (typeof result?.error === "string" && result.error.length > 0) {
-      if (parentName === ROOT_PARENT_NAME && /timeout gateway/i.test(result.error)) {
+      if (parentPath.length === 0 && /timeout gateway/i.test(result.error)) {
         const fallbackObjects = await loadRootFallback();
         if (fallbackObjects.length > 0) {
           console.warn(
@@ -960,9 +959,11 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
       throw new Error(result.error);
     }
 
-    const objects = normalizeQueryResults(result);
+    const objects = parentPath.length === 0
+      ? normalizeQueryResults(result).filter((entry) => isRootEntry(entry))
+      : normalizeQueryResults(result);
 
-    if (parentName === ROOT_PARENT_NAME && objects.length === 0) {
+    if (parentPath.length === 0 && objects.length === 0) {
       const fallbackObjects = await loadRootFallback();
       if (fallbackObjects.length > 0) {
         console.warn(
@@ -976,7 +977,7 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
       return objects;
     }
 
-      if (parentName === ROOT_PARENT_NAME) {
+      if (parentPath.length === 0) {
         const fallbackObjects = await loadRootFallback();
         if (fallbackObjects.length > 0) {
           console.warn(
@@ -986,14 +987,16 @@ export class GxFileSystemProvider implements vscode.FileSystemProvider {
         }
       }
 
-      return loadTypedQueriesSequentially(
-        `parent:"${parentName}" @quick`,
-        BROWSE_FALLBACK_TYPES,
-        90000,
-        {
-          scopeLabel: `typed child browse for ${parentName}`,
-        },
-      );
+      return parentPath.length === 0
+        ? loadRootFallback()
+        : loadTypedQueriesSequentially(
+            `parentPath:"${parentPath}" @quick`,
+            BROWSE_FALLBACK_TYPES,
+            90000,
+            {
+              scopeLabel: `typed child browse for ${parentPath}`,
+            },
+          );
     }
 
   public async readObjectVariables(name: string, customTimeout?: number): Promise<any[]> {

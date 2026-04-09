@@ -17,7 +17,7 @@ namespace GxMcp.Worker.Services
             _indexCacheService = indexCacheService;
         }
 
-        public string ListObjects(string filter, int limit, int offset, string parentFilter = null, string typeFilter = null)
+        public string ListObjects(string filter, int limit, int offset, string parentFilter = null, string typeFilter = null, string parentPathFilter = null)
         {
             try
             {
@@ -55,39 +55,53 @@ namespace GxMcp.Worker.Services
                 var index = _indexCacheService.GetIndex();
                 if (index != null && index.Objects.Count > 0)
                 {
-                    var entries = index.Objects.Values.AsEnumerable();
+                    bool preferIndexedHierarchy =
+                        parentPathFilter == null ||
+                        index.Objects.Values.Any(e => !string.IsNullOrWhiteSpace(e.ParentPath) || !string.IsNullOrWhiteSpace(e.Path));
 
-                    if (!string.IsNullOrWhiteSpace(parentFilter))
+                    if (preferIndexedHierarchy)
                     {
-                        entries = entries.Where(e => string.Equals(e.Parent ?? string.Empty, parentFilter, StringComparison.OrdinalIgnoreCase));
-                    }
+                        var entries = index.Objects.Values.AsEnumerable();
 
-                    if (filterTypes.Count > 0)
-                    {
-                        entries = entries.Where(e => filterTypes.Contains(e.Type ?? string.Empty));
-                    }
+                        if (parentPathFilter != null)
+                        {
+                            entries = entries.Where(e => string.Equals(e.ParentPath ?? string.Empty, parentPathFilter, StringComparison.OrdinalIgnoreCase));
+                        }
+                        else if (!string.IsNullOrWhiteSpace(parentFilter))
+                        {
+                            entries = entries.Where(e => string.Equals(e.Parent ?? string.Empty, parentFilter, StringComparison.OrdinalIgnoreCase));
+                        }
 
-                    if (!string.IsNullOrEmpty(nameFilter))
-                    {
-                        entries = entries.Where(e => (e.Name ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
-                    }
+                        if (filterTypes.Count > 0)
+                        {
+                            entries = entries.Where(e => filterTypes.Contains(e.Type ?? string.Empty));
+                        }
 
-                    foreach (var entry in entries
-                        .OrderBy(e => GetTypeSortBucket(e.Type))
-                        .ThenBy(e => e.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                        .ThenBy(e => e.Type ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                        .Skip(Math.Max(0, offset))
-                        .Take(limit <= 0 ? int.MaxValue : limit))
-                    {
-                        array.Add(BuildItem(
-                            entry.Name,
-                            entry.Type ?? "Unknown",
-                            entry.Description,
-                            entry.Parent ?? string.Empty
-                        ));
-                    }
+                        if (!string.IsNullOrEmpty(nameFilter))
+                        {
+                            entries = entries.Where(e => (e.Name ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                        }
 
-                    return array.ToString();
+                        foreach (var entry in entries
+                            .OrderBy(e => GetTypeSortBucket(e.Type))
+                            .ThenBy(e => e.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                            .ThenBy(e => e.Type ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                            .Skip(Math.Max(0, offset))
+                            .Take(limit <= 0 ? int.MaxValue : limit))
+                        {
+                            array.Add(BuildItem(
+                                entry.Name,
+                                entry.Type ?? "Unknown",
+                                entry.Description,
+                                entry.Parent ?? string.Empty,
+                                entry.Module ?? string.Empty,
+                                entry.Path ?? string.Empty,
+                                entry.ParentPath ?? string.Empty
+                            ));
+                        }
+
+                        return array.ToString();
+                    }
                 }
 
                 var kb = _kbService.GetKB();
@@ -103,7 +117,7 @@ namespace GxMcp.Worker.Services
                     .Select(obj => new RuntimeListEntry
                     {
                         Object = obj,
-                        ParentName = ResolveParentName(obj),
+                        Hierarchy = ResolveHierarchy(obj),
                         TypeName = obj.TypeDescriptor?.Name ?? "Unknown",
                     });
 
@@ -117,9 +131,13 @@ namespace GxMcp.Worker.Services
                     filteredObjects = filteredObjects.Where(x => x.Object.Name.IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
                 }
 
-                if (!string.IsNullOrWhiteSpace(parentFilter))
+                if (parentPathFilter != null)
                 {
-                    filteredObjects = filteredObjects.Where(x => string.Equals(x.ParentName, parentFilter, StringComparison.OrdinalIgnoreCase));
+                    filteredObjects = filteredObjects.Where(x => string.Equals(x.Hierarchy.ParentPath, parentPathFilter, StringComparison.OrdinalIgnoreCase));
+                }
+                else if (!string.IsNullOrWhiteSpace(parentFilter))
+                {
+                    filteredObjects = filteredObjects.Where(x => string.Equals(x.Hierarchy.ParentName, parentFilter, StringComparison.OrdinalIgnoreCase));
                 }
 
                 foreach (var item in filteredObjects
@@ -133,7 +151,10 @@ namespace GxMcp.Worker.Services
                         item.Object.Name,
                         item.TypeName,
                         item.Object.Description,
-                        item.ParentName
+                        item.Hierarchy.ParentName,
+                        item.Hierarchy.ModuleName,
+                        item.Hierarchy.Path,
+                        item.Hierarchy.ParentPath
                     ));
                 }
 
@@ -145,33 +166,106 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private JObject BuildItem(string name, string type, string description, string parent)
+        private JObject BuildItem(string name, string type, string description, string parent, string module, string path, string parentPath)
         {
             var item = new JObject();
             item["name"] = name;
             item["type"] = type;
             item["description"] = description;
             item["parent"] = parent;
+            item["module"] = module;
+            item["path"] = path;
+            item["parentPath"] = parentPath;
             return item;
         }
 
-        private string ResolveParentName(dynamic obj)
+        private HierarchyInfo ResolveHierarchy(dynamic obj)
         {
+            string parentName = string.Empty;
+            string moduleName = null;
+            var parentSegments = new List<string>();
+
             try
             {
-                if (obj.Parent != null && obj.Parent.Guid != obj.Guid)
+                dynamic currentParent = obj.Parent;
+                bool isImmediateParent = true;
+
+                while (currentParent != null)
                 {
-                    if (obj.Parent.TypeDescriptor.Name == "DesignModel") return "Root Module";
-                    if (obj.Parent is global::Artech.Architecture.Common.Objects.Module ||
-                        obj.Parent is global::Artech.Architecture.Common.Objects.Folder)
+                    try
                     {
-                        return obj.Parent.Name;
+                        if (currentParent.Guid == obj.Guid)
+                        {
+                            break;
+                        }
                     }
+                    catch
+                    {
+                    }
+
+                    string parentTypeName = null;
+                    try { parentTypeName = currentParent.TypeDescriptor?.Name; } catch { }
+
+                    if (string.Equals(parentTypeName, "DesignModel", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (isImmediateParent)
+                        {
+                            parentName = "Root Module";
+                        }
+                        break;
+                    }
+
+                    if (currentParent is global::Artech.Architecture.Common.Objects.Module ||
+                        currentParent is global::Artech.Architecture.Common.Objects.Folder)
+                    {
+                        string currentName = null;
+                        try { currentName = currentParent.Name; } catch { }
+
+                        if (!string.IsNullOrWhiteSpace(currentName))
+                        {
+                            parentSegments.Insert(0, currentName);
+                            if (isImmediateParent)
+                            {
+                                parentName = currentName;
+                            }
+
+                            if (moduleName == null &&
+                                currentParent is global::Artech.Architecture.Common.Objects.Module)
+                            {
+                                moduleName = currentName;
+                            }
+                        }
+                    }
+
+                    currentParent = currentParent.Parent;
+                    isImmediateParent = false;
                 }
             }
             catch { }
 
-            return string.Empty;
+            try
+            {
+                if (moduleName == null && obj.Module != null && obj.Module.Guid != obj.Guid)
+                {
+                    moduleName = obj.Module.Name;
+                }
+            }
+            catch
+            {
+            }
+
+            string parentPath = string.Join("/", parentSegments.Where(segment => !string.IsNullOrWhiteSpace(segment)));
+            string resolvedPath = string.IsNullOrWhiteSpace(obj.Name)
+                ? parentPath
+                : string.IsNullOrEmpty(parentPath) ? (string)obj.Name : parentPath + "/" + (string)obj.Name;
+
+            return new HierarchyInfo
+            {
+                ParentName = parentName,
+                ParentPath = parentPath,
+                Path = resolvedPath,
+                ModuleName = moduleName ?? string.Empty,
+            };
         }
 
         private bool IsLikelyType(string s)
@@ -194,8 +288,16 @@ namespace GxMcp.Worker.Services
         private sealed class RuntimeListEntry
         {
             public global::Artech.Architecture.Common.Objects.KBObject Object { get; set; }
-            public string ParentName { get; set; }
+            public HierarchyInfo Hierarchy { get; set; }
             public string TypeName { get; set; }
+        }
+
+        private sealed class HierarchyInfo
+        {
+            public string ParentName { get; set; }
+            public string ParentPath { get; set; }
+            public string Path { get; set; }
+            public string ModuleName { get; set; }
         }
     }
 }

@@ -9,7 +9,6 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\\..")
 $gatewayDir = Join-Path $repoRoot "src\\GxMcp.Gateway\\bin\\Debug\\net8.0-windows"
 $gatewayExe = Join-Path $gatewayDir "GxMcp.Gateway.exe"
 $configPath = if ($ConfigPath) { $ConfigPath } elseif ($env:GX_CONFIG_PATH) { $env:GX_CONFIG_PATH } else { Join-Path $repoRoot "config.json" }
-$wrapperScriptPath = Join-Path $PSScriptRoot "debug-gateway-wrapper.ps1"
 $gatewayLogPath = Join-Path $gatewayDir "gateway_debug.log"
 $gatewayPrevLogPath = Join-Path $gatewayDir "gateway_debug.prev.log"
 $workerLogPath = Join-Path $repoRoot "src\\GxMcp.Worker\\bin\\Debug\\worker_debug.log"
@@ -71,24 +70,12 @@ function Get-GatewayRuntimeProcess {
         }
 }
 
-function Get-DebugGatewayWrapperProcess {
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.Name -ieq 'powershell.exe' -and
-            $_.CommandLine -match 'debug-gateway-wrapper\.ps1'
-        }
-}
-
 if (-not (Test-Path $gatewayExe)) {
     throw "Debug gateway not found at $gatewayExe"
 }
 
 if (-not (Test-Path $configPath)) {
     throw "Canonical config not found at $configPath"
-}
-
-if (-not (Test-Path $wrapperScriptPath)) {
-    throw "Debug gateway wrapper not found at $wrapperScriptPath"
 }
 
 Get-ChildItem -Path $repoRoot -Force -Recurse -Filter ".mcp_config.json" -ErrorAction SilentlyContinue |
@@ -108,15 +95,13 @@ Write-Host "DEBUG_GATEWAY_STARTING"
 
 $runtime = Get-GatewayRuntimeProcess
 $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+$startedProcess = $null
 
 if (-not $runtime -and -not $listener) {
-    $commandLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""$wrapperScriptPath"""
-    $creationResult = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-        CommandLine = $commandLine
-    }
-
-    if (($creationResult.ReturnValue | Out-String).Trim() -ne "0") {
-        throw "Failed to launch detached debug gateway wrapper. Win32_Process.Create returned $($creationResult.ReturnValue)."
+    try {
+        $startedProcess = Start-Process -FilePath $gatewayExe -WorkingDirectory $gatewayDir -WindowStyle Hidden -PassThru
+    } catch {
+        throw "Failed to launch debug gateway runtime. $($_.Exception.Message)"
     }
 }
 
@@ -124,8 +109,20 @@ for ($attempt = 1; $attempt -le 240; $attempt++) {
     Start-Sleep -Milliseconds 500
 
     $runtime = Get-GatewayRuntimeProcess
-    $wrapper = Get-DebugGatewayWrapperProcess
-    if (-not $runtime -and -not $wrapper -and $attempt -gt 10) {
+    $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+
+    if ($startedProcess) {
+        try {
+            $startedProcess.Refresh()
+            if ($startedProcess.HasExited) {
+                throw "Debug gateway runtime exited during bootstrap with code $($startedProcess.ExitCode)."
+            }
+        } catch {
+            throw "$($_.Exception.Message) Check $gatewayLogPath"
+        }
+    }
+
+    if (-not $runtime -and -not $listener -and -not $startedProcess -and $attempt -gt 10) {
         throw "Debug gateway runtime process is not running."
     }
 
@@ -141,6 +138,9 @@ for ($attempt = 1; $attempt -le 240; $attempt++) {
         if ($workerText.Contains("Worker SDK ready.")) {
             Write-Host "DEBUG_GATEWAY_READY"
             $runtimeId = ($runtime | Select-Object -First 1 -ExpandProperty ProcessId)
+            if (-not $runtimeId -and $startedProcess) {
+                $runtimeId = $startedProcess.Id
+            }
             Write-Host "Debug gateway ready on port $port (PID $runtimeId)."
             exit 0
         }

@@ -9,6 +9,36 @@ namespace GxMcp.Worker.Structure
 {
     public static class PartAccessor
     {
+        public static bool MatchesSourcePart(string requestedPartName, string sourcePartName)
+        {
+            if (string.IsNullOrWhiteSpace(requestedPartName))
+            {
+                return false;
+            }
+
+            bool isEventsRequest = requestedPartName.Equals("Events", StringComparison.OrdinalIgnoreCase);
+            bool isSourceAliasRequest =
+                requestedPartName.Equals("Source", StringComparison.OrdinalIgnoreCase) ||
+                requestedPartName.Equals("Code", StringComparison.OrdinalIgnoreCase);
+
+            if (isEventsRequest)
+            {
+                return string.Equals(sourcePartName, "Events", StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (!isSourceAliasRequest)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(sourcePartName))
+            {
+                return true;
+            }
+
+            return !string.Equals(sourcePartName, "Events", StringComparison.OrdinalIgnoreCase);
+        }
+
         public static Guid GetPartGuid(string objType, string partName)
         {
             string p = partName.ToLower();
@@ -81,8 +111,13 @@ namespace GxMcp.Worker.Structure
             foreach (KBObjectPart p in obj.Parts)
             {
                 if (p.TypeDescriptor != null && p.TypeDescriptor.Name.Equals(partName, StringComparison.OrdinalIgnoreCase)) return p;
-                if (p is ISource && (partName.Equals("Source", StringComparison.OrdinalIgnoreCase) || partName.Equals("Code", StringComparison.OrdinalIgnoreCase) || partName.Equals("Events", StringComparison.OrdinalIgnoreCase))) return p;
+                if (p is ISource && MatchesSourcePart(partName, p.TypeDescriptor?.Name)) return p;
                 if (p.GetType().Name.Equals("VariablesPart") && partName.Equals("Variables", StringComparison.OrdinalIgnoreCase)) return p;
+            }
+
+            if (partName.Equals("Source", StringComparison.OrdinalIgnoreCase) || partName.Equals("Code", StringComparison.OrdinalIgnoreCase))
+            {
+                return obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p is ISource);
             }
 
             return null;

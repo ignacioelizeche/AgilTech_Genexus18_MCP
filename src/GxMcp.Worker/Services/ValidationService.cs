@@ -8,6 +8,7 @@ using Artech.Genexus.Common.Parts;
 using Artech.Common.Diagnostics;
 using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
+using GxMcp.Worker.Structure;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
@@ -58,18 +59,13 @@ namespace GxMcp.Worker.Services
                     }.ToString();
                 }
 
-                // 2. Find the part
-                string pName = partName.ToLower();
-                KBObjectPart part = null;
-                foreach (KBObjectPart p in obj.Parts)
-                {
-                    if ((pName == "source" || pName == "code" || pName == "events") && p is ISource) { part = p; break; }
-                    if (pName == "rules" && (p.GetType().Name.Contains("Rules") || p is global::Artech.Genexus.Common.Parts.RulesPart)) { part = p; break; }
-                }
+                // 2. Find the exact part that is being validated.
+                string normalizedPartName = string.IsNullOrWhiteSpace(partName) ? "Source" : partName;
+                KBObjectPart part = PartAccessor.GetPart(obj, normalizedPartName);
 
                 if (part == null) return "{\"status\":\"Success\", \"message\":\"Validation not applicable for this part type.\"}";
 
-                // 2. Capture errors using a mock transaction
+                // 3. Capture errors using a mock transaction
                 var kb = _kbService.GetKB();
                 using (var transaction = kb.BeginTransaction())
                 {
@@ -107,6 +103,7 @@ namespace GxMcp.Worker.Services
                             localIssue["description"] = localMsgs;
                             localIssue["severity"] = "Error";
                             localIssue["line"] = 1;
+                            localIssue["part"] = normalizedPartName;
                             issues.Add(localIssue);
                         }
 
@@ -120,6 +117,7 @@ namespace GxMcp.Worker.Services
                             err["description"] = saveError;
                             err["severity"] = "Error";
                             err["line"] = 1;
+                            err["part"] = normalizedPartName;
                             errors.Add(err);
                         }
 
