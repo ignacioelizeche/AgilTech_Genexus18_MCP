@@ -6,6 +6,14 @@ const fs = require('fs');
 const cwdConfigPath = path.join(process.cwd(), 'config.json');
 const args = process.argv.slice(2);
 
+function generateConfig(gxPath, kbPath) {
+    return {
+        GeneXus: { InstallationPath: gxPath },
+        Server: { HttpPort: 5000, McpStdio: true, SessionIdleTimeoutMinutes: 10, WorkerIdleTimeoutMinutes: 5 },
+        Environment: { KBPath: kbPath }
+    };
+}
+
 // Interactive Setup Wizard
 if (args[0] === 'init' || args[0] === 'setup') {
     console.log('================================================');
@@ -32,10 +40,7 @@ if (args[0] === 'init' || args[0] === 'setup') {
             const finalGx = gxAnswer.trim() || defaultGx;
             
             const targetConfigPath = path.join(finalKb, 'config.json');
-            const defaultConfig = {
-                GeneXus: { InstallationPath: finalGx },
-                Environment: { KBPath: finalKb }
-            };
+            const defaultConfig = generateConfig(finalGx, finalKb);
             
             try {
                 if (!fs.existsSync(finalKb)) fs.mkdirSync(finalKb, { recursive: true });
@@ -96,10 +101,16 @@ if (args[0] === 'init' || args[0] === 'setup') {
     return; // Stop execution
 }
 
-// Check if config.json exists in CWD. If so, bind it to GX_CONFIG_PATH.
-if (fs.existsSync(cwdConfigPath)) {
+// Priority 1: Explicitly passed GX_CONFIG_PATH
+if (process.env.GX_CONFIG_PATH) {
+    // Keep it, do nothing.
+} 
+// Priority 2: Config inside CWD
+else if (fs.existsSync(cwdConfigPath)) {
     process.env.GX_CONFIG_PATH = cwdConfigPath;
-} else if (!process.env.GX_CONFIG_PATH) {
+} 
+// Priority 3: Zero-Config Fallback
+else {
     const possibleGxPaths = [
         "C:\\Program Files (x86)\\GeneXus\\GeneXus18",
         "C:\\Program Files (x86)\\GeneXus\\GeneXus17",
@@ -126,10 +137,7 @@ if (fs.existsSync(cwdConfigPath)) {
             console.error(`[genexus-mcp] Auto-discovered GeneXus at: ${foundGxPath}`);
             console.error(`[genexus-mcp] Generating default config.json for KB at: ${process.cwd()}`);
             
-            const defaultConfig = {
-                GeneXus: { InstallationPath: foundGxPath },
-                Environment: { KBPath: process.cwd() }
-            };
+            const defaultConfig = generateConfig(foundGxPath, process.cwd());
             
             fs.writeFileSync(cwdConfigPath, JSON.stringify(defaultConfig, null, 2));
             process.env.GX_CONFIG_PATH = cwdConfigPath;
@@ -162,8 +170,7 @@ if (!fs.existsSync(gatewayExePath)) {
 const child = spawn(gatewayExePath, process.argv.slice(2), {
     stdio: 'inherit',
     env: process.env,
-    windowsHide: true,
-    shell: true
+    windowsHide: true
 });
 
 child.on('error', (err) => {

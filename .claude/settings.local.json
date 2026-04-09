@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(tail:*)",
-      "Bash(cd /c/Projetos/GenexusMCP/src/nexus-ide && npm run compile 2>&1)"
-    ]
-  }
-}
