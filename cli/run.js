@@ -40,12 +40,52 @@ if (args[0] === 'init' || args[0] === 'setup') {
             try {
                 if (!fs.existsSync(finalKb)) fs.mkdirSync(finalKb, { recursive: true });
                 fs.writeFileSync(targetConfigPath, JSON.stringify(defaultConfig, null, 2));
+                
+                const os = require('os');
                 console.log('\n✅ Success! Configuration saved at: ' + targetConfigPath + '\n');
-                console.log('If you are using a Global Agent (like Claude Desktop or Antigravity),');
-                console.log('you MUST copy this exact path and put it in your AI configuration:\n');
-                console.log(`    "env": {`);
-                console.log(`       "GX_CONFIG_PATH": "${targetConfigPath.replace(/\\/g, '\\\\')}"`);
-                console.log(`    }\n`);
+                
+                // AI Client Auto-Patching
+                const claudeWin = path.join(os.homedir(), 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json');
+                const claudeMac = path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+                const antigravityCfg = path.join(os.homedir(), '.gemini', 'antigravity', 'mcp_config.json');
+
+                const patchConfig = (cfgPath, clientName) => {
+                    if (fs.existsSync(cfgPath)) {
+                        try {
+                            const rawStr = fs.readFileSync(cfgPath, 'utf8');
+                            const cfgStr = rawStr.replace(/^\uFEFF/, ''); // Strip BOM if present
+                            let cfgObj = {};
+                            if (cfgStr.trim() !== '') cfgObj = JSON.parse(cfgStr);
+                            
+                            cfgObj.mcpServers = cfgObj.mcpServers || {};
+                            cfgObj.mcpServers["genexus"] = {
+                                command: process.platform === 'win32' ? "npx.cmd" : "npx",
+                                args: ["-y", "genexus-mcp@latest"],
+                                env: { "GX_CONFIG_PATH": targetConfigPath }
+                            };
+                            
+                            fs.writeFileSync(cfgPath, JSON.stringify(cfgObj, null, 2));
+                            console.log(`🤖 Auto-configured ${clientName} successfully!`);
+                            return true;
+                        } catch (e) {
+                            console.log(`⚠️  Found ${clientName} but couldn't parse its config: ${e.message}`);
+                        }
+                    }
+                    return false;
+                };
+
+                const claudePatched = patchConfig(claudeWin, 'Claude Desktop') || patchConfig(claudeMac, 'Claude Desktop');
+                const antiPatched = patchConfig(antigravityCfg, 'Antigravity');
+
+                if (claudePatched || antiPatched) {
+                    console.log('\n🎉 You are all set! Please restart your AI Assistant to connect to GeneXus.');
+                } else {
+                    console.log('If you are using a Global Agent (like Claude Desktop or Antigravity),');
+                    console.log('you MUST copy this exact path and put it in your AI configuration:\n');
+                    console.log(`    "env": {`);
+                    console.log(`       "GX_CONFIG_PATH": "${targetConfigPath.replace(/\\/g, '\\\\')}"`);
+                    console.log(`    }\n`);
+                }
             } catch (err) {
                 console.error('\n❌ Failed to save configuration: ' + err.message);
             }
