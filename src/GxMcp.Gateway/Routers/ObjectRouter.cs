@@ -53,7 +53,8 @@ namespace GxMcp.Gateway.Routers
                             operation = args?["operation"]?.ToString() ?? "Replace",
                             content = args?["content"]?.ToString(),
                             context = args?["context"]?.ToString(),
-                            expectedCount = 1
+                            expectedCount = args?["expectedCount"]?.ToObject<int?>() ?? 1,
+                            dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                         };
                     }
                     else
@@ -65,7 +66,17 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_read_source":
                     return new { module = "Read", action = "ExtractSource", target = target, part = part };
                 case "genexus_patch":
-                    return new { module = "Patch", action = "Apply", target = target, part = part, operation = args?["operation"]?.ToString(), content = args?["content"]?.ToString(), context = args?["context"]?.ToString() };
+                    return new {
+                        module = "Patch",
+                        action = "Apply",
+                        target = target,
+                        part = part,
+                        operation = args?["operation"]?.ToString(),
+                        content = args?["content"]?.ToString(),
+                        context = args?["context"]?.ToString(),
+                        expectedCount = args?["expectedCount"]?.ToObject<int?>() ?? 1,
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
+                    };
                 case "genexus_write_object":
                     return new { module = "Write", action = part, target = target, payload = args?["code"]?.ToString() };
                 case "genexus_get_variables":

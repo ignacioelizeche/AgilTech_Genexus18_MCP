@@ -53,6 +53,46 @@ If initialization fails, verify `MCP-Protocol-Version: 2025-06-18`.
 
 If discovery works but `tools/call` fails, inspect worker startup and GeneXus SDK loading. The gateway can initialize without a healthy worker, but execution calls cannot succeed.
 
+### Long-running tool timeout with operation tracking
+
+When a tool exceeds the gateway timeout budget, the request may continue in the worker.
+
+The timeout error now includes:
+
+- `operationId`
+- `correlationId`
+
+Use:
+
+- `genexus_lifecycle(action='status', target='op:<operationId>')`
+- `genexus_lifecycle(action='result', target='op:<operationId>')`
+
+Automated smoke script:
+
+- `powershell -ExecutionPolicy Bypass -File scripts/mcp_smoke.ps1`
+
+You can also stream status via SSE (`GET /mcp`) and listen for `notifications/message` entries emitted by the gateway.
+
+### Patch ambiguity and no-match diagnostics
+
+For `genexus_edit(mode='patch')`, the worker now emits explicit patch statuses:
+
+- `Applied`
+- `NoChange`
+- `NoMatch`
+- `Ambiguous`
+- `Error`
+
+Prefer checking `patchStatus` and `details` before retrying with larger payload changes.
+
+### Save fallback diagnostics
+
+When source-part saves use fallback strategy (`object_save_only`), this is surfaced in response metadata (`retryStrategy`) and gateway metrics.
+
+Fetch aggregate metrics with:
+
+- `genexus_lifecycle(action='status', target='gateway:metrics')`
+
 ## What changed from the old model
 
 - HTTP MCP is active and official.

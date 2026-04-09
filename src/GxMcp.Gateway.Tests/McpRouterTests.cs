@@ -164,6 +164,20 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
+        public void Handle_CompletionComplete_ShouldSuggestLifecycleResultAction()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"completion/complete","params":{"ref":{"type":"ref/tool","name":"genexus_lifecycle"},"argument":{"name":"action","value":"res"}}}"""
+            );
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var values = (JArray)json["completion"]!["values"]!;
+            Assert.Contains(values, value => value?["value"]?.ToString() == "result");
+        }
+
+        [Fact]
         public void Handle_CompletionComplete_ShouldSuggestPatternParts()
         {
             var request = JObject.Parse(
@@ -293,6 +307,23 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
+        public void ConvertToolCall_ShouldMapPatchExpectedCountAndDryRun()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_edit","arguments":{"name":"InvoiceHelper","part":"Events","mode":"patch","operation":"Replace","context":"old","content":"new","expectedCount":2,"dryRun":true}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Patch", json["module"]?.ToString());
+            Assert.Equal("Apply", json["action"]?.ToString());
+            Assert.Equal("InvoiceHelper", json["target"]?.ToString());
+            Assert.Equal(2, json["expectedCount"]?.Value<int>());
+            Assert.True(json["dryRun"]?.Value<bool>() == true);
+        }
+
+        [Fact]
         public void ConvertToolCall_ShouldMapRefactorRenameVariableTool()
         {
             var request = JObject.Parse(
@@ -360,7 +391,7 @@ namespace GxMcp.Gateway.Tests
         public void ConvertToolCall_ShouldMapQueryFilters()
         {
             var request = JObject.Parse(
-                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_query","arguments":{"query":"parent:\"Root Module\" @quick","limit":5000,"typeFilter":"Folder","domainFilter":"Academic"}}}"""
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_query","arguments":{"query":"parentPath:\"ModuloA/Procs\" @quick","limit":5000,"typeFilter":"Folder","domainFilter":"Academic"}}}"""
             );
 
             var result = McpRouter.ConvertToolCall(request);
@@ -368,10 +399,29 @@ namespace GxMcp.Gateway.Tests
             var json = JObject.FromObject(result!);
             Assert.Equal("Search", json["module"]?.ToString());
             Assert.Equal("Query", json["action"]?.ToString());
-            Assert.Equal("parent:\"Root Module\" @quick", json["target"]?.ToString());
+            Assert.Equal("parentPath:\"ModuloA/Procs\" @quick", json["target"]?.ToString());
             Assert.Equal("Folder", json["typeFilter"]?.ToString());
             Assert.Equal("Academic", json["domainFilter"]?.ToString());
             Assert.Equal(5000, json["limit"]?.Value<int>());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapListObjectsParentPath()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_list_objects","arguments":{"filter":"","limit":200,"offset":20,"parent":"Procs","parentPath":"ModuloA/Procs","typeFilter":"Procedure"}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("List", json["module"]?.ToString());
+            Assert.Equal("Objects", json["action"]?.ToString());
+            Assert.Equal("Procs", json["parent"]?.ToString());
+            Assert.Equal("ModuloA/Procs", json["parentPath"]?.ToString());
+            Assert.Equal("Procedure", json["typeFilter"]?.ToString());
+            Assert.Equal(200, json["limit"]?.Value<int>());
+            Assert.Equal(20, json["offset"]?.Value<int>());
         }
 
         [Fact]

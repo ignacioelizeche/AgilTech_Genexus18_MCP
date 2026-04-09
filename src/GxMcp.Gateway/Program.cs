@@ -22,9 +22,20 @@ namespace GxMcp.Gateway
     class Program
     {
         private static WorkerProcess? _worker;
-        private static ConcurrentDictionary<string, TaskCompletionSource<string>> _pendingRequests = new ConcurrentDictionary<string, TaskCompletionSource<string>>();
+        private sealed class PendingWorkerRequest
+        {
+            public TaskCompletionSource<string> CompletionSource { get; init; } = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            public string ToolName { get; init; } = "unknown";
+            public string CorrelationId { get; init; } = string.Empty;
+            public string? OperationId { get; init; }
+            public DateTime CreatedAtUtc { get; init; } = DateTime.UtcNow;
+        }
+
+        private static ConcurrentDictionary<string, PendingWorkerRequest> _pendingRequests = new ConcurrentDictionary<string, PendingWorkerRequest>();
         private static ConcurrentDictionary<string, JObject> _semanticCache = new ConcurrentDictionary<string, JObject>();
         private static HttpSessionRegistry _httpSessions = new HttpSessionRegistry(TimeSpan.FromMinutes(10));
+        private static readonly OperationTracker _operationTracker = new OperationTracker(TimeSpan.FromMinutes(60));
+        private static readonly TimeSpan _pendingRequestRetention = TimeSpan.FromMinutes(65);
         private static readonly string _logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gateway_debug.log");
         private static readonly BlockingCollection<string> _logQueue = new BlockingCollection<string>();
         private static readonly string[] _defaultLocalOrigins = new[]
@@ -84,11 +95,49 @@ namespace GxMcp.Gateway
                     {
                         Log($"[HTTP] Removed {removed} expired MCP session(s).");
                     }
+
+                    _operationTracker.CleanupExpired();
+                    int stalePending = CleanupStalePendingRequests();
+                    if (stalePending > 0)
+                    {
+                        Log($"[Gateway] Removed {stalePending} stale pending worker request(s).");
+                    }
                 }
             }
             catch (OperationCanceledException)
             {
             }
+        }
+
+        private static int CleanupStalePendingRequests()
+        {
+            int removed = 0;
+            DateTime cutoff = DateTime.UtcNow - _pendingRequestRetention;
+            foreach (var kvp in _pendingRequests.ToArray())
+            {
+                if (kvp.Value.CreatedAtUtc > cutoff)
+                {
+                    continue;
+                }
+
+                if (_pendingRequests.TryRemove(kvp.Key, out var pending))
+                {
+                    _operationTracker.MarkFailedByRequest(kvp.Key, "Pending worker request expired before completion.");
+                    pending.CompletionSource.TrySetResult(JsonConvert.SerializeObject(new
+                    {
+                        jsonrpc = "2.0",
+                        id = kvp.Key,
+                        error = new
+                        {
+                            code = -32603,
+                            message = "Pending worker request expired before completion."
+                        }
+                    }));
+                    removed++;
+                }
+            }
+
+            return removed;
         }
 
         private static void BroadcastNotification(string method, object payload)
@@ -488,16 +537,18 @@ namespace GxMcp.Gateway
             _worker.OnRpcResponse += HandleWorkerResponse;
             _worker.OnWorkerExited += () => {
                 Log("Worker Process Exited. Notifying all pending requests...");
-                foreach (var id in _pendingRequests.Keys)
+                foreach (var kvp in _pendingRequests.ToArray())
                 {
-                    if (_pendingRequests.TryRemove(id, out var tcs))
+                    string id = kvp.Key;
+                    if (_pendingRequests.TryRemove(id, out var pending))
                     {
+                        _operationTracker.MarkFailedByRequest(id, "GeneXus MCP Worker crashed/exited.");
                         var errorJson = JsonConvert.SerializeObject(new { 
                             jsonrpc = "2.0", 
                             id = id, 
                             error = new { code = -32603, message = "GeneXus MCP Worker crashed/exited." } 
                         });
-                        tcs.TrySetResult(errorJson);
+                        pending.CompletionSource.TrySetResult(errorJson);
                     }
                 }
             };
@@ -536,8 +587,24 @@ namespace GxMcp.Gateway
                     return;
                 }
 
-                if (_pendingRequests.TryRemove(id, out var tcs))
-                    tcs.SetResult(json);
+                _operationTracker.CompleteFromWorker(id, val);
+                if (_pendingRequests.TryRemove(id, out var pending))
+                {
+                    pending.CompletionSource.TrySetResult(json);
+                    if (!string.IsNullOrWhiteSpace(pending.OperationId))
+                    {
+                        BroadcastNotification("notifications/message", new
+                        {
+                            level = "info",
+                            logger = "operation",
+                            data = $"Operation {pending.OperationId} finished.",
+                            operationId = pending.OperationId,
+                            correlationId = pending.CorrelationId,
+                            status = val["error"] != null ? "Failed" : "Completed",
+                            timestamp = DateTime.UtcNow
+                        });
+                    }
+                }
             } catch (Exception ex) { Log($"HandleWorkerResponse Error: {ex.Message}"); }
         }
 
@@ -560,24 +627,80 @@ namespace GxMcp.Gateway
             int timeoutMs,
             string timeoutLogMessage,
             Func<JObject, JObject> onSuccess,
-            Func<JObject> onTimeout)
+            Func<string?, string, JObject> onTimeout,
+            string toolName = "unknown",
+            JObject? toolArgs = null,
+            bool trackOperation = false)
         {
             string requestId = Guid.NewGuid().ToString();
-            var tcs = new TaskCompletionSource<string>();
-            _pendingRequests[requestId] = tcs;
+            string correlationId = Guid.NewGuid().ToString("N");
+            string? operationId = null;
+
+            if (trackOperation)
+            {
+                operationId = _operationTracker.StartOperation(requestId, toolName, toolArgs, correlationId);
+                BroadcastNotification("notifications/message", new
+                {
+                    level = "info",
+                    logger = "operation",
+                    data = $"Operation {operationId} started for tool {toolName}.",
+                    operationId,
+                    correlationId,
+                    status = "Running",
+                    timestamp = DateTime.UtcNow
+                });
+            }
+
+            workerCommand["correlationId"] = correlationId;
+            var pending = new PendingWorkerRequest
+            {
+                CompletionSource = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously),
+                ToolName = toolName,
+                CorrelationId = correlationId,
+                OperationId = operationId,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            _pendingRequests[requestId] = pending;
 
             var workerRequest = BuildWorkerRpcRequest(workerCommand, requestId);
             await _worker!.SendCommandAsync(workerRequest.ToString(Formatting.None));
 
-            var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs));
-            if (completedTask == tcs.Task)
+            var completedTask = await Task.WhenAny(pending.CompletionSource.Task, Task.Delay(timeoutMs));
+            if (completedTask == pending.CompletionSource.Task)
             {
-                return onSuccess(JObject.Parse(await tcs.Task));
+                var workerResponse = JObject.Parse(await pending.CompletionSource.Task);
+                if (workerResponse["result"] is JObject workerResultObj && workerResultObj["correlationId"] == null)
+                {
+                    workerResultObj["correlationId"] = correlationId;
+                }
+                if (workerResponse["error"] is JObject workerErrorObj && workerErrorObj["correlationId"] == null)
+                {
+                    workerErrorObj["correlationId"] = correlationId;
+                }
+                return onSuccess(workerResponse);
             }
 
-            _pendingRequests.TryRemove(requestId, out _);
-            Log(timeoutLogMessage);
-            return onTimeout();
+            if (!string.IsNullOrWhiteSpace(operationId))
+            {
+                _operationTracker.MarkTimeout(operationId);
+                BroadcastNotification("notifications/message", new
+                {
+                    level = "warning",
+                    logger = "operation",
+                    data = $"Operation {operationId} is still running after timeout budget.",
+                    operationId,
+                    correlationId,
+                    status = "Running",
+                    timestamp = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                _pendingRequests.TryRemove(requestId, out _);
+            }
+
+            Log($"{timeoutLogMessage} (operationId={operationId ?? "n/a"}, correlationId={correlationId})");
+            return onTimeout(operationId, correlationId);
         }
 
         internal static int GetToolTimeoutMs(string? toolName, JObject? args)
@@ -685,12 +808,15 @@ namespace GxMcp.Gateway
                                 })
                             };
                         },
-                        () => new JObject
+                        (_, correlationId) => new JObject
                         {
                             ["jsonrpc"] = "2.0",
                             ["id"] = idToken?.DeepClone(),
-                            ["error"] = JToken.FromObject(new { code = -32000, message = "GeneXus MCP Worker timed out reading resource." })
-                        });
+                            ["error"] = JToken.FromObject(new { code = -32000, message = "GeneXus MCP Worker timed out reading resource.", correlationId })
+                        },
+                        toolName: "resources/read",
+                        toolArgs: request["params"] as JObject,
+                        trackOperation: false);
                 }
             }
 
@@ -700,6 +826,29 @@ namespace GxMcp.Gateway
                 var paramsObj = request["params"] as JObject;
                 string toolName = paramsObj?["name"]?.ToString() ?? "";
                 var args = paramsObj?["arguments"] as JObject;
+
+                if (string.Equals(toolName, "genexus_lifecycle", StringComparison.OrdinalIgnoreCase))
+                {
+                    string? lifecycleAction = args?["action"]?.ToString();
+                    string? lifecycleTarget = args?["target"]?.ToString();
+                    if ((string.Equals(lifecycleAction, "status", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(lifecycleAction, "result", StringComparison.OrdinalIgnoreCase)) &&
+                        !string.IsNullOrWhiteSpace(lifecycleTarget) &&
+                        lifecycleTarget.StartsWith("op:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string operationId = lifecycleTarget.Substring(3);
+                        JObject opPayload = string.Equals(lifecycleAction, "result", StringComparison.OrdinalIgnoreCase)
+                            ? _operationTracker.BuildOperationResult(operationId)
+                            : _operationTracker.BuildOperationStatus(operationId);
+                        return BuildToolTextResponse(idToken, opPayload, isError: string.Equals(opPayload["status"]?.ToString(), "NotFound", StringComparison.OrdinalIgnoreCase));
+                    }
+
+                    if (string.Equals(lifecycleAction, "status", StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(lifecycleTarget, "gateway:metrics", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return BuildToolTextResponse(idToken, _operationTracker.BuildMetricsPayload(), isError: false);
+                    }
+                }
                 
                 // 1. CACHE INVALIDATION: If it's a write operation or a re-index, clear the cache
                 if (IsMutatingTool(toolName, args))
@@ -797,12 +946,23 @@ namespace GxMcp.Gateway
 
                             return response;
                         },
-                        () => new JObject
+                        (operationId, correlationId) =>
                         {
-                            ["jsonrpc"] = "2.0",
-                            ["id"] = idToken?.DeepClone(),
-                            ["error"] = JToken.FromObject(new { code = -32603, message = $"GeneXus MCP Worker timed out executing tool: {toolName}" })
-                        });
+                            string message = $"GeneXus MCP Worker timed out executing tool: {toolName}";
+                            if (!string.IsNullOrWhiteSpace(operationId))
+                            {
+                                message += $". Operation is still running. Query genexus_lifecycle(action='status', target='op:{operationId}') or action='result'.";
+                            }
+                            return new JObject
+                            {
+                                ["jsonrpc"] = "2.0",
+                                ["id"] = idToken?.DeepClone(),
+                                ["error"] = JToken.FromObject(new { code = -32603, message, operationId, correlationId })
+                            };
+                        },
+                        toolName: toolName,
+                        toolArgs: args,
+                        trackOperation: true);
                 }
             }
 
@@ -982,6 +1142,20 @@ namespace GxMcp.Gateway
             }
 
             return false;
+        }
+
+        private static JObject BuildToolTextResponse(JToken? idToken, JToken payload, bool isError)
+        {
+            return new JObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["id"] = idToken?.DeepClone(),
+                ["result"] = JToken.FromObject(new
+                {
+                    content = new[] { new { type = "text", text = payload.ToString(Formatting.None) } },
+                    isError
+                })
+            };
         }
 
         private static bool IsOriginAllowed(string? origin, ServerConfig? serverConfig)

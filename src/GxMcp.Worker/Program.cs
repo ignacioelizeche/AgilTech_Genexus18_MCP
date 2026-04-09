@@ -247,7 +247,8 @@ namespace GxMcp.Worker
                 var obj = JObject.Parse(line);
                 string idJson = obj["id"]?.ToString() ?? "null";
                 string method = obj["method"]?.ToString();
-                Logger.Info($"[WORKER] Command: {method} ({idJson})");
+                string correlationId = obj["params"]?["correlationId"]?.ToString() ?? "n/a";
+                Logger.Info($"[WORKER] Command: {method} ({idJson}) [cid:{correlationId}]");
                 string result = _dispatcher.Dispatch(line);
                 SendResponse(result, idJson);
             } catch (Exception ex) { Logger.Error("ProcessCommand Error: " + ex.Message); }

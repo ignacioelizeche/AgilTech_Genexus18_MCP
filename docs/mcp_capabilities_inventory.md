@@ -21,9 +21,14 @@ Status values:
 Source of truth:
 - `src/GxMcp.Gateway/tool_definitions.json`
 
+Query notes:
+- `genexus_query` supports both the legacy `parent:"FolderName"` filter and the hierarchical `parentPath:"Module/Folder"` filter.
+- Prefer `parentPath` whenever the KB contains duplicate folder names under different modules.
+
 | Tool | Status | Worker path |
 | --- | --- | --- |
 | `genexus_query` | active | `Search -> Query` |
+| `genexus_list_objects` | active | `List -> Objects` |
 | `genexus_read` | active | `Read -> ExtractSource` |
 | `genexus_batch_read` | active | `Batch -> BatchRead` |
 | `genexus_edit` | active | `Write` or `Patch -> Apply` via router conversion |
@@ -91,9 +96,14 @@ Source of truth:
 | Capability | Status | Notes |
 | --- | --- | --- |
 | `notifications/initialized` | active | Handled as a no-op |
+| operation progress notification | active | Emitted through SSE as `notifications/message` with `operationId` and `correlationId` for long-running tools |
 | tools list changed notification | active | Emitted through the HTTP SSE session stream |
 | resources list changed notification | active | Emitted through the HTTP SSE session stream |
 | resource updated notification | active | Emitted through the HTTP SSE session stream |
+
+Operational notes:
+- `genexus_lifecycle(action='status'|'result', target='op:<operationId>')` resolves gateway-tracked MCP operations.
+- `genexus_lifecycle(action='status', target='gateway:metrics')` returns per-tool p50/p95 and error/timeout/no-change counters.
 
 ## Extension integration
 

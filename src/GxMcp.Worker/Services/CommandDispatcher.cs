@@ -193,7 +193,8 @@ namespace GxMcp.Worker.Services
                                 args?["limit"]?.ToObject<int?>() ?? 5000,
                                 args?["offset"]?.ToObject<int?>() ?? 0,
                                 args?["parent"]?.ToString(),
-                                args?["typeFilter"]?.ToString()
+                                args?["typeFilter"]?.ToString(),
+                                args?["parentPath"]?.ToString()
                             );
                         break;
                     case "read":
@@ -225,7 +226,15 @@ namespace GxMcp.Worker.Services
                         }
                         return _writeService.WriteObject(target, action, payload);
                     case "patch":
-                        if (action == "Apply") return _patchService.ApplyPatch(target, args?["part"]?.ToString(), args?["operation"]?.ToString(), payload, args?["context"]?.ToString(), 1, args?["type"]?.ToString());
+                        if (action == "Apply") return _patchService.ApplyPatch(
+                            target,
+                            args?["part"]?.ToString(),
+                            args?["operation"]?.ToString(),
+                            payload,
+                            args?["context"]?.ToString(),
+                            args?["expectedCount"]?.ToObject<int?>() ?? 1,
+                            args?["type"]?.ToString(),
+                            args?["dryRun"]?.ToObject<bool?>() ?? false);
                         break;
                     case "analyze":
                         if (action == "GetNavigation") return _navigationService.GetNavigation(target);

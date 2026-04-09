@@ -266,7 +266,7 @@ namespace GxMcp.Gateway
                 else if (refName == "genexus_forge")
                     values = _targetLanguages;
                 else if (refName == "genexus_lifecycle")
-                    values = new[] { "build", "rebuild", "reorg", "validate", "sync", "index", "status" };
+                    values = new[] { "build", "rebuild", "reorg", "validate", "sync", "index", "status", "result" };
                 else if (refName == "genexus_properties")
                     values = new[] { "get", "set" };
                 else if (refName == "genexus_asset")

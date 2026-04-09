@@ -36,11 +36,13 @@ namespace GxMcp.Worker.Services
                     string content = change["content"]?.ToString();
                     string context = change["context"]?.ToString();
                     string operation = change["operation"]?.ToString() ?? "Replace";
+                    int expectedCount = change["expectedCount"]?.ToObject<int?>() ?? 1;
+                    bool dryRun = change["dryRun"]?.ToObject<bool?>() ?? false;
 
                     string result;
                     if (mode == "patch")
                     {
-                        result = _patchService.ApplyPatch(target, part, operation, content, context);
+                        result = _patchService.ApplyPatch(target, part, operation, content, context, expectedCount, null, dryRun);
                     }
                     else
                     {

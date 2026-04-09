@@ -81,6 +81,23 @@ namespace GxMcp.Worker.Services
             }
         }
 
+        private void ScheduleFlush(bool force = false)
+        {
+            _pendingCommit = true;
+            if (force)
+            {
+                FlushBackground();
+                return;
+            }
+
+            lock (_flushLock)
+            {
+                if (_flushTimer == null) return;
+                _flushTimer.Stop();
+                _flushTimer.Start();
+            }
+        }
+
         private static string GetSdkMessagesSafe(object target)
         {
             try
@@ -201,7 +218,7 @@ namespace GxMcp.Worker.Services
                         try {
                             StructureParser.ParseFromText(objToUpdate, decodedCode);
                             objToUpdate.EnsureSave();
-                            FlushBackground();
+                            ScheduleFlush();
                             return Models.McpResponse.Success("Write", target, new JObject { ["details"] = "Structure DSL successfully applied" });
                         } catch (Exception ex) {
                             Logger.Error("[DEBUG-SAVE] Error parsing Structure DSL: " + ex.Message);
@@ -404,10 +421,8 @@ namespace GxMcp.Worker.Services
                         } catch (Exception ex) { Logger.Error("[DEBUG-SAVE] Background Index update failed: " + ex.Message); }
                     });
                     
-                    // Final persistence in background for "Fast Save"
-                    // Replace ScheduleFlush with explicit force commit to guarantee safety
-                    _pendingCommit = true;
-                    FlushBackground();
+                    // Final persistence with debounce to avoid sync commit on every write.
+                    ScheduleFlush();
 
                     Logger.Info("[DEBUG-SAVE] SAVE & COMMIT COMPLETE.");
                     return Models.McpResponse.Success("Write", target);
@@ -532,7 +547,7 @@ namespace GxMcp.Worker.Services
                 }
 
                 obj.EnsureSave();
-                FlushBackground();
+                ScheduleFlush();
                 
                 return "{\"status\": \"Success\"}";
             }
@@ -565,6 +580,25 @@ namespace GxMcp.Worker.Services
                 return CreateWriteError("Invalid visual XML", target, partName, ex.Message, obj);
             }
 
+            try
+            {
+                string currentXml = WebFormXmlHelper.ReadEditableXml(obj);
+                string normalizedCurrent = XDocument.Parse(currentXml, LoadOptions.PreserveWhitespace).ToString();
+                if (string.Equals(normalizedCurrent, normalizedInput, StringComparison.Ordinal))
+                {
+                    return Models.McpResponse.Success("Write", target, new JObject
+                    {
+                        ["status"] = "NoChange",
+                        ["part"] = partName,
+                        ["details"] = "No change"
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("[DEBUG-SAVE] Visual no-change precheck skipped: " + ex.Message);
+            }
+
             var kb = _objectService.GetKbService().GetKB();
             if (kb == null)
             {
@@ -587,7 +621,7 @@ namespace GxMcp.Worker.Services
 
                     obj.EnsureSave(true);
                     transaction.Commit();
-                    FlushBackground();
+                    ScheduleFlush();
 
                     var refreshedObj = _objectService.FindObject(target);
                     string persistedXml = WebFormXmlHelper.ReadEditableXml(refreshedObj ?? obj);
@@ -626,6 +660,27 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 return CreateWriteError("Invalid pattern XML", target, partName, ex.Message, obj);
+            }
+
+            try
+            {
+                string currentXml = _patternAnalysisService.ReadPatternPartXml(obj, partName, out _, out _);
+                string normalizedCurrent = string.IsNullOrWhiteSpace(currentXml)
+                    ? string.Empty
+                    : XDocument.Parse(currentXml, LoadOptions.PreserveWhitespace).ToString();
+                if (string.Equals(normalizedCurrent, normalizedInput, StringComparison.Ordinal))
+                {
+                    return Models.McpResponse.Success("Write", target, new JObject
+                    {
+                        ["status"] = "NoChange",
+                        ["part"] = partName,
+                        ["details"] = "No change"
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug("[DEBUG-SAVE] Pattern no-change precheck skipped: " + ex.Message);
             }
 
             LogRequestedPatternPayloadIfEnabled(normalizedInput);
@@ -672,7 +727,7 @@ namespace GxMcp.Worker.Services
                         resolvedObject.EnsureSave(true);
                     }
                     transaction.Commit();
-                    FlushBackground();
+                    ScheduleFlush();
 
                     string persistedXml = _patternAnalysisService.ReadPatternPartXml(obj, partName, out var refreshedObject, out _);
                     string normalizedPersisted = string.IsNullOrWhiteSpace(persistedXml)
