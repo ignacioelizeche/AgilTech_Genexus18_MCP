@@ -29,7 +29,7 @@ const child = spawn(gatewayExePath, process.argv.slice(2), {
     stdio: 'inherit',
     env: process.env,
     windowsHide: true,
-    shell: false
+    shell: true
 });
 
 child.on('error', (err) => {
