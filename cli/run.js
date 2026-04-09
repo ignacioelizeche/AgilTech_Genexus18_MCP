@@ -9,10 +9,39 @@ const cwdConfigPath = path.join(process.cwd(), 'config.json');
 if (fs.existsSync(cwdConfigPath)) {
     process.env.GX_CONFIG_PATH = cwdConfigPath;
 } else if (!process.env.GX_CONFIG_PATH) {
-    console.error('[genexus-mcp] ERROR: No config.json found in the current directory!');
-    console.error('[genexus-mcp] Please create a config.json file here with at least the KBPath and GeneXus InstallationPath.');
-    console.error('[genexus-mcp] Or specify the path via the GX_CONFIG_PATH environment variable.');
-    process.exit(1);
+    const possibleGxPaths = [
+        "C:\\Program Files (x86)\\GeneXus\\GeneXus18",
+        "C:\\Program Files (x86)\\GeneXus\\GeneXus17",
+        "C:\\Program Files (x86)\\GeneXus\\GeneXus16",
+        "C:\\Program Files\\GeneXus\\GeneXus18",
+        "C:\\Program Files\\GeneXus\\GeneXus17"
+    ];
+
+    let foundGxPath = null;
+    for (const p of possibleGxPaths) {
+        if (fs.existsSync(path.join(p, 'genexus.exe'))) {
+            foundGxPath = p;
+            break;
+        }
+    }
+
+    if (foundGxPath) {
+        console.error(`[genexus-mcp] Auto-discovered GeneXus at: ${foundGxPath}`);
+        console.error(`[genexus-mcp] Generating default config.json for KB at: ${process.cwd()}`);
+        
+        const defaultConfig = {
+            GeneXus: { InstallationPath: foundGxPath },
+            Environment: { KBPath: process.cwd() }
+        };
+        
+        fs.writeFileSync(cwdConfigPath, JSON.stringify(defaultConfig, null, 2));
+        process.env.GX_CONFIG_PATH = cwdConfigPath;
+    } else {
+        console.error('[genexus-mcp] ERROR: No config.json found in the current directory!');
+        console.error('[genexus-mcp] Auto-discovery for GeneXus installation failed.');
+        console.error('[genexus-mcp] Please create a config.json file manually with at least the KBPath and GeneXus InstallationPath.');
+        process.exit(1);
+    }
 }
 
 // Locate the bundled .NET executable inside the publish folder

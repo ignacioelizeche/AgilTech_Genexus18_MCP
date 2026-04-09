@@ -10,19 +10,10 @@ A high-performance Model Context Protocol (MCP) server for GeneXus 18. It integr
 
 You **do not** need to clone this repository or install anything globally if you have Node.js installed. You can configure your AI Assistant (Claude Desktop, Cursor, RooCode, etc.) to fetch and run the server dynamically!
 
-### 1. Create your Local Config
-Create a `config.json` inside your working directory telling the AI where your GeneXus is installed and which Knowledge Base you want to interact with:
+### 1. Go to your Knowledge Base folder
+You don't need to configure anything. By default, the `genexus-mcp` automatically discovers where GeneXus 18/17 is installed on your `C:\` drive and dynamically maps the Knowledge Base to your Current Working Directory!
 
-```json
-{
-  "GeneXus": { 
-    "InstallationPath": "C:\\Program Files (x86)\\GeneXus\\GeneXus18" 
-  },
-  "Environment": { 
-    "KBPath": "C:\\KBs\\YourKB" 
-  }
-}
-```
+*(If you are running the AI tool outside your KB directory, you can manually create a `config.json` with `Environment.KBPath` and `GeneXus.InstallationPath` to override the auto-discovery).*
 
 ### 2. Configure your AI Assistant
 Add the `mcpServers` configuration block into your AI tool (e.g. `claude_desktop_config.json`):
@@ -31,10 +22,7 @@ Add the `mcpServers` configuration block into your AI tool (e.g. `claude_desktop
 "mcpServers": {
   "genexus": {
     "command": "npx",
-    "args": ["-y", "genexus-mcp"],
-    "env": {
-      "GX_CONFIG_PATH": "C:\\path\\to\\your\\config.json"
-    }
+    "args": ["-y", "genexus-mcp@latest"]
   }
 }
 ```
