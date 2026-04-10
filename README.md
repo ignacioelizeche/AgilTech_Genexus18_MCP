@@ -10,14 +10,19 @@ A high-performance Model Context Protocol (MCP) server for GeneXus 18. It integr
 
 You **do NOT** need to clone this repository, and you **do NOT** need to install anything globally via `npm i -g`. The standard Node.js `npx` runner will dynamically fetch and launch the compiled gateway for you.
 
-### Step 1: Run the Setup Wizard
+### Step 1: Configure (Non-Interactive First)
 
-To initialize the configuration and connect your Knowledge Base, open any terminal (PowerShell, CMD, Bash) and run:
+To initialize configuration in a deterministic, agent-friendly way:
 
 ```bash
-npx genexus-mcp@latest init
+npx genexus-mcp@latest init --kb "C:\KBs\YourKB" --gx "C:\Program Files (x86)\GeneXus\GeneXus18"
 ```
-*(This command will automatically download the latest version, ask for your KB path, and auto-configure Claude Desktop and Antigravity for you!)*
+
+If you want the setup wizard prompts explicitly, run:
+
+```bash
+npx genexus-mcp@latest init --interactive
+```
 
 ### Step 2: Restart your AI Assistant
 
@@ -38,6 +43,35 @@ Please configure your Model Context Protocol (MCP) server to connect to my GeneX
 4. If you use a global configuration file (like `mcp_config.json` or `claude_desktop_config.json`), insert the exact `mcpServers` block provided in the console output. Use `npx.cmd` as the command.
 5. Provide a summary of the installation and notify me when you are ready to query GeneXus!
 ```
+
+---
+
+## AXI CLI Commands
+
+The package now includes agent-facing commands optimized for shell automation:
+
+```bash
+genexus-mcp status
+genexus-mcp doctor
+genexus-mcp tools list
+genexus-mcp config show
+```
+
+Global AXI flags:
+- `--format toon|json|text` (default for AXI commands: `toon`)
+- `--fields f1,f2,...` (minimal schema by default; request extra fields explicitly)
+- `--limit <n>` (for list commands)
+- `--query <text>` (for `tools list`)
+- `--full` (expand truncated long-form content when supported)
+- `--quiet` and `--no-color` (agent-safe output control)
+
+Notes:
+- Structured data/errors are emitted on `stdout`.
+- Diagnostic/progress output stays on `stderr`.
+- Use `genexus-mcp <command> --help` for command-specific usage/examples.
+- Output metadata includes `meta.schemaVersion` for contract stability.
+- Running `genexus-mcp` without an AXI subcommand keeps the original MCP gateway launcher behavior.
+- Full LLM-facing AXI contract: [`docs/axi_cli_contract.md`](docs/axi_cli_contract.md)
 
 ---
 
