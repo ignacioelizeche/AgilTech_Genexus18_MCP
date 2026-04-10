@@ -79,6 +79,12 @@ if ($null -eq $tools.result -or $null -eq $tools.result.tools) {
     throw "[SMOKE] tools/list did not return tool catalog."
 }
 
+Write-Host "[SMOKE] resources/list"
+$resources = Invoke-Mcp -Method "resources/list" -Params @{} -SessionId $sessionId -ResponseHeaders ([ref]$headersOut)
+if ($null -eq $resources.result -or $null -eq $resources.result.resources) {
+    throw "[SMOKE] resources/list did not return resources catalog."
+}
+
 Write-Host "[SMOKE] tools/call genexus_query"
 $queryCall = Invoke-Mcp -Method "tools/call" -Params @{
     name = "genexus_query"

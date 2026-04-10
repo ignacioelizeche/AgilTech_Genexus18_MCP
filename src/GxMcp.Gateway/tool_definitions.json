@@ -1,7 +1,7 @@
 [
   {
     "name": "genexus_query",
-    "description": "Semantic search for objects, references, and snippets. Supports prefixes like 'usedby:Name', 'type:Type', 'description:Text', 'parent:FolderName', and 'parentPath:\"Module/Folder\"'. NOTE: If this tool returns 'Index missing', you MUST run genexus_lifecycle(action='index') before searching again.",
+    "description": "Primary discovery tool. Start here to find objects and references before read/edit. Supports prefixes like 'usedby:Name', 'type:Type', 'description:Text', 'parent:FolderName', and 'parentPath:\"Module/Folder\"'. For token efficiency set limit and (optionally) fields/axiCompact. If it returns 'Index missing', run genexus_lifecycle(action='index') first.",
     "inputSchema": {
       "type": "object",
         "properties": {
@@ -30,7 +30,7 @@
   },
   {
     "name": "genexus_list_objects",
-    "description": "Lists objects and structural containers from the KB. Supports legacy parent-name filtering and canonical hierarchical filtering with 'parentPath' for module/folder disambiguation.",
+    "description": "Hierarchical object listing for navigation and pagination. Prefer parentPath over parent for disambiguation, and always pass limit/offset. Supports optional fields and axiCompact in MCP arguments.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -64,7 +64,7 @@
   },
   {
     "name": "genexus_read",
-    "description": "Reads source code or editable metadata from object parts such as Source, Rules, Events, Layout, WebForm, and WorkWithPlus PatternInstance. Source-first for MCP usage and supports pagination.",
+    "description": "Reads source/metadata parts. Use after discovery (query/list) and keep reads paginated with offset/limit. Supports parts like Source, Rules, Events, Layout, WebForm, PatternInstance, and PatternVirtual.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -129,7 +129,7 @@
   },
   {
     "name": "genexus_edit",
-    "description": "Updates object source code or editable metadata parts. Use 'mode=full' for complete overwrite or 'mode=patch' for surgical changes.",
+    "description": "Mutation tool for source/metadata. Prefer mode='patch' with dryRun=true + expectedCount before applying changes. Use mode='full' only for intentional full overwrite.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -433,7 +433,7 @@
   },
   {
     "name": "genexus_lifecycle",
-    "description": "KB state management: build, validate, sync, and indexing. For long-running MCP operations, query action='status' or action='result' with target='op:<operationId>'.",
+    "description": "Lifecycle and long-running operation control. Use for build/validate/index and for polling timed-out operations via action='status' or action='result' with target='op:<operationId>'.",
     "inputSchema": {
       "type": "object",
       "properties": {

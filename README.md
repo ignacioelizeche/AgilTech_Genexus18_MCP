@@ -51,8 +51,11 @@ Please configure your Model Context Protocol (MCP) server to connect to my GeneX
 The package now includes agent-facing commands optimized for shell automation:
 
 ```bash
+genexus-mcp home
+genexus-mcp axi home
+genexus-mcp llm help
 genexus-mcp status
-genexus-mcp doctor
+genexus-mcp doctor --mcp-smoke
 genexus-mcp tools list
 genexus-mcp config show
 ```
@@ -63,15 +66,21 @@ Global AXI flags:
 - `--limit <n>` (for list commands)
 - `--query <text>` (for `tools list`)
 - `--full` (expand truncated long-form content when supported)
+- `--mcp-smoke` (for `doctor`; executes protocol smoke checks)
 - `--quiet` and `--no-color` (agent-safe output control)
 
 Notes:
 - Structured data/errors are emitted on `stdout`.
 - Diagnostic/progress output stays on `stderr`.
+- `meta.command` is always present for stable command identity in AXI outputs.
 - Use `genexus-mcp <command> --help` for command-specific usage/examples.
 - Output metadata includes `meta.schemaVersion` for contract stability.
+- `--fields` is validated strictly per command; invalid fields return `usage_error` and exit code `2`.
 - Running `genexus-mcp` without an AXI subcommand keeps the original MCP gateway launcher behavior.
+- `genexus-mcp home` (`genexus-mcp axi home`) is the explicit content-first AXI entrypoint.
+- `genexus-mcp llm help` returns protocol-first usage guidance for agents.
 - Full LLM-facing AXI contract: [`docs/axi_cli_contract.md`](docs/axi_cli_contract.md)
+- LLM usage playbook (CLI + MCP best practices): [`docs/llm_cli_mcp_playbook.md`](docs/llm_cli_mcp_playbook.md)
 
 ---
 
@@ -85,6 +94,24 @@ Notes:
 - **History & DB**: `genexus_history`, `genexus_get_sql`, `genexus_structure`
 - **Lifecycle & Build**: `genexus_lifecycle`, `genexus_test`, `genexus_format`
 - **Patterns**: Smart XML generation and interpretation (e.g., WorkWithPlus PatternInstance mapping).
+
+### MCP tool response ergonomics
+
+For `tools/call`, the gateway keeps MCP compatibility and adds lightweight response metadata:
+
+- `meta.schemaVersion` currently `mcp-axi/1`
+- `meta.tool` with the normalized tool name
+- collection helpers such as `returned`, `total`, `empty`, and (when inferable) `hasMore` and `nextOffset`
+- truncation signals via `meta.truncated` plus contextual `help`
+
+For list-heavy calls (`genexus_query`, `genexus_list_objects`), optional arguments can reduce token usage:
+
+- `fields`: explicit projection (`["name","type"]` or `"name,type"`)
+- `axiCompact: true`: compact default projection
+
+Timeout behavior for long-running MCP tools:
+- Gateway may return `result.isError=true` with `status=Running` plus `operationId`/`correlationId`.
+- In this case, do not fail fast. Continue with `genexus_lifecycle(action='status'|'result', target='op:<operationId>')`.
 
 ---
 

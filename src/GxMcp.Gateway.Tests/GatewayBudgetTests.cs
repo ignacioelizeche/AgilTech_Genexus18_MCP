@@ -154,5 +154,210 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal(50000, obj["source"]?.Value<string>()?.Length);
             Assert.Null(obj["isTruncated"]);
         }
+
+        [Fact]
+        public void NormalizeToolPayloadForAxi_ShouldAddMetaAndListAggregates()
+        {
+            var payload = new JObject
+            {
+                ["count"] = 3,
+                ["results"] = new JArray(
+                    new JObject { ["name"] = "A" },
+                    new JObject { ["name"] = "B" })
+            };
+
+            var args = new JObject
+            {
+                ["limit"] = 2,
+                ["offset"] = 0
+            };
+
+            var method = typeof(Program).GetMethod(
+                "NormalizeToolPayloadForAxi",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var normalized = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_query", args, false });
+            Assert.NotNull(normalized);
+
+            var obj = Assert.IsType<JObject>(normalized);
+            Assert.Equal("mcp-axi/1", obj["meta"]?["schemaVersion"]?.ToString());
+            Assert.Equal("genexus_query", obj["meta"]?["tool"]?.ToString());
+            Assert.Equal(2, obj["returned"]?.Value<int>());
+            Assert.Equal(3, obj["total"]?.Value<int>());
+            Assert.False(obj["empty"]?.Value<bool>() ?? true);
+            Assert.True(obj["hasMore"]?.Value<bool>() ?? false);
+            Assert.Equal(2, obj["nextOffset"]?.Value<int>());
+        }
+
+        [Fact]
+        public void NormalizeToolPayloadForAxi_ShouldMarkNoChangeOnSuccessfulNoChangeWrite()
+        {
+            var payload = new JObject
+            {
+                ["status"] = "Success",
+                ["details"] = "No change"
+            };
+
+            var method = typeof(Program).GetMethod(
+                "NormalizeToolPayloadForAxi",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var normalized = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_edit", null, false });
+            Assert.NotNull(normalized);
+
+            var obj = Assert.IsType<JObject>(normalized);
+            Assert.True(obj["noChange"]?.Value<bool>() ?? false);
+            Assert.Equal("mcp-axi/1", obj["meta"]?["schemaVersion"]?.ToString());
+        }
+
+        [Fact]
+        public void NormalizeToolPayloadForAxi_ShouldAppendTruncationHintWhenTruncated()
+        {
+            var payload = new JObject
+            {
+                ["isTruncated"] = true,
+                ["source"] = "abc"
+            };
+
+            var method = typeof(Program).GetMethod(
+                "NormalizeToolPayloadForAxi",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var normalized = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_read", null, false });
+            Assert.NotNull(normalized);
+
+            var obj = Assert.IsType<JObject>(normalized);
+            Assert.True(obj["meta"]?["truncated"]?.Value<bool>() ?? false);
+            var help = Assert.IsType<JArray>(obj["help"]);
+            Assert.Contains(help, item => item?.ToString()?.Contains("Use limit/offset", StringComparison.OrdinalIgnoreCase) == true);
+        }
+
+        [Fact]
+        public void NormalizeToolPayloadForAxi_ShouldProjectRequestedFieldsForQuery()
+        {
+            var payload = new JObject
+            {
+                ["results"] = new JArray(
+                    new JObject { ["name"] = "A", ["type"] = "Procedure", ["path"] = "M/Procs", ["description"] = "Long text" })
+            };
+
+            var args = new JObject
+            {
+                ["fields"] = "name,type"
+            };
+
+            var method = typeof(Program).GetMethod(
+                "NormalizeToolPayloadForAxi",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var normalized = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_query", args, false });
+            var obj = Assert.IsType<JObject>(normalized);
+            var rows = Assert.IsType<JArray>(obj["results"]);
+            var first = Assert.IsType<JObject>(rows[0]);
+
+            Assert.NotNull(first["name"]);
+            Assert.NotNull(first["type"]);
+            Assert.Null(first["path"]);
+            Assert.Equal("name", obj["meta"]?["fields"]?[0]?.ToString());
+            Assert.Equal("type", obj["meta"]?["fields"]?[1]?.ToString());
+        }
+
+        [Fact]
+        public void NormalizeToolPayloadForAxi_ShouldApplyCompactDefaultsForListObjects()
+        {
+            var payload = new JObject
+            {
+                ["results"] = new JArray(
+                    new JObject
+                    {
+                        ["name"] = "InvoiceProc",
+                        ["type"] = "Procedure",
+                        ["path"] = "Main/Procs/InvoiceProc",
+                        ["parentPath"] = "Main/Procs",
+                        ["description"] = "verbose"
+                    })
+            };
+
+            var args = new JObject
+            {
+                ["axiCompact"] = true
+            };
+
+            var method = typeof(Program).GetMethod(
+                "NormalizeToolPayloadForAxi",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var normalized = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_list_objects", args, false });
+            var obj = Assert.IsType<JObject>(normalized);
+            var first = Assert.IsType<JObject>(Assert.IsType<JArray>(obj["results"])[0]);
+
+            Assert.NotNull(first["name"]);
+            Assert.NotNull(first["type"]);
+            Assert.NotNull(first["path"]);
+            Assert.NotNull(first["parentPath"]);
+            Assert.Null(first["description"]);
+        }
+
+        [Fact]
+        public void NormalizeToolPayloadForAxi_ShouldAddEmptyStateHelpForQuery()
+        {
+            var payload = new JObject
+            {
+                ["results"] = new JArray()
+            };
+
+            var method = typeof(Program).GetMethod(
+                "NormalizeToolPayloadForAxi",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var normalized = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_query", null, false });
+            var obj = Assert.IsType<JObject>(normalized);
+
+            Assert.True(obj["empty"]?.Value<bool>() ?? false);
+            var help = Assert.IsType<JArray>(obj["help"]);
+            Assert.Contains(help, item => item?.ToString()?.Contains("No matches found", StringComparison.OrdinalIgnoreCase) == true);
+        }
+
+        [Fact]
+        public void NormalizeToolPayloadForAxi_ShouldWrapArrayPayloadIntoResultsObject()
+        {
+            var payload = new JArray(
+                new JObject { ["name"] = "A", ["type"] = "Folder" },
+                new JObject { ["name"] = "B", ["type"] = "Procedure" }
+            );
+
+            var args = new JObject
+            {
+                ["limit"] = 10,
+                ["offset"] = 0
+            };
+
+            var method = typeof(Program).GetMethod(
+                "NormalizeToolPayloadForAxi",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            Assert.NotNull(method);
+
+            var normalized = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_list_objects", args, false });
+            var obj = Assert.IsType<JObject>(normalized);
+
+            Assert.Equal("mcp-axi/1", obj["meta"]?["schemaVersion"]?.ToString());
+            Assert.Equal("genexus_list_objects", obj["meta"]?["tool"]?.ToString());
+            Assert.Equal(2, obj["returned"]?.Value<int>());
+            Assert.False(obj["empty"]?.Value<bool>() ?? true);
+            Assert.True(obj["results"] is JArray);
+        }
     }
 }

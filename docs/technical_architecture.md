@@ -57,6 +57,23 @@ The extension uses this MCP discovery flow directly.
 - Worker lifecycle and restart boundaries
 - Dynamic tool publication from `tool_definitions.json`
 - Resource, prompt, and completion exposure
+- Additive response normalization for `tools/call` payloads (`mcp-axi/1` metadata and lightweight aggregates)
+
+## Tool call response contract (gateway-normalized)
+
+For MCP `tools/call`, the gateway returns standard MCP `content[].text`, but normalizes JSON payloads with additive metadata:
+
+- `meta.schemaVersion = "mcp-axi/1"`
+- `meta.tool = <tool-name>`
+- collection helpers when inferable: `returned`, `total`, `empty`, `hasMore`, `nextOffset`
+- truncation hints: `meta.truncated=true` plus actionable `help` message
+- idempotent marker: `noChange=true` when the worker reports successful no-op
+
+Compatibility rules:
+
+- Existing worker fields are preserved.
+- Enrichment is additive and does not change no-args launcher behavior.
+- Clients that ignore new fields remain compatible.
 
 ## Design constraints
 

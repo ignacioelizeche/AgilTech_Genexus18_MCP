@@ -29,6 +29,7 @@ namespace GxMcp.Gateway.Tests
             Assert.Contains(prompts, prompt => prompt?["name"]?.ToString() == "gx_convert_object");
             Assert.Contains(prompts, prompt => prompt?["name"]?.ToString() == "gx_trace_dependencies");
             Assert.Contains(prompts, prompt => prompt?["name"]?.ToString() == "gx_agent_ship_change");
+            Assert.Contains(prompts, prompt => prompt?["name"]?.ToString() == "gx_bootstrap_llm");
         }
 
         [Fact]
@@ -73,6 +74,7 @@ namespace GxMcp.Gateway.Tests
             var json = JObject.FromObject(result!);
             var resources = (JArray)json["resources"]!;
             Assert.Contains(resources, resource => resource?["uri"]?.ToString() == "genexus://kb/agent-playbook");
+            Assert.Contains(resources, resource => resource?["uri"]?.ToString() == "genexus://kb/llm-playbook");
         }
 
         [Fact]
@@ -89,6 +91,52 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal("text/markdown", first["mimeType"]?.ToString());
             Assert.Contains("GeneXus Agent Playbook", first["text"]?.ToString());
             Assert.Contains("Git-friendly", first["text"]?.ToString());
+        }
+
+        [Fact]
+        public void Handle_ResourcesRead_ShouldReturnLlmPlaybookContents()
+        {
+            var request = JObject.Parse("""{"jsonrpc":"2.0","id":"1","method":"resources/read","params":{"uri":"genexus://kb/llm-playbook"}}""");
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var contents = (JArray)json["contents"]!;
+            var first = (JObject)contents[0]!;
+            Assert.Equal("genexus://kb/llm-playbook", first["uri"]?.ToString());
+            Assert.Equal("text/markdown", first["mimeType"]?.ToString());
+            Assert.Contains("LLM CLI+MCP Playbook", first["text"]?.ToString());
+            Assert.Contains("mcp-axi/1", first["text"]?.ToString());
+        }
+
+        [Fact]
+        public void Handle_PromptsGet_ShouldBuildBootstrapLlmMessage()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"prompts/get","params":{"name":"gx_bootstrap_llm","arguments":{}}}"""
+            );
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var text = json["messages"]![0]!["content"]?["text"]?.ToString() ?? string.Empty;
+            Assert.Contains("genexus://kb/llm-playbook", text);
+            Assert.Contains("tools/list", text);
+            Assert.Contains("prompts/list", text);
+        }
+
+        [Fact]
+        public void Handle_PromptsGet_ShouldIncludeGoalWhenProvidedForBootstrapLlm()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"prompts/get","params":{"name":"gx_bootstrap_llm","arguments":{"goal":"Refactor invoice flow"}}}"""
+            );
+
+            var result = McpRouter.Handle(request);
+
+            var json = JObject.FromObject(result!);
+            var text = json["messages"]![0]!["content"]?["text"]?.ToString() ?? string.Empty;
+            Assert.Contains("Refactor invoice flow", text);
         }
 
         [Fact]

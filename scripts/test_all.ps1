@@ -56,6 +56,15 @@ try {
     Stop-Process -Id $gwProcess.Id -Force -ErrorAction SilentlyContinue
 }
 
+Write-Host "`n--- [2.5/3] Running LLM Contract Smoke ---" -ForegroundColor Cyan
+try {
+    powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "mcp_llm_contract_smoke.ps1")
+    if ($LASTEXITCODE -ne 0) { $hadFailures = $true }
+} catch {
+    Write-Host "LLM contract smoke failed: $_" -ForegroundColor Red
+    $hadFailures = $true
+}
+
 Write-Host "`n--- [3/3] Running Nexus IDE UI Tests ---" -ForegroundColor Cyan
 cd src/nexus-ide
 npm test

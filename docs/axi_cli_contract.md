@@ -2,14 +2,19 @@
 
 This document defines the machine-facing contract for `genexus-mcp` AXI commands.
 
+Companion document for mixed CLI+MCP agent flows:
+- [`docs/llm_cli_mcp_playbook.md`](llm_cli_mcp_playbook.md)
+
 ## Scope
 
 - AXI contract applies to explicit AXI subcommands:
+  - `home` (`axi home` alias)
   - `status`
   - `doctor`
   - `tools list`
   - `config show`
   - `init`
+  - `llm help`
   - `help`
 - MCP JSON-RPC passthrough mode remains unchanged when no AXI subcommand is used.
 
@@ -23,6 +28,7 @@ All AXI responses are structured with the same top-level envelope:
 - `meta` (object): diagnostics and protocol metadata
 
 `meta.schemaVersion` is always present and currently equals `axi-cli/1`.
+`meta.command` is always present and reports normalized command identity (`home`, `status`, `doctor`, `tools.list`, `config.show`, `init`, `llm.help`, `help`).
 
 ## Exit Codes
 
@@ -45,6 +51,19 @@ Supported via `--format`:
 - `json`
 - `text`
 
+## Field Validation (`--fields`)
+
+`--fields` is validated strictly per command. Invalid fields return:
+
+- `error.code = usage_error`
+- exit code `2`
+
+Allow-lists:
+
+- `doctor`: `id,status,detail`
+- `tools list`: `name,status,category,required,description,descriptionChars,truncated`
+- `config show`: `path,kbPath,gxPath,httpPort,mcpStdio,raw`
+
 ## Truncation Policy
 
 Large fields are truncated by default when supported by the command. Output includes:
@@ -59,6 +78,17 @@ Current commands with truncation behavior:
 - `config show` (`raw` JSON block)
 
 ## Command Contracts
+
+## `home` / `axi home`
+
+Content-first AXI entrypoint (without changing no-args MCP passthrough).
+
+Default schema:
+
+- `ok.bin`
+- `ok.description`
+- `ok.ready`
+- `ok.next`
 
 ## `status`
 
@@ -85,6 +115,7 @@ Includes:
 - `ok.returned` / `ok.total`
 
 With `--full`, includes runtime spawn probe.
+With `--mcp-smoke`, includes `mcp_smoke` check by running the smoke script (`initialize`, `tools/list`, `resources/list`, and follow-up probes).
 
 ## `tools list`
 
@@ -119,6 +150,18 @@ Idempotency:
 
 - if resulting config is unchanged, returns success with `ok.noOp = true`.
 
+## `llm help`
+
+Machine-readable orientation for agent usage of CLI + MCP.
+
+Default payload includes:
+- interface selection (`cli` vs `mcp`)
+- expected metadata contracts
+- timeout follow-up policy (`operationId` + `genexus_lifecycle`)
+- best-practice call patterns
+
+With `--full`, includes embedded markdown playbook when available.
+
 ## `help`
 
 Global and per-subcommand help:
@@ -142,6 +185,7 @@ Includes `ok.bin` (resolved executable path, home collapsed to `~`).
   },
   "help": [],
   "meta": {
+    "command": "status",
     "schemaVersion": "axi-cli/1"
   }
 }
@@ -152,6 +196,7 @@ Includes `ok.bin` (resolved executable path, home collapsed to `~`).
 ```text
 help: []
 meta:
+  command: status
   schemaVersion: axi-cli/1
 ok:
   configFound: true
@@ -164,7 +209,7 @@ ok:
 
 ```text
 ok: {"ready":true,"configFound":true,"gatewayExeFound":true,"kbLooksValid":true}
-meta: {"schemaVersion":"axi-cli/1"}
+meta: {"command":"status","schemaVersion":"axi-cli/1"}
 ```
 
 ## Definitive Empty State Example
@@ -182,14 +227,14 @@ meta: {"schemaVersion":"axi-cli/1"}
 AXI principle #8 recommends "content first" for no-args execution. This CLI intentionally preserves MCP launcher compatibility:
 
 - no args => MCP passthrough (required for existing MCP clients)
-- AXI content-first entrypoint => `genexus-mcp status`
+- AXI content-first entrypoint => `genexus-mcp home` (or `genexus-mcp axi home`)
 
 ## Session Hooks (Ambient Context)
 
 To avoid unwanted context bloat, automatic self-install hooks are not enabled in this release. Recommended explicit pattern:
 
 - Codex/Claude session-start hook command:
-  - `genexus-mcp status --format toon --quiet`
+  - `genexus-mcp home --format toon --quiet`
 
 This keeps ambient context opt-in and deterministic.
 
@@ -202,6 +247,6 @@ This keeps ambient context opt-in and deterministic.
 5. Definitive empty states: Yes (`tools list` explicit empty state)
 6. Structured errors & exit codes: Yes (`0/1/2`, structured `error`)
 7. Ambient context: Partially (documented opt-in; no auto-install)
-8. Content first: Partially (kept MCP no-args compatibility; `status` is AXI home)
+8. Content first: Partially (kept MCP no-args compatibility; `home` is AXI content-first entrypoint)
 9. Contextual disclosure: Yes (`help` next steps in outputs)
 10. Consistent help: Yes (`help` + per-command `--help` + `ok.bin`)

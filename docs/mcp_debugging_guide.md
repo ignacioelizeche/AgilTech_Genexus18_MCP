@@ -85,6 +85,26 @@ For `genexus_edit(mode='patch')`, the worker now emits explicit patch statuses:
 
 Prefer checking `patchStatus` and `details` before retrying with larger payload changes.
 
+### AXI-style MCP tool payload metadata
+
+`tools/call` responses may now include additive gateway metadata inside the JSON text payload:
+
+- `meta.schemaVersion` (current: `mcp-axi/1`)
+- `meta.tool`
+- list helpers (`returned`, `total`, `empty`, `hasMore`, `nextOffset`) when inferable
+- truncation signal (`meta.truncated=true`) and contextual `help` hints
+
+If a client seems to "lose fields", check whether `fields` or `axiCompact` was passed in the tool arguments for `genexus_query` or `genexus_list_objects`.
+
+### Field projection and compact mode
+
+For list-heavy calls:
+
+- `fields`: array or comma-separated list for explicit projection
+- `axiCompact=true`: compact defaults without changing tool semantics
+
+These options reduce token volume while preserving protocol compatibility.
+
 ### Save fallback diagnostics
 
 When source-part saves use fallback strategy (`object_save_only`), this is surfaced in response metadata (`retryStrategy`) and gateway metrics.

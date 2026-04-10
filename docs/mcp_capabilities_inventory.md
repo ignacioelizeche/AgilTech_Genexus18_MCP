@@ -2,6 +2,9 @@
 
 This document records the MCP-facing surface that is currently exposed by the repository.
 
+Agent usage reference:
+- [`docs/llm_cli_mcp_playbook.md`](llm_cli_mcp_playbook.md)
+
 Status values:
 - `active`: implemented and reachable through the current gateway-worker path
 - `partial`: implemented but still limited in scope or ergonomics
@@ -24,6 +27,22 @@ Source of truth:
 Query notes:
 - `genexus_query` supports both the legacy `parent:"FolderName"` filter and the hierarchical `parentPath:"Module/Folder"` filter.
 - Prefer `parentPath` whenever the KB contains duplicate folder names under different modules.
+
+Tool response notes (`tools/call` text payload):
+- Gateway now enriches worker payloads with AXI-like metadata under `meta`.
+- `meta.schemaVersion` currently uses `mcp-axi/1`.
+- `meta.tool` identifies the normalized tool name.
+- For collection responses, gateway may add `returned`, `total`, `empty`, `hasMore`, and `nextOffset` when enough context is available.
+- For truncated responses, gateway sets `meta.truncated=true` and appends an actionable `help` hint.
+- For idempotent success (`status=Success` + `details=No change`), gateway adds `noChange=true`.
+- For worker timeout budget events, gateway returns a structured payload with `result.isError=true`, `status=Running`, `operationId`, `correlationId`, and `help` follow-up guidance.
+- These enrichments are additive and keep existing response fields for backward compatibility.
+
+Optional response-shaping arguments for list-heavy tools:
+- `genexus_query` and `genexus_list_objects` accept optional `fields` (array or comma-separated string) for field projection.
+- `genexus_query` and `genexus_list_objects` accept optional `axiCompact=true` for compact default projection.
+- `meta.fields` is returned when field projection is active.
+- `meta.totalByType` may be emitted when result rows expose a `type` field.
 
 | Tool | Status | Worker path |
 | --- | --- | --- |
@@ -56,6 +75,7 @@ Query notes:
 | `genexus://kb/index-status` | active | KB indexing status |
 | `genexus://kb/health` | active | Gateway and worker health report |
 | `genexus://kb/agent-playbook` | active | Agent-native operating playbook for MCP, verification, and Git-friendly change control |
+| `genexus://kb/llm-playbook` | active | Protocol-first guide for LLM usage across CLI AXI and MCP tool flows |
 | `genexus://objects` | active | Browsable index of objects |
 | `genexus://attributes` | active | Browsable attribute listing |
 | `genexus://objects/{name}/part/{part}` | active | Part-specific object reading |
@@ -77,6 +97,7 @@ Query notes:
 | Prompt | Status | Notes |
 | --- | --- | --- |
 | `gx_explain_object` | active | Grounded explanation workflow using source, variables, navigation, and summary |
+| `gx_bootstrap_llm` | active | Session bootstrap workflow for protocol-first usage (`tools/list`, `resources/list`, `prompts/list`, `genexus://kb/llm-playbook`) with optional `goal` argument |
 | `gx_convert_object` | active | Conversion workflow with review gates and target-language argument |
 | `gx_review_transaction` | active | Transaction review workflow focused on structure, rules, and risks |
 | `gx_refactor_procedure` | active | Procedure refactor workflow focused on preserving behavior |

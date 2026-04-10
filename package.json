@@ -1,16 +1,18 @@
 {
   "name": "genexus-mcp",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "A high-performance Model Context Protocol (MCP) server for GeneXus 18",
   "scripts": {
-    "test": "node --test cli/run.test.js"
+    "test": "node --test cli/run.test.js",
+    "prepack": "node scripts/clean-package.js"
   },
   "bin": {
     "genexus-mcp": "cli/run.js"
   },
   "files": [
     "cli",
-    "publish"
+    "publish",
+    "docs/llm_cli_mcp_playbook.md"
   ],
   "engines": {
     "node": ">=18.0.0"

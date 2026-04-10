@@ -25,6 +25,40 @@ test('status returns structured json envelope with schema version', () => {
     assert.ok(parsed.ok);
     assert.equal(typeof parsed.ok.ready, 'boolean');
     assert.equal(parsed.meta.schemaVersion, 'axi-cli/1');
+    assert.equal(parsed.meta.command, 'status');
+});
+
+test('home command returns compact AXI orientation payload', () => {
+    const result = runCli(['home', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.meta.command, 'home');
+    assert.equal(typeof parsed.ok.bin, 'string');
+    assert.equal(typeof parsed.ok.description, 'string');
+    assert.equal(typeof parsed.ok.ready, 'boolean');
+    assert.ok(Array.isArray(parsed.ok.next));
+    assert.ok(parsed.ok.next.length >= 1);
+});
+
+test('axi home aliases to home response', () => {
+    const result = runCli(['axi', 'home', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.meta.command, 'home');
+    assert.equal(typeof parsed.ok.ready, 'boolean');
+});
+
+test('llm help returns machine-oriented usage guidance', () => {
+    const result = runCli(['llm', 'help', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.meta.command, 'llm.help');
+    assert.equal(typeof parsed.ok.objective, 'string');
+    assert.ok(Array.isArray(parsed.ok.resources));
+    assert.ok(parsed.ok.resources.includes('genexus://kb/llm-playbook'));
 });
 
 test('subcommand help works with status --help', () => {
@@ -118,6 +152,16 @@ test('tools list returns definitive empty state for no matches', () => {
     assert.ok(parsed.help.some((h) => h.toLowerCase().includes('no tools matched')));
 });
 
+test('tools list does not suggest --full when description is not requested', () => {
+    const result = runCli(['tools', 'list', '--limit', '3', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    assert.ok(Array.isArray(parsed.help));
+    assert.equal(parsed.help.some((h) => h.includes('--full')), false);
+    assert.equal(parsed.meta.truncated, false);
+});
+
 test('config show truncates large raw content and suggests --full', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
     const configPath = path.join(tempRoot, 'config.json');
@@ -143,6 +187,50 @@ test('config show truncates large raw content and suggests --full', () => {
     assert.ok(parsed.help.some((h) => h.includes('--full')));
 
     fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('config show suppresses truncation hint when raw field is not requested', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'genexus-mcp-test-'));
+    const configPath = path.join(tempRoot, 'config.json');
+    const largeComment = 'x'.repeat(1400);
+
+    const config = {
+        GeneXus: { InstallationPath: 'C:\\GX' },
+        Server: { HttpPort: 5000, McpStdio: true },
+        Environment: { KBPath: 'C:\\KB' },
+        Extra: largeComment
+    };
+
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+    const result = runCli(['config', 'show', '--fields', 'path,kbPath', '--format', 'json'], {
+        env: { GX_CONFIG_PATH: configPath }
+    });
+
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.meta.truncated, false);
+    assert.equal(parsed.help.length, 0);
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test('--fields validation returns usage error for invalid doctor field', () => {
+    const result = runCli(['doctor', '--fields', 'id,unknown', '--format', 'json']);
+    assert.equal(result.status, 2);
+
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.error.code, 'usage_error');
+});
+
+test('doctor --mcp-smoke adds explicit mcp_smoke check', () => {
+    const result = runCli(['doctor', '--mcp-smoke', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    const smoke = parsed.ok.checks.find((c) => c.id === 'mcp_smoke');
+    assert.ok(smoke);
+    assert.ok(['pass', 'warn', 'fail'].includes(smoke.status));
 });
 
 test('invalid format returns usage exit code 2', () => {

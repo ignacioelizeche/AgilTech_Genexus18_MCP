@@ -1,0 +1,13 @@
+# Runtime logs and transient diagnostics
+publish/*.log
+publish/**/*.log
+publish/**/*.prev.log
+publish/*panic*.log
+
+# Worker transient cache/index artifacts
+publish/worker/cache/
+publish/worker/search_index.json
+publish/worker/DataTracing.log
+
+# Local release scratch
+release/

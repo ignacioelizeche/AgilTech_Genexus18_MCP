@@ -10,7 +10,7 @@ namespace GxMcp.Gateway
 {
     public class McpRouter
     {
-        public const string ServerVersion = "1.1.0";
+        public const string ServerVersion = "1.1.7";
         public const string SupportedProtocolVersion = "2025-06-18";
         private static readonly string[] _objectParts = { "Source", "Rules", "Events", "Variables", "Structure", "Layout", "WebForm", "PatternInstance", "PatternVirtual" };
         private static readonly string[] _analysisIncludes = { "metadata", "variables", "signature", "structure" };
@@ -118,6 +118,7 @@ namespace GxMcp.Gateway
                             new { uri = "genexus://kb/index-status", name = "KB Index Status", description = "Current indexing status for the active Knowledge Base." },
                             new { uri = "genexus://kb/health", name = "Gateway Health Report", description = "Health report for the GeneXus MCP worker and gateway." },
                             new { uri = "genexus://kb/agent-playbook", name = "GeneXus Agent Playbook", description = "Recommended MCP workflow to operate this GeneXus server in an agent-native, Git-friendly way." },
+                            new { uri = "genexus://kb/llm-playbook", name = "LLM CLI+MCP Playbook", description = "Protocol-first guide for choosing CLI vs MCP, token-efficient calls, and timeout/lifecycle handling." },
                             new { uri = "genexus://objects", name = "GeneXus Objects Index", description = "Browsable index of all objects in the KB." },
                             new { uri = "genexus://attributes", name = "GeneXus Attributes", description = "Browsable list of all attributes." }
                         }
@@ -456,10 +457,29 @@ namespace GxMcp.Gateway
                 "After the write, re-read the exact same surface and report whether persistence is confirmed or still blocked.";
         }
 
+        private static string BuildBootstrapLlmPrompt(string goal)
+        {
+            string goalHint = string.IsNullOrWhiteSpace(goal)
+                ? "If the user goal is unknown, ask one concise clarifying question before editing."
+                : $"User goal: '{goal}'. Prioritize next calls for this goal.";
+
+            return
+                "Bootstrap this GeneXus MCP session in protocol-first mode. " +
+                "Start with discovery (`tools/list`, `resources/list`, `prompts/list`). " +
+                "Read `genexus://kb/llm-playbook` and summarize: when to use AXI CLI vs MCP, pagination/field-shaping defaults, and timeout follow-up via `genexus_lifecycle(op:<operationId>)`. " +
+                $"{goalHint} " +
+                "Then propose the next 3 deterministic calls with explicit arguments.";
+        }
+
         private static IReadOnlyDictionary<string, PromptDefinition> BuildPromptDefinitions()
         {
             var prompts = new[]
             {
+                new PromptDefinition(
+                    "gx_bootstrap_llm",
+                    "Bootstrap an LLM session with protocol-first CLI+MCP usage guidance.",
+                    args => BuildBootstrapLlmPrompt(args["goal"]?.ToString() ?? string.Empty),
+                    new PromptArgumentDefinition("goal", "Optional current user objective to prioritize the next MCP calls.", false)),
                 new PromptDefinition(
                     "gx_explain_object",
                     "Explain a GeneXus object using source, variables, navigation, and summary context.",
@@ -565,23 +585,39 @@ namespace GxMcp.Gateway
         private static object? BuildStaticResourceResponse(JObject request)
         {
             string uri = request["params"]?["uri"]?.ToString() ?? string.Empty;
-            if (!string.Equals(uri, "genexus://kb/agent-playbook", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(uri, "genexus://kb/agent-playbook", StringComparison.OrdinalIgnoreCase))
             {
-                return null;
+                return new
+                {
+                    contents = new[]
+                    {
+                        new
+                        {
+                            uri = "genexus://kb/agent-playbook",
+                            mimeType = "text/markdown",
+                            text = BuildAgentPlaybook()
+                        }
+                    }
+                };
             }
 
-            return new
+            if (string.Equals(uri, "genexus://kb/llm-playbook", StringComparison.OrdinalIgnoreCase))
             {
-                contents = new[]
+                return new
                 {
-                    new
+                    contents = new[]
                     {
-                        uri = "genexus://kb/agent-playbook",
-                        mimeType = "text/markdown",
-                        text = BuildAgentPlaybook()
+                        new
+                        {
+                            uri = "genexus://kb/llm-playbook",
+                            mimeType = "text/markdown",
+                            text = BuildLlmCliMcpPlaybook()
+                        }
                     }
-                }
-            };
+                };
+            }
+
+            return null;
         }
 
         private static string BuildAgentPlaybook()
@@ -604,6 +640,26 @@ namespace GxMcp.Gateway
                 "- Some visual metadata flows still require practical persistence confirmation.\n" +
                 "- Extension lint warnings are legacy debt; runtime validation is stronger than stylistic cleanliness today.\n" +
                 "- Prompt flows are grounded, but the agent must still choose the smallest safe change set.";
+        }
+
+        private static string BuildLlmCliMcpPlaybook()
+        {
+            return
+                "# LLM CLI+MCP Playbook\n\n" +
+                "Use this server with protocol-first rules:\n" +
+                "1. Use AXI CLI for bootstrap and environment checks (`home`, `status`, `doctor --mcp-smoke`, `tools list`, `config show`).\n" +
+                "2. Use MCP tools for KB operations (`genexus_query`, `genexus_list_objects`, `genexus_read`, `genexus_edit`, `genexus_lifecycle`).\n" +
+                "3. For list/read operations, always set `limit`/`offset`; prefer narrow, paginated requests.\n" +
+                "4. For `genexus_query` and `genexus_list_objects`, use `fields` or `axiCompact=true` to reduce tokens.\n" +
+                "5. Parse MCP tool payload from `result.content[0].text` as JSON.\n" +
+                "6. Expect additive metadata: `meta.schemaVersion=mcp-axi/1`, `meta.tool`, plus collection helpers (`returned`, `total`, `empty`, `hasMore`, `nextOffset`) when inferable.\n" +
+                "7. If `result.isError=true` and `operationId` is present, treat as running operation and poll `genexus_lifecycle(action='status'|'result', target='op:<operationId>')`.\n" +
+                "8. For safe mutation flows, use patch `dryRun` first, then apply and re-read for persistence confirmation.\n\n" +
+                "Recommended bootstrap sequence:\n" +
+                "- `tools/list`\n" +
+                "- `resources/list`\n" +
+                "- `prompts/list`\n" +
+                "- `resources/read` for `genexus://kb/llm-playbook`";
         }
 
         public static object? ConvertResourceCall(JObject request)

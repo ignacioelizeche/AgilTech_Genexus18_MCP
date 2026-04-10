@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Diagnostics;
+using GxMcp.Worker.Helpers;
 using GxMcp.Worker.Models;
 using Newtonsoft.Json.Linq;
 
@@ -19,6 +21,15 @@ namespace GxMcp.Worker.Services
 
         public string ListObjects(string filter, int limit, int offset, string parentFilter = null, string typeFilter = null, string parentPathFilter = null)
         {
+            var sw = Stopwatch.StartNew();
+            string source = "none";
+            string Finalize(string response)
+            {
+                sw.Stop();
+                Logger.Debug($"[ListService] source={source} limit={limit} offset={offset} parentPath='{parentPathFilter ?? ""}' parent='{parentFilter ?? ""}' typeFilter='{typeFilter ?? ""}' filter='{filter ?? ""}' elapsedMs={sw.ElapsedMilliseconds}");
+                return response;
+            }
+
             try
             {
                 var array = new JArray();
@@ -55,60 +66,75 @@ namespace GxMcp.Worker.Services
                 var index = _indexCacheService.GetIndex();
                 if (index != null && index.Objects.Count > 0)
                 {
-                    bool preferIndexedHierarchy =
-                        parentPathFilter == null ||
-                        index.Objects.Values.Any(e => !string.IsNullOrWhiteSpace(e.ParentPath) || !string.IsNullOrWhiteSpace(e.Path));
+                    IEnumerable<SearchIndex.IndexEntry> entries;
+                    source = "index-all";
 
-                    if (preferIndexedHierarchy)
+                    if (!string.IsNullOrWhiteSpace(parentPathFilter) &&
+                        index.ChildrenByParent != null &&
+                        index.ChildrenByParent.TryGetValue(parentPathFilter, out var childrenByPath))
                     {
-                        var entries = index.Objects.Values.AsEnumerable();
-
-                        if (parentPathFilter != null)
-                        {
-                            entries = entries.Where(e => string.Equals(e.ParentPath ?? string.Empty, parentPathFilter, StringComparison.OrdinalIgnoreCase));
-                        }
-                        else if (!string.IsNullOrWhiteSpace(parentFilter))
-                        {
-                            entries = entries.Where(e => string.Equals(e.Parent ?? string.Empty, parentFilter, StringComparison.OrdinalIgnoreCase));
-                        }
-
-                        if (filterTypes.Count > 0)
-                        {
-                            entries = entries.Where(e => filterTypes.Contains(e.Type ?? string.Empty));
-                        }
-
-                        if (!string.IsNullOrEmpty(nameFilter))
-                        {
-                            entries = entries.Where(e => (e.Name ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
-                        }
-
-                        foreach (var entry in entries
-                            .OrderBy(e => GetTypeSortBucket(e.Type))
-                            .ThenBy(e => e.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                            .ThenBy(e => e.Type ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                            .Skip(Math.Max(0, offset))
-                            .Take(limit <= 0 ? int.MaxValue : limit))
-                        {
-                            array.Add(BuildItem(
-                                entry.Name,
-                                entry.Type ?? "Unknown",
-                                entry.Description,
-                                entry.Parent ?? string.Empty,
-                                entry.Module ?? string.Empty,
-                                entry.Path ?? string.Empty,
-                                entry.ParentPath ?? string.Empty
-                            ));
-                        }
-
-                        return array.ToString();
+                        entries = childrenByPath;
+                        source = "index-parentPath";
                     }
+                    else if (!string.IsNullOrWhiteSpace(parentPathFilter))
+                    {
+                        entries = Enumerable.Empty<SearchIndex.IndexEntry>();
+                        source = "index-parentPath-miss";
+                    }
+                    else if (!string.IsNullOrWhiteSpace(parentFilter) &&
+                             index.ChildrenByParent != null &&
+                             index.ChildrenByParent.TryGetValue(parentFilter, out var childrenByParent))
+                    {
+                        entries = childrenByParent;
+                        source = "index-parent";
+                    }
+                    else if (!string.IsNullOrWhiteSpace(parentFilter))
+                    {
+                        entries = Enumerable.Empty<SearchIndex.IndexEntry>();
+                        source = "index-parent-miss";
+                    }
+                    else
+                    {
+                        entries = index.Objects.Values;
+                    }
+
+                    if (filterTypes.Count > 0)
+                    {
+                        entries = entries.Where(e => filterTypes.Contains(e.Type ?? string.Empty));
+                    }
+
+                    if (!string.IsNullOrEmpty(nameFilter))
+                    {
+                        entries = entries.Where(e => (e.Name ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                    }
+
+                    foreach (var entry in entries
+                        .OrderBy(e => GetTypeSortBucket(e.Type))
+                        .ThenBy(e => e.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(e => e.Type ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                        .Skip(Math.Max(0, offset))
+                        .Take(limit <= 0 ? int.MaxValue : limit))
+                    {
+                        array.Add(BuildItem(
+                            entry.Name,
+                            entry.Type ?? "Unknown",
+                            entry.Description,
+                            entry.Parent ?? string.Empty,
+                            entry.Module ?? string.Empty,
+                            entry.Path ?? string.Empty,
+                            entry.ParentPath ?? string.Empty
+                        ));
+                    }
+
+                    return Finalize(array.ToString());
                 }
 
+                source = "runtime-sdk";
                 var kb = _kbService.GetKB();
-                if (kb == null) return "{\"error\":\"KB not open\"}";
-                if (kb.DesignModel == null) return "{\"error\":\"KB DesignModel is null\"}";
+                if (kb == null) return Finalize("{\"error\":\"KB not open\"}");
+                if (kb.DesignModel == null) return Finalize("{\"error\":\"KB DesignModel is null\"}");
                 var objects = kb.DesignModel.Objects;
-                if (objects == null) return "{\"error\":\"KB DesignModel.Objects is null\"}";
+                if (objects == null) return Finalize("{\"error\":\"KB DesignModel.Objects is null\"}");
 
                 var allObjects = ((System.Collections.IEnumerable)objects.GetAll())
                     .Cast<global::Artech.Architecture.Common.Objects.KBObject>();
@@ -158,11 +184,12 @@ namespace GxMcp.Worker.Services
                     ));
                 }
 
-                return array.ToString();
+                return Finalize(array.ToString());
             }
             catch (Exception ex)
             {
-                return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+                source = source + "-error";
+                return Finalize("{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}");
             }
         }
 

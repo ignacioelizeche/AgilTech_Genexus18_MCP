@@ -15,9 +15,10 @@ const {
     handleToolsList,
     handleConfigShow,
     handleInit,
+    handleHome,
+    handleLlmHelp,
     handleHelp,
     usageEnvelope,
-    operationalErrorEnvelope,
     commandHelpMap
 } = require('./commands/axi');
 
@@ -33,6 +34,7 @@ const GLOBAL_DEFAULTS = {
     fields: null,
     interactive: false,
     writeClients: false,
+    mcpSmoke: false,
     limit: 100,
     query: null,
     quiet: false,
@@ -40,7 +42,7 @@ const GLOBAL_DEFAULTS = {
     help: false
 };
 
-const KNOWN_COMMANDS = new Set(['status', 'doctor', 'tools', 'config', 'init', 'setup', 'help']);
+const KNOWN_COMMANDS = new Set(['status', 'doctor', 'tools', 'config', 'init', 'setup', 'help', 'home', 'axi', 'llm']);
 
 function parseArgs(argv) {
     const result = {
@@ -78,6 +80,20 @@ function parseArgs(argv) {
 
     if (result.command === 'config' && tokens[0] === 'show') {
         result.subcommand = 'show';
+        tokens.shift();
+    }
+
+    if (result.command === 'axi' && tokens[0] === 'home') {
+        result.subcommand = 'home';
+        tokens.shift();
+    }
+
+    if (result.command === 'home') {
+        result.subcommand = 'home';
+    }
+
+    if (result.command === 'llm' && tokens[0] === 'help') {
+        result.subcommand = 'help';
         tokens.shift();
     }
 
@@ -154,6 +170,9 @@ function parseArgs(argv) {
             case 'write-clients':
                 result.options.writeClients = true;
                 break;
+            case 'mcp-smoke':
+                result.options.mcpSmoke = true;
+                break;
             case 'quiet':
                 result.options.quiet = true;
                 break;
@@ -217,12 +236,34 @@ async function launchGateway(passthroughArgs, options) {
 
 function commandFromHelpIntent(parsed) {
     if (!parsed.options.help) return null;
+    if (parsed.command === 'axi' && parsed.subcommand === 'home') return 'home';
     if (parsed.command && parsed.command !== 'help') return parsed.command;
     if (parsed.positional.length > 0) {
         const candidate = parsed.positional[0];
         if (commandHelpMap()[candidate]) return candidate;
     }
     return null;
+}
+
+function withCommandMeta(envelope, commandName) {
+    const safe = envelope && typeof envelope === 'object' ? envelope : {};
+    const meta = safe.meta && typeof safe.meta === 'object' ? safe.meta : {};
+    return {
+        ...safe,
+        meta: {
+            command: commandName,
+            ...meta
+        }
+    };
+}
+
+function resolveMetaCommand(parsed, targetHelp) {
+    if (targetHelp || parsed.command === 'help') return 'help';
+    if (parsed.command === 'tools') return 'tools.list';
+    if (parsed.command === 'config') return 'config.show';
+    if (parsed.command === 'axi' || parsed.command === 'home') return 'home';
+    if (parsed.command === 'llm') return 'llm.help';
+    return parsed.command || 'unknown';
 }
 
 async function main(argv) {
@@ -233,12 +274,14 @@ async function main(argv) {
     }
 
     if (parsed.unknownFlags.length > 0) {
-        writeStructured(process.stdout, usageEnvelope(parsed.unknownFlags.join('; '), EXIT_CODES.USAGE), parsed.options.format);
+        const envelope = usageEnvelope(parsed.unknownFlags.join('; '), EXIT_CODES.USAGE);
+        writeStructured(process.stdout, withCommandMeta(envelope, parsed.command || 'usage'), parsed.options.format);
         return EXIT_CODES.USAGE;
     }
 
     if (!SUPPORTED_FORMATS.has(parsed.options.format)) {
-        writeStructured(process.stdout, usageEnvelope(`Invalid --format '${parsed.options.format}'. Use toon|json|text.`, EXIT_CODES.USAGE), 'toon');
+        const envelope = usageEnvelope(`Invalid --format '${parsed.options.format}'. Use toon|json|text.`, EXIT_CODES.USAGE);
+        writeStructured(process.stdout, withCommandMeta(envelope, parsed.command || 'usage'), 'toon');
         return EXIT_CODES.USAGE;
     }
 
@@ -252,7 +295,7 @@ async function main(argv) {
     const targetHelp = commandFromHelpIntent(parsed);
     if (targetHelp || parsed.command === 'help') {
         const helpResult = await handleHelp(targetHelp, ctx);
-        writeStructured(process.stdout, helpResult.envelope, parsed.options.format);
+        writeStructured(process.stdout, withCommandMeta(helpResult.envelope, resolveMetaCommand(parsed, targetHelp)), parsed.options.format);
         return helpResult.exitCode;
     }
 
@@ -265,29 +308,66 @@ async function main(argv) {
         case 'doctor':
             result = await handleDoctor(parsed.options, ctx);
             break;
+        case 'home':
+            result = await handleHome(parsed.options, ctx);
+            break;
+        case 'axi':
+            if (parsed.subcommand && parsed.subcommand !== 'home') {
+                writeStructured(
+                    process.stdout,
+                    withCommandMeta(usageEnvelope('axi supports only subcommand `home`.', EXIT_CODES.USAGE), resolveMetaCommand(parsed)),
+                    parsed.options.format
+                );
+                return EXIT_CODES.USAGE;
+            }
+            result = await handleHome(parsed.options, ctx);
+            break;
         case 'tools':
             if (parsed.subcommand !== 'list') {
-                writeStructured(process.stdout, usageEnvelope('tools requires subcommand `list`.', EXIT_CODES.USAGE), parsed.options.format);
+                writeStructured(
+                    process.stdout,
+                    withCommandMeta(usageEnvelope('tools requires subcommand `list`.', EXIT_CODES.USAGE), resolveMetaCommand(parsed)),
+                    parsed.options.format
+                );
                 return EXIT_CODES.USAGE;
             }
             result = await handleToolsList(parsed.options, ctx);
             break;
         case 'config':
             if (parsed.subcommand !== 'show') {
-                writeStructured(process.stdout, usageEnvelope('config requires subcommand `show`.', EXIT_CODES.USAGE), parsed.options.format);
+                writeStructured(
+                    process.stdout,
+                    withCommandMeta(usageEnvelope('config requires subcommand `show`.', EXIT_CODES.USAGE), resolveMetaCommand(parsed)),
+                    parsed.options.format
+                );
                 return EXIT_CODES.USAGE;
             }
             result = await handleConfigShow(parsed.options, ctx);
+            break;
+        case 'llm':
+            if (parsed.subcommand && parsed.subcommand !== 'help') {
+                writeStructured(
+                    process.stdout,
+                    withCommandMeta(usageEnvelope('llm supports only subcommand `help`.', EXIT_CODES.USAGE), resolveMetaCommand(parsed)),
+                    parsed.options.format
+                );
+                return EXIT_CODES.USAGE;
+            }
+            result = await handleLlmHelp(parsed.options, ctx);
             break;
         case 'init':
             result = await handleInit(parsed.options, ctx);
             break;
         default:
-            writeStructured(process.stdout, usageEnvelope(`Unsupported command '${parsed.command}'.`, EXIT_CODES.USAGE), parsed.options.format);
+            writeStructured(
+                process.stdout,
+                withCommandMeta(usageEnvelope(`Unsupported command '${parsed.command}'.`, EXIT_CODES.USAGE), resolveMetaCommand(parsed)),
+                parsed.options.format
+            );
             return EXIT_CODES.USAGE;
     }
 
-    writeStructured(process.stdout, result.envelope, parsed.options.format);
+    writeStructured(process.stdout, withCommandMeta(result.envelope, resolveMetaCommand(parsed)), parsed.options.format);
     return result.exitCode;
 }
 

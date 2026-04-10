@@ -71,14 +71,15 @@ namespace GxMcp.Gateway
             lock (record.SyncRoot)
             {
                 bool isErrorEnvelope = workerPayload["error"] != null;
-                bool isErrorStatus = string.Equals(workerPayload["result"]?["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
+                var resultObj = workerPayload["result"] as JObject;
+                bool isErrorStatus = string.Equals(resultObj?["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
                 record.Status = (isErrorEnvelope || isErrorStatus) ? "Failed" : "Completed";
                 record.CompletedAtUtc = now;
                 record.UpdatedAtUtc = now;
                 record.WorkerPayload = workerPayload.DeepClone();
                 record.LastError = isErrorEnvelope
                     ? workerPayload["error"]?.ToString()
-                    : (isErrorStatus ? workerPayload["result"]?["error"]?.ToString() ?? workerPayload["result"]?["details"]?.ToString() : record.LastError);
+                    : (isErrorStatus ? resultObj?["error"]?.ToString() ?? resultObj?["details"]?.ToString() : record.LastError);
             }
 
             var metric = _toolMetrics.GetOrAdd(record.ToolName, _ => new ToolMetricState(record.ToolName));

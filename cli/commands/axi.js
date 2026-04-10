@@ -18,6 +18,46 @@ function parseFieldSelection(raw) {
     return raw.split(',').map((v) => v.trim()).filter(Boolean);
 }
 
+function sanitizeOperationalMessage(message, fallback = 'Operation failed.') {
+    const raw = typeof message === 'string' ? message : '';
+    const singleLine = raw.replace(/\r?\n/g, ' ').trim();
+    if (!singleLine) return fallback;
+    if (singleLine.length > 220) return `${singleLine.slice(0, 217)}...`;
+    return singleLine;
+}
+
+function validateFieldSelection(raw, allowed, commandName, ctx) {
+    const selected = parseFieldSelection(raw);
+
+    if (!raw) {
+        return { selectedFields: null };
+    }
+
+    if (!selected || selected.length === 0) {
+        return {
+            errorResult: {
+                exitCode: ctx.EXIT_CODES.USAGE,
+                envelope: usageEnvelope(`--fields for ${commandName} cannot be empty. Allowed: ${allowed.join(', ')}.`, ctx.EXIT_CODES.USAGE)
+            }
+        };
+    }
+
+    const invalid = selected.filter((field) => !allowed.includes(field));
+    if (invalid.length > 0) {
+        return {
+            errorResult: {
+                exitCode: ctx.EXIT_CODES.USAGE,
+                envelope: usageEnvelope(
+                    `Invalid --fields for ${commandName}: ${invalid.join(', ')}. Allowed: ${allowed.join(', ')}.`,
+                    ctx.EXIT_CODES.USAGE
+                )
+            }
+        };
+    }
+
+    return { selectedFields: selected };
+}
+
 function pickFields(obj, selectedFields) {
     if (!selectedFields || selectedFields.length === 0) return obj;
     const out = {};
@@ -51,7 +91,7 @@ function usageEnvelope(message, exitCode) {
 
 function operationalErrorEnvelope(message, exitCode, help = []) {
     return {
-        error: { code: 'operation_error', message },
+        error: { code: 'operation_error', message: sanitizeOperationalMessage(message) },
         help,
         meta: { exitCode }
     };
@@ -136,6 +176,101 @@ async function probeGatewaySpawn(gatewayExePath) {
     });
 }
 
+function resolveMcpBaseUrl(cwd) {
+    const configPath = resolveConfigPathNoMutate(cwd);
+    const fallback = 'http://127.0.0.1:5000/mcp';
+    if (!configPath) return fallback;
+
+    const cfg = readJsonFileSafe(configPath);
+    if (!cfg || typeof cfg !== 'object') return fallback;
+
+    const server = cfg.Server && typeof cfg.Server === 'object' ? cfg.Server : {};
+    const host = server.BindAddress && typeof server.BindAddress === 'string'
+        ? server.BindAddress
+        : '127.0.0.1';
+    const parsedPort = Number.parseInt(String(server.HttpPort || ''), 10);
+    const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 5000;
+    return `http://${host}:${port}/mcp`;
+}
+
+async function runMcpSmokeProbe(cwd) {
+    const scriptPath = path.join(__dirname, '..', '..', 'scripts', 'mcp_smoke.ps1');
+    if (!fs.existsSync(scriptPath)) {
+        return { status: 'warn', detail: 'MCP smoke script is missing.' };
+    }
+
+    const baseUrl = resolveMcpBaseUrl(cwd);
+    const shell = process.platform === 'win32' ? 'powershell' : 'pwsh';
+    const args = process.platform === 'win32'
+        ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-BaseUrl', baseUrl]
+        : ['-NoProfile', '-File', scriptPath, '-BaseUrl', baseUrl];
+
+    return await new Promise((resolve) => {
+        let stdout = '';
+        let stderr = '';
+        let resolved = false;
+
+        const finish = (payload) => {
+            if (resolved) return;
+            resolved = true;
+            resolve(payload);
+        };
+
+        try {
+            const child = spawn(shell, args, {
+                cwd,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+                env: process.env
+            });
+
+            child.stdout.on('data', (chunk) => {
+                stdout += chunk.toString();
+            });
+
+            child.stderr.on('data', (chunk) => {
+                stderr += chunk.toString();
+            });
+
+            child.on('error', (err) => {
+                finish({
+                    status: 'warn',
+                    detail: sanitizeOperationalMessage(`Unable to run MCP smoke probe: ${err.message}.`)
+                });
+            });
+
+            child.on('exit', (code) => {
+                if (code === 0) {
+                    finish({ status: 'pass', detail: `MCP smoke succeeded at ${baseUrl}.` });
+                    return;
+                }
+
+                const preview = sanitizeOperationalMessage((stderr || stdout || '').trim(), '');
+                finish({
+                    status: 'fail',
+                    detail: preview
+                        ? `MCP smoke failed at ${baseUrl}: ${preview}`
+                        : `MCP smoke failed at ${baseUrl}.`
+                });
+            });
+
+            setTimeout(() => {
+                if (resolved) return;
+                try {
+                    child.kill();
+                } catch {
+                }
+                finish({ status: 'warn', detail: `MCP smoke timed out at ${baseUrl}.` });
+            }, 30000);
+        } catch (err) {
+            finish({
+                status: 'warn',
+                detail: sanitizeOperationalMessage(`MCP smoke launch failed: ${err.message}.`)
+            });
+        }
+    });
+}
+
 async function handleStatus(options, ctx) {
     const data = buildStatusData(ctx.cwd);
 
@@ -210,13 +345,23 @@ async function handleDoctor(options, ctx) {
         checks.push({ id: 'gateway_spawn_probe', status: 'warn', detail: 'Spawn probe skipped by default. Run doctor with --full.' });
     }
 
+    if (options.mcpSmoke) {
+        const smoke = await runMcpSmokeProbe(ctx.cwd);
+        checks.push({ id: 'mcp_smoke', status: smoke.status, detail: smoke.detail });
+    }
+
     const summary = checks.reduce((acc, row) => {
         acc[row.status] = (acc[row.status] || 0) + 1;
         return acc;
     }, { pass: 0, warn: 0, fail: 0 });
 
     const defaultFields = ['id', 'status', 'detail'];
-    const selectedFields = parseFieldSelection(options.fields) || defaultFields;
+    const allowedFields = ['id', 'status', 'detail'];
+    const fieldSelection = validateFieldSelection(options.fields, allowedFields, 'doctor', ctx);
+    if (fieldSelection.errorResult) {
+        return fieldSelection.errorResult;
+    }
+    const selectedFields = fieldSelection.selectedFields || defaultFields;
     const limited = checks.slice(0, options.limit).map((row) => pickFields(row, selectedFields));
 
     const help = [];
@@ -225,6 +370,9 @@ async function handleDoctor(options, ctx) {
     }
     if (!options.full) {
         help.push('Run `genexus-mcp doctor --full` to include runtime spawn probe.');
+    }
+    if (!options.mcpSmoke) {
+        help.push('Run `genexus-mcp doctor --mcp-smoke` to execute MCP protocol smoke checks.');
     }
 
     return {
@@ -254,10 +402,10 @@ async function handleToolsList(options, ctx) {
     let parsed;
     try {
         parsed = JSON.parse(fs.readFileSync(toolDefPath, 'utf8'));
-    } catch (err) {
+    } catch {
         return {
             exitCode: ctx.EXIT_CODES.ERROR,
-            envelope: operationalErrorEnvelope(`Failed to parse tool_definitions.json: ${err.message}`, ctx.EXIT_CODES.ERROR, ['Validate the JSON file and rerun tools list.'])
+            envelope: operationalErrorEnvelope('Failed to parse tool_definitions.json.', ctx.EXIT_CODES.ERROR, ['Validate the JSON file and rerun tools list.'])
         };
     }
 
@@ -293,8 +441,16 @@ async function handleToolsList(options, ctx) {
     }, {});
 
     const defaultFields = ['name', 'status', 'required'];
-    const selectedFields = parseFieldSelection(options.fields) || defaultFields;
+    const allowedFields = ['name', 'status', 'category', 'required', 'description', 'descriptionChars', 'truncated'];
+    const fieldSelection = validateFieldSelection(options.fields, allowedFields, 'tools list', ctx);
+    if (fieldSelection.errorResult) {
+        return fieldSelection.errorResult;
+    }
+    const selectedFields = fieldSelection.selectedFields || defaultFields;
     const rows = rowsFiltered.slice(0, options.limit).map((row) => pickFields(row, selectedFields));
+    const includesDescription = selectedFields.includes('description');
+    const returnedRows = rowsFiltered.slice(0, options.limit);
+    const anyReturnedTruncated = returnedRows.some((row) => row.truncated);
 
     const help = [];
     if (rowsFiltered.length === 0) {
@@ -303,7 +459,7 @@ async function handleToolsList(options, ctx) {
     if (rowsFiltered.length > options.limit) {
         help.push(`Run 'genexus-mcp tools list --limit ${rowsFiltered.length}${query ? ` --query ${query}` : ''}' for all matching items.`);
     }
-    if (rowsFiltered.some((row) => row.truncated) && !options.full) {
+    if (includesDescription && anyReturnedTruncated && !options.full) {
         help.push('Run `genexus-mcp tools list --full --fields name,description` to view full descriptions.');
     }
 
@@ -320,7 +476,8 @@ async function handleToolsList(options, ctx) {
             meta: {
                 fields: selectedFields,
                 query: options.query || null,
-                totalByCategory: totals
+                totalByCategory: totals,
+                truncated: includesDescription ? anyReturnedTruncated : false
             }
         }
     };
@@ -357,15 +514,22 @@ async function handleConfigShow(options, ctx) {
         raw: truncated ? `${raw.slice(0, truncateLimit)}\n... (truncated, ${rawChars} chars total)` : raw
     };
 
-    const selectedFields = parseFieldSelection(options.fields);
+    const allowedFields = ['path', 'kbPath', 'gxPath', 'httpPort', 'mcpStdio', 'raw'];
+    const fieldSelection = validateFieldSelection(options.fields, allowedFields, 'config show', ctx);
+    if (fieldSelection.errorResult) {
+        return fieldSelection.errorResult;
+    }
+    const selectedFields = fieldSelection.selectedFields;
     const payload = selectedFields ? pickFields(compact, selectedFields) : compact;
+    const includesRaw = selectedFields ? selectedFields.includes('raw') : true;
+    const effectiveTruncated = includesRaw ? truncated : false;
 
     return {
         exitCode: ctx.EXIT_CODES.OK,
         envelope: {
             ok: payload,
-            help: truncated ? ['Run `genexus-mcp config show --full` to view complete config content.'] : [],
-            meta: { truncated, rawChars }
+            help: effectiveTruncated ? ['Run `genexus-mcp config show --full` to view complete config content.'] : [],
+            meta: { truncated: effectiveTruncated, rawChars }
         }
     };
 }
@@ -407,10 +571,10 @@ async function runInteractiveInit(ctx) {
                 }
             }
         };
-    } catch (err) {
+    } catch {
         return {
             exitCode: ctx.EXIT_CODES.ERROR,
-            envelope: operationalErrorEnvelope(`Interactive init failed: ${err.message}`, ctx.EXIT_CODES.ERROR)
+            envelope: operationalErrorEnvelope('Interactive init failed.', ctx.EXIT_CODES.ERROR)
         };
     } finally {
         rl.close();
@@ -456,23 +620,31 @@ async function handleInit(options, ctx) {
                 }
             }
         };
-    } catch (err) {
+    } catch {
         return {
             exitCode: ctx.EXIT_CODES.ERROR,
-            envelope: operationalErrorEnvelope(`Failed to write configuration: ${err.message}`, ctx.EXIT_CODES.ERROR)
+            envelope: operationalErrorEnvelope('Failed to write configuration.', ctx.EXIT_CODES.ERROR)
         };
     }
 }
 
 function commandHelpMap() {
     return {
+        axi: {
+            usage: 'genexus-mcp axi home [--format toon|json|text]',
+            examples: ['genexus-mcp axi home', 'genexus-mcp axi home --format json']
+        },
+        home: {
+            usage: 'genexus-mcp home [--format toon|json|text] OR genexus-mcp axi home [--format toon|json|text]',
+            examples: ['genexus-mcp home', 'genexus-mcp axi home --format json']
+        },
         status: {
             usage: 'genexus-mcp status [--full] [--format toon|json|text] [--quiet] [--no-color]',
             examples: ['genexus-mcp status', 'genexus-mcp status --full --format json']
         },
         doctor: {
-            usage: 'genexus-mcp doctor [--full] [--fields f1,f2] [--limit N] [--format toon|json|text]',
-            examples: ['genexus-mcp doctor', 'genexus-mcp doctor --full --format json']
+            usage: 'genexus-mcp doctor [--full] [--mcp-smoke] [--fields f1,f2] [--limit N] [--format toon|json|text]',
+            examples: ['genexus-mcp doctor', 'genexus-mcp doctor --full --mcp-smoke --format json']
         },
         tools: {
             usage: 'genexus-mcp tools list [--query text] [--fields f1,f2] [--limit N] [--full] [--format ...]',
@@ -485,6 +657,10 @@ function commandHelpMap() {
         init: {
             usage: 'genexus-mcp init --kb <path> --gx <path> [--write-clients] [--format ...] OR genexus-mcp init --interactive',
             examples: ['genexus-mcp init --kb "C:\\KBs\\MyKB" --gx "C:\\Program Files (x86)\\GeneXus\\GeneXus18"', 'genexus-mcp init --interactive']
+        },
+        llm: {
+            usage: 'genexus-mcp llm help [--full] [--fields f1,f2] [--format toon|json|text]',
+            examples: ['genexus-mcp llm help --format json', 'genexus-mcp llm help --full --format json']
         }
     };
 }
@@ -496,6 +672,25 @@ function collapseHome(absPath) {
         return `~${absPath.slice(home.length)}`;
     }
     return absPath;
+}
+
+async function handleHome(_options, ctx) {
+    const data = buildStatusData(ctx.cwd);
+    const binPath = collapseHome(process.argv[1] || process.execPath);
+    return {
+        exitCode: ctx.EXIT_CODES.OK,
+        envelope: {
+            ok: {
+                bin: binPath,
+                description: 'GeneXus MCP launcher and AXI-oriented utility CLI',
+                ready: data.ready,
+                next: data.ready
+                    ? ['genexus-mcp status', 'genexus-mcp doctor --mcp-smoke', 'genexus-mcp tools list --limit 10']
+                    : ['genexus-mcp status', 'genexus-mcp doctor --full', 'genexus-mcp init --kb "<kbPath>" --gx "<geneXusPath>"']
+            },
+            help: []
+        }
+    };
 }
 
 async function handleHelp(targetCommand, ctx) {
@@ -527,7 +722,7 @@ async function handleHelp(targetCommand, ctx) {
                 bin: binPath,
                 command: 'genexus-mcp',
                 description: 'GeneXus MCP launcher and AXI-oriented utility CLI',
-                commands: ['status', 'doctor', 'tools list', 'config show', 'init', 'help'],
+                commands: ['home', 'axi home', 'status', 'doctor', 'tools list', 'config show', 'init', 'llm help', 'help'],
                 defaults: { format: 'toon', limit: 100 }
             },
             help: [
@@ -538,6 +733,90 @@ async function handleHelp(targetCommand, ctx) {
     };
 }
 
+function tryReadLlmPlaybookMarkdown() {
+    const candidates = [
+        path.join(__dirname, '..', '..', 'docs', 'llm_cli_mcp_playbook.md'),
+        path.join(process.cwd(), 'docs', 'llm_cli_mcp_playbook.md')
+    ];
+
+    for (const candidate of candidates) {
+        try {
+            if (fs.existsSync(candidate)) {
+                return fs.readFileSync(candidate, 'utf8');
+            }
+        } catch {
+        }
+    }
+
+    return null;
+}
+
+async function handleLlmHelp(options, ctx) {
+    const allowedFields = ['objective', 'interfaceSelection', 'cli', 'mcp', 'timeouts', 'bestPractices', 'examples', 'resources'];
+    const fieldSelection = validateFieldSelection(options.fields, allowedFields, 'llm help', ctx);
+    if (fieldSelection.errorResult) {
+        return fieldSelection.errorResult;
+    }
+
+    const payload = {
+        objective: 'Use AXI CLI for environment/bootstrap checks and MCP for KB operations with deterministic, token-efficient flows.',
+        interfaceSelection: {
+            cli: ['home', 'status', 'doctor --mcp-smoke', 'tools list', 'config show'],
+            mcp: ['genexus_query', 'genexus_list_objects', 'genexus_read', 'genexus_edit', 'genexus_lifecycle']
+        },
+        cli: {
+            parseStdoutOnly: true,
+            expectedMeta: ['schemaVersion=axi-cli/1', 'command=<normalized-command>'],
+            exitCodes: { ok: 0, error: 1, usage: 2 }
+        },
+        mcp: {
+            parsePath: 'result.content[0].text',
+            expectedMeta: ['schemaVersion=mcp-axi/1', 'tool=<tool-name>'],
+            listHelpers: ['returned', 'total', 'empty', 'hasMore', 'nextOffset'],
+            shaping: ['fields=<csv|array>', 'axiCompact=true (query/list_objects)']
+        },
+        timeouts: {
+            rule: 'If result.isError=true and operationId is present, treat as running operation, not terminal failure.',
+            followUp: [
+                "genexus_lifecycle(action='status', target='op:<operationId>')",
+                "genexus_lifecycle(action='result', target='op:<operationId>')"
+            ]
+        },
+        bestPractices: [
+            'Always set limit/offset for list and read flows.',
+            'Prefer parentPath over parent for disambiguation.',
+            'Use patch mode dryRun before persistent edits.',
+            'Prefer batch_read for multi-object context gathering.'
+        ],
+        examples: [
+            'genexus-mcp home --format json',
+            'genexus-mcp doctor --mcp-smoke --format json',
+            "tools/call genexus_list_objects { parentPath, limit, offset, axiCompact:true }",
+            "tools/call genexus_query { query:'@quick', limit:20, fields:'name,type,path' }"
+        ],
+        resources: ['genexus://kb/llm-playbook', 'genexus://kb/agent-playbook', 'prompt: gx_bootstrap_llm']
+    };
+
+    const selectedFields = fieldSelection.selectedFields || null;
+    const ok = selectedFields ? pickFields(payload, selectedFields) : payload;
+    const envelope = {
+        ok,
+        help: [
+            'Use `genexus://kb/llm-playbook` through MCP resources/read for protocol-native guidance.',
+            'Use `genexus-mcp llm help --full --format json` for embedded markdown when available.'
+        ]
+    };
+
+    if (options.full) {
+        const markdown = tryReadLlmPlaybookMarkdown();
+        if (markdown) {
+            envelope.ok.markdown = markdown;
+        }
+    }
+
+    return { exitCode: ctx.EXIT_CODES.OK, envelope };
+}
+
 module.exports = {
     parseFieldSelection,
     pickFields,
@@ -546,6 +825,8 @@ module.exports = {
     handleToolsList,
     handleConfigShow,
     handleInit,
+    handleHome,
+    handleLlmHelp,
     handleHelp,
     usageEnvelope,
     operationalErrorEnvelope,

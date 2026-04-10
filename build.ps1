@@ -83,9 +83,8 @@ $ErrorActionPreference = "Stop"
 
 # 1. Clean Publish Directory
 if (Test-Path $publishDir) {
-    Write-Host "   > Cleaning publish directory (preserving logs)..."
-    Get-ChildItem -Path "$publishDir\*" -Exclude "worker_log.txt", "mcp_debug.log", "*.log", "GxMcp.Worker.exe.config" |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "   > Cleaning publish directory..."
+    Get-ChildItem -Path "$publishDir\*" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 } else {
     New-Item -Path $publishDir -ItemType Directory | Out-Null
 }
@@ -189,6 +188,19 @@ cd /d "%~dp0"
 dotnet GxMcp.Gateway.dll
 "@
 Set-Content -Path "$publishDir\start_mcp.bat" -Value $batContent -Encoding Ascii
+
+# 6.1 Remove transient runtime logs/cache from publish output
+Get-ChildItem -Path $publishDir -Recurse -Include *.log,*.prev.log,*panic*.log -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+if (Test-Path "$publishDir\worker\cache") {
+    Remove-Item "$publishDir\worker\cache" -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "$publishDir\worker\search_index.json") {
+    Remove-Item "$publishDir\worker\search_index.json" -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path "$publishDir\worker\DataTracing.log") {
+    Remove-Item "$publishDir\worker\DataTracing.log" -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host "`n[build] Build complete." -ForegroundColor Green
 Write-Host "   - Output: $publishDir"

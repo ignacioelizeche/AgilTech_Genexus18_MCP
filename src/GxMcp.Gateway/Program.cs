@@ -21,6 +21,7 @@ namespace GxMcp.Gateway
 {
     class Program
     {
+        private const string McpAxiSchemaVersion = "mcp-axi/1";
         private static WorkerProcess? _worker;
         private sealed class PendingWorkerRequest
         {
@@ -847,13 +848,18 @@ namespace GxMcp.Gateway
                         JObject opPayload = string.Equals(lifecycleAction, "result", StringComparison.OrdinalIgnoreCase)
                             ? _operationTracker.BuildOperationResult(operationId)
                             : _operationTracker.BuildOperationStatus(operationId);
-                        return BuildToolTextResponse(idToken, opPayload, isError: string.Equals(opPayload["status"]?.ToString(), "NotFound", StringComparison.OrdinalIgnoreCase));
+                        return BuildToolTextResponse(
+                            idToken,
+                            opPayload,
+                            isError: string.Equals(opPayload["status"]?.ToString(), "NotFound", StringComparison.OrdinalIgnoreCase),
+                            toolName: "genexus_lifecycle",
+                            toolArgs: args);
                     }
 
                     if (string.Equals(lifecycleAction, "status", StringComparison.OrdinalIgnoreCase) &&
                         string.Equals(lifecycleTarget, "gateway:metrics", StringComparison.OrdinalIgnoreCase))
                     {
-                        return BuildToolTextResponse(idToken, _operationTracker.BuildMetricsPayload(), isError: false);
+                        return BuildToolTextResponse(idToken, _operationTracker.BuildMetricsPayload(), isError: false, toolName: "genexus_lifecycle", toolArgs: args);
                     }
                 }
                 
@@ -935,18 +941,21 @@ namespace GxMcp.Gateway
                                 finalResult = resultObj["result"] ?? resultObj["error"];
                             }
 
+                            bool isError = resultObj["error"] != null || string.Equals(resultObj["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
+                            JToken axiPayload = NormalizeToolPayloadForAxi(finalResult, toolName, args, isError);
+
                             var response = new JObject
                             {
                                 ["jsonrpc"] = "2.0",
                                 ["id"] = idToken?.DeepClone(),
                                 ["result"] = JToken.FromObject(new
                                 {
-                                    content = new[] { new { type = "text", text = finalResult?.ToString() ?? string.Empty } },
-                                    isError = resultObj["error"] != null
+                                    content = new[] { new { type = "text", text = axiPayload.ToString(Formatting.None) } },
+                                    isError
                                 })
                             };
 
-                            if (resultObj["error"] == null && !toolName.Contains("write") && !toolName.Contains("patch"))
+                            if (!isError && !toolName.Contains("write") && !toolName.Contains("patch"))
                             {
                                 _semanticCache[cacheKey] = response;
                             }
@@ -955,16 +964,38 @@ namespace GxMcp.Gateway
                         },
                         (operationId, correlationId) =>
                         {
-                            string message = $"GeneXus MCP Worker timed out executing tool: {toolName}";
+                            string message = $"GeneXus MCP Worker timed out executing tool: {toolName}.";
+                            var timeoutPayload = new JObject
+                            {
+                                ["status"] = "Running",
+                                ["error"] = "Gateway timeout waiting for worker response.",
+                                ["message"] = message,
+                                ["correlationId"] = correlationId,
+                                ["retriable"] = true
+                            };
+
+                            var help = new JArray();
                             if (!string.IsNullOrWhiteSpace(operationId))
                             {
-                                message += $". Operation is still running. Query genexus_lifecycle(action='status', target='op:{operationId}') or action='result'.";
+                                timeoutPayload["operationId"] = operationId;
+                                help.Add($"Operation is still running. Query genexus_lifecycle(action='status', target='op:{operationId}') or action='result'.");
                             }
+                            else
+                            {
+                                help.Add("Retry with narrower scope or lower limit.");
+                            }
+                            timeoutPayload["help"] = help;
+
+                            JToken axiPayload = NormalizeToolPayloadForAxi(timeoutPayload, toolName, args, true);
                             return new JObject
                             {
                                 ["jsonrpc"] = "2.0",
                                 ["id"] = idToken?.DeepClone(),
-                                ["error"] = JToken.FromObject(new { code = -32603, message, operationId, correlationId })
+                                ["result"] = JToken.FromObject(new
+                                {
+                                    content = new[] { new { type = "text", text = axiPayload.ToString(Formatting.None) } },
+                                    isError = true
+                                })
                             };
                         },
                         toolName: toolName,
@@ -1257,18 +1288,284 @@ namespace GxMcp.Gateway
             return false;
         }
 
-        private static JObject BuildToolTextResponse(JToken? idToken, JToken payload, bool isError)
+        private static JObject BuildToolTextResponse(JToken? idToken, JToken payload, bool isError, string? toolName = null, JObject? toolArgs = null)
         {
+            JToken axiPayload = NormalizeToolPayloadForAxi(payload, toolName ?? "unknown", toolArgs, isError);
             return new JObject
             {
                 ["jsonrpc"] = "2.0",
                 ["id"] = idToken?.DeepClone(),
                 ["result"] = JToken.FromObject(new
                 {
-                    content = new[] { new { type = "text", text = payload.ToString(Formatting.None) } },
+                    content = new[] { new { type = "text", text = axiPayload.ToString(Formatting.None) } },
                     isError
                 })
             };
+        }
+
+        private static JToken NormalizeToolPayloadForAxi(JToken? payload, string toolName, JObject? toolArgs, bool isError)
+        {
+            JObject sourceObj;
+            if (payload is JArray arrayPayload)
+            {
+                sourceObj = new JObject
+                {
+                    ["results"] = arrayPayload.DeepClone()
+                };
+            }
+            else if (payload is JObject objPayload)
+            {
+                sourceObj = objPayload;
+            }
+            else
+            {
+                return payload ?? JValue.CreateNull();
+            }
+
+            var obj = (JObject)sourceObj.DeepClone();
+            var meta = obj["meta"] as JObject ?? new JObject();
+            meta["schemaVersion"] = McpAxiSchemaVersion;
+            meta["tool"] = toolName;
+            obj["meta"] = meta;
+            HashSet<string>? requestedFields = ParseRequestedFields(toolArgs);
+            if (requestedFields == null && ShouldUseCompactDefaults(toolArgs))
+            {
+                requestedFields = GetDefaultCompactFields(toolName);
+            }
+
+            if (obj["isTruncated"]?.Value<bool>() == true)
+            {
+                meta["truncated"] = true;
+                var help = obj["help"] as JArray ?? new JArray();
+                string truncateHint = string.Equals(toolName, "genexus_read", StringComparison.OrdinalIgnoreCase)
+                    ? "Response truncated by gateway budget. Use limit/offset to page source content."
+                    : "Response truncated by gateway budget. Narrow filters or lower limit for deterministic follow-up.";
+
+                if (!help.Any(item => string.Equals(item?.ToString(), truncateHint, StringComparison.OrdinalIgnoreCase)))
+                {
+                    help.Add(truncateHint);
+                }
+
+                obj["help"] = help;
+            }
+
+            if (!isError &&
+                string.Equals(obj["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase) &&
+                obj["noChange"] == null &&
+                string.Equals(obj["details"]?.ToString(), "No change", StringComparison.OrdinalIgnoreCase))
+            {
+                obj["noChange"] = true;
+            }
+
+            string[] collectionKeys = { "results", "objects", "items", "tools", "checks", "entries" };
+            foreach (var key in collectionKeys)
+            {
+                if (obj[key] is not JArray arr)
+                {
+                    continue;
+                }
+
+                if (requestedFields != null &&
+                    requestedFields.Count > 0 &&
+                    ShouldProjectFieldsForTool(toolName))
+                {
+                    obj[key] = ProjectArrayItems(arr, requestedFields);
+                    meta["fields"] = new JArray(requestedFields.OrderBy(field => field, StringComparer.OrdinalIgnoreCase));
+                    arr = (JArray)obj[key]!;
+                }
+
+                if (meta["totalByType"] == null)
+                {
+                    var totalsByType = BuildTotalsByType(arr);
+                    if (totalsByType.Properties().Any())
+                    {
+                        meta["totalByType"] = totalsByType;
+                    }
+                }
+
+                int returned = arr.Count;
+                if (obj["returned"] == null) obj["returned"] = returned;
+                if (obj["empty"] == null) obj["empty"] = returned == 0;
+                if ((obj["empty"]?.Value<bool>() ?? false))
+                {
+                    EnsureEmptyStateHelp(obj, toolName);
+                }
+
+                int? total = TryReadInt(obj["total"]) ??
+                             TryReadInt(obj["count"]) ??
+                             TryReadInt(obj["totalCount"]);
+                if (total.HasValue && obj["total"] == null)
+                {
+                    obj["total"] = total.Value;
+                }
+
+                int? limit = TryReadInt(toolArgs?["limit"]);
+                int offset = TryReadInt(toolArgs?["offset"]) ?? 0;
+                int? effectiveTotal = TryReadInt(obj["total"]);
+
+                if (limit.HasValue && effectiveTotal.HasValue)
+                {
+                    bool hasMore = (offset + returned) < effectiveTotal.Value;
+                    if (obj["hasMore"] == null) obj["hasMore"] = hasMore;
+                    if (hasMore && obj["nextOffset"] == null)
+                    {
+                        obj["nextOffset"] = offset + returned;
+                    }
+                }
+
+                break;
+            }
+
+            return obj;
+        }
+
+        private static void EnsureEmptyStateHelp(JObject obj, string toolName)
+        {
+            var help = obj["help"] as JArray ?? new JArray();
+            string hint = string.Equals(toolName, "genexus_query", StringComparison.OrdinalIgnoreCase)
+                ? "No matches found for the current query. Try broader terms or remove filters."
+                : string.Equals(toolName, "genexus_list_objects", StringComparison.OrdinalIgnoreCase)
+                    ? "No objects found for the current scope. Verify parentPath/parent filters."
+                    : "No results returned for this request.";
+
+            if (!help.Any(item => string.Equals(item?.ToString(), hint, StringComparison.OrdinalIgnoreCase)))
+            {
+                help.Add(hint);
+            }
+
+            obj["help"] = help;
+        }
+
+        private static bool ShouldProjectFieldsForTool(string toolName)
+        {
+            return string.Equals(toolName, "genexus_query", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(toolName, "genexus_list_objects", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static JObject BuildTotalsByType(JArray arr)
+        {
+            var totals = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in arr.OfType<JObject>())
+            {
+                string type = row["type"]?.ToString() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(type))
+                {
+                    continue;
+                }
+
+                if (!totals.ContainsKey(type))
+                {
+                    totals[type] = 0;
+                }
+
+                totals[type] += 1;
+            }
+
+            var outObj = new JObject();
+            foreach (var kv in totals.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                outObj[kv.Key] = kv.Value;
+            }
+
+            return outObj;
+        }
+
+        private static JArray ProjectArrayItems(JArray arr, HashSet<string> fields)
+        {
+            var projected = new JArray();
+            foreach (var row in arr)
+            {
+                if (row is not JObject rowObj)
+                {
+                    projected.Add(row.DeepClone());
+                    continue;
+                }
+
+                var outRow = new JObject();
+                foreach (var field in fields)
+                {
+                    if (rowObj.TryGetValue(field, StringComparison.OrdinalIgnoreCase, out var value))
+                    {
+                        outRow[field] = value.DeepClone();
+                    }
+                }
+
+                projected.Add(outRow);
+            }
+
+            return projected;
+        }
+
+        private static bool ShouldUseCompactDefaults(JObject? toolArgs)
+        {
+            if (toolArgs == null) return false;
+            var token = toolArgs["axiCompact"];
+            if (token == null) return false;
+            return token.Type == JTokenType.Boolean
+                ? token.Value<bool>()
+                : bool.TryParse(token.ToString(), out bool parsed) && parsed;
+        }
+
+        private static HashSet<string>? GetDefaultCompactFields(string toolName)
+        {
+            if (string.Equals(toolName, "genexus_query", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HashSet<string>(new[] { "name", "type", "path" }, StringComparer.OrdinalIgnoreCase);
+            }
+
+            if (string.Equals(toolName, "genexus_list_objects", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HashSet<string>(new[] { "name", "type", "path", "parentPath" }, StringComparer.OrdinalIgnoreCase);
+            }
+
+            return null;
+        }
+
+        private static HashSet<string>? ParseRequestedFields(JObject? toolArgs)
+        {
+            if (toolArgs == null) return null;
+            var token = toolArgs["fields"];
+            if (token == null) return null;
+
+            var fields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (token.Type == JTokenType.Array)
+            {
+                foreach (var item in token.Values<string>())
+                {
+                    if (!string.IsNullOrWhiteSpace(item))
+                    {
+                        fields.Add(item.Trim());
+                    }
+                }
+            }
+            else
+            {
+                string raw = token.ToString();
+                foreach (var piece in raw.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    string value = piece.Trim();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        fields.Add(value);
+                    }
+                }
+            }
+
+            return fields.Count == 0 ? null : fields;
+        }
+
+        private static int? TryReadInt(JToken? token)
+        {
+            if (token == null) return null;
+            if (token.Type == JTokenType.Integer) return token.Value<int>();
+            if (token.Type == JTokenType.Float) return (int)Math.Floor(token.Value<double>());
+            if (token.Type == JTokenType.String &&
+                int.TryParse(token.Value<string>(), out int parsed))
+            {
+                return parsed;
+            }
+
+            return null;
         }
 
         private static bool IsOriginAllowed(string? origin, ServerConfig? serverConfig)
