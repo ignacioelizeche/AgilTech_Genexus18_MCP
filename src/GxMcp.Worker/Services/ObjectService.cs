@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Artech.Architecture.Common.Objects;
 using Artech.Architecture.Common.Descriptors;
@@ -16,6 +17,16 @@ namespace GxMcp.Worker.Services
 {
     public class ObjectService
     {
+        private sealed class ReadCacheEntry
+        {
+            public string Payload { get; set; } = string.Empty;
+            public DateTime UpdatedUtc { get; set; }
+        }
+
+        private static readonly ConcurrentDictionary<string, ReadCacheEntry> _readCache =
+            new ConcurrentDictionary<string, ReadCacheEntry>(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan ReadCacheTtl = TimeSpan.FromSeconds(20);
+
         private readonly KbService _kbService;
         private readonly BuildService _buildService;
         private DataInsightService _dataInsightService;
@@ -269,7 +280,54 @@ namespace GxMcp.Worker.Services
         {
             var obj = FindObject(target, typeFilter);
             if (obj == null) return HealingService.FormatNotFoundError(target, GetIndex());
-            return ReadObjectSourceInternal(obj, partName, offset, limit, client, minimize);
+
+            string resolvedPart = ResolvePartName(obj, partName);
+            if (ShouldUseReadCache(client, minimize))
+            {
+                string cacheKey = BuildReadCacheKey(obj.Guid, resolvedPart, offset, limit, client, minimize);
+                if (TryGetReadCache(cacheKey, out string cachedPayload))
+                {
+                    return cachedPayload;
+                }
+
+                string payload = ReadObjectSourceInternal(obj, resolvedPart, offset, limit, client, minimize);
+                if (CanCachePayload(payload))
+                {
+                    SetReadCache(cacheKey, payload);
+                }
+
+                return payload;
+            }
+
+            return ReadObjectSourceInternal(obj, resolvedPart, offset, limit, client, minimize);
+        }
+
+        public void MarkReadCacheDirty(KBObject obj, string partName = null)
+        {
+            if (obj == null)
+            {
+                return;
+            }
+
+            string normalizedPart = string.IsNullOrWhiteSpace(partName) ? null : partName.Trim().ToLowerInvariant();
+            string objectPrefix = obj.Guid.ToString("N").ToLowerInvariant() + "|";
+            foreach (var key in _readCache.Keys)
+            {
+                if (!key.StartsWith(objectPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (normalizedPart != null && !key.StartsWith(objectPrefix + normalizedPart + "|", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                _readCache.TryRemove(key, out _);
+            }
+
+            // SDK object cache invalidation is expensive; do it only after writes.
+            InvalidateCache(obj);
         }
 
         public string ExportObjectToText(string target, string outputPath, string partName = null, string typeFilter = null, bool overwrite = false)
@@ -375,18 +433,12 @@ namespace GxMcp.Worker.Services
 
         private string ReadObjectSourceInternal(KBObject obj, string partName, int? offset = null, int? limit = null, string client = "ide", bool minimize = false)
         {
-            if (string.IsNullOrEmpty(partName))
-            {
-                if (obj is Procedure) partName = "Source";
-                else if (obj is Transaction || obj is WebPanel) partName = "Events";
-                else partName = "Source";
-            }
+            partName = ResolvePartName(obj, partName);
 
             Logger.Info($"ReadObjectSourceInternal: {obj.Name} (Part: {partName}, Client: {client})");
             var sw = Stopwatch.StartNew();
             try
             {
-                InvalidateCache(obj);
                 string targetName = obj.Name;
 
                 if (WebFormXmlHelper.IsVisualPart(partName))
@@ -519,6 +571,87 @@ namespace GxMcp.Worker.Services
             catch (Exception ex)
             {
                 return "{\"error\": \"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
+            }
+        }
+
+        private static string ResolvePartName(KBObject obj, string partName)
+        {
+            if (!string.IsNullOrWhiteSpace(partName))
+            {
+                return partName;
+            }
+
+            if (obj is Procedure) return "Source";
+            if (obj is Transaction || obj is WebPanel) return "Events";
+            return "Source";
+        }
+
+        private static bool ShouldUseReadCache(string client, bool minimize)
+        {
+            return string.Equals(client, "mcp", StringComparison.OrdinalIgnoreCase) && !minimize;
+        }
+
+        private static string BuildReadCacheKey(Guid objectGuid, string partName, int? offset, int? limit, string client, bool minimize)
+        {
+            string normalizedPart = string.IsNullOrWhiteSpace(partName) ? "source" : partName.Trim().ToLowerInvariant();
+            string normalizedClient = string.IsNullOrWhiteSpace(client) ? "mcp" : client.Trim().ToLowerInvariant();
+            int normalizedOffset = offset ?? -1;
+            int normalizedLimit = limit ?? -1;
+            return objectGuid.ToString("N").ToLowerInvariant() + "|" + normalizedPart + "|" + normalizedOffset + "|" + normalizedLimit + "|" + normalizedClient + "|" + (minimize ? "1" : "0");
+        }
+
+        private static bool TryGetReadCache(string key, out string payload)
+        {
+            payload = string.Empty;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return false;
+            }
+
+            if (!_readCache.TryGetValue(key, out var entry) || entry == null)
+            {
+                return false;
+            }
+
+            if (DateTime.UtcNow - entry.UpdatedUtc > ReadCacheTtl)
+            {
+                _readCache.TryRemove(key, out _);
+                return false;
+            }
+
+            payload = entry.Payload;
+            return !string.IsNullOrWhiteSpace(payload);
+        }
+
+        private static void SetReadCache(string key, string payload)
+        {
+            if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(payload))
+            {
+                return;
+            }
+
+            _readCache[key] = new ReadCacheEntry
+            {
+                Payload = payload,
+                UpdatedUtc = DateTime.UtcNow
+            };
+        }
+
+        private static bool CanCachePayload(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return false;
+            }
+
+            try
+            {
+                var json = JObject.Parse(payload);
+                return json["error"] == null;
+            }
+            catch
+            {
+                return false;
             }
         }
 

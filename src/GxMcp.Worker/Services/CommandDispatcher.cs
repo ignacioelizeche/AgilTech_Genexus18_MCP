@@ -234,7 +234,8 @@ namespace GxMcp.Worker.Services
                             args?["context"]?.ToString(),
                             args?["expectedCount"]?.ToObject<int?>() ?? 1,
                             args?["type"]?.ToString(),
-                            args?["dryRun"]?.ToObject<bool?>() ?? false);
+                            args?["dryRun"]?.ToObject<bool?>() ?? false,
+                            args?["verifyRollback"]?.ToObject<bool?>() ?? false);
                         break;
                     case "analyze":
                         if (action == "GetNavigation") return _navigationService.GetNavigation(target);

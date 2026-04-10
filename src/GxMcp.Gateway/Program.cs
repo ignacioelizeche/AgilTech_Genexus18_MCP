@@ -35,6 +35,7 @@ namespace GxMcp.Gateway
         private static ConcurrentDictionary<string, JObject> _semanticCache = new ConcurrentDictionary<string, JObject>();
         private static HttpSessionRegistry _httpSessions = new HttpSessionRegistry(TimeSpan.FromMinutes(10));
         private static readonly OperationTracker _operationTracker = new OperationTracker(TimeSpan.FromMinutes(60));
+        private static int _workerWarmupStarted;
         private static readonly TimeSpan _pendingRequestRetention = TimeSpan.FromMinutes(65);
         private static readonly string _logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "gateway_debug.log");
         private static readonly BlockingCollection<string> _logQueue = new BlockingCollection<string>();
@@ -749,6 +750,10 @@ namespace GxMcp.Gateway
             var mcpResponse = McpRouter.Handle(request);
             if (mcpResponse != null)
             {
+                if (string.Equals(method, "initialize", StringComparison.OrdinalIgnoreCase))
+                {
+                    TriggerWorkerWarmupOnce();
+                }
                 return new JObject { ["jsonrpc"] = "2.0", ["id"] = idToken?.DeepClone(), ["result"] = JToken.FromObject(mcpResponse) };
             }
 
@@ -979,6 +984,112 @@ namespace GxMcp.Gateway
             }
             
             return null;
+        }
+
+        private static void TriggerWorkerWarmupOnce()
+        {
+            if (Interlocked.CompareExchange(ref _workerWarmupStarted, 1, 0) != 0)
+            {
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (_worker == null)
+                    {
+                        Log("[Warmup] Worker not available, skipping warmup.");
+                        return;
+                    }
+
+                    Log("[Warmup] Starting worker warmup sequence...");
+                    BroadcastNotification("notifications/message", new
+                    {
+                        level = "info",
+                        logger = "warmup",
+                        data = "Worker warmup started.",
+                        timestamp = DateTime.UtcNow
+                    });
+
+                    var listCommand = new JObject
+                    {
+                        ["module"] = "List",
+                        ["action"] = "Objects",
+                        ["target"] = string.Empty,
+                        ["limit"] = 1,
+                        ["offset"] = 0,
+                        ["client"] = "mcp"
+                    };
+
+                    var listResponse = await SendWorkerCommandAsync(
+                        listCommand,
+                        30000,
+                        "Warmup list timeout",
+                        workerResponse => workerResponse,
+                        (_, correlationId) => new JObject
+                        {
+                            ["error"] = new JObject
+                            {
+                                ["message"] = "Warmup list operation timed out.",
+                                ["correlationId"] = correlationId
+                            }
+                        },
+                        toolName: "gateway_warmup_list",
+                        trackOperation: false);
+
+                    string? objectName = listResponse?["result"]?["results"]?.First?["name"]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(objectName))
+                    {
+                        var readCommand = new JObject
+                        {
+                            ["module"] = "Read",
+                            ["action"] = "ExtractSource",
+                            ["target"] = objectName,
+                            ["part"] = "Source",
+                            ["offset"] = 0,
+                            ["limit"] = 1,
+                            ["client"] = "mcp"
+                        };
+
+                        await SendWorkerCommandAsync(
+                            readCommand,
+                            30000,
+                            "Warmup read timeout",
+                            workerResponse => workerResponse,
+                            (_, correlationId) => new JObject
+                            {
+                                ["error"] = new JObject
+                                {
+                                    ["message"] = "Warmup read operation timed out.",
+                                    ["correlationId"] = correlationId
+                                }
+                            },
+                            toolName: "gateway_warmup_read",
+                            trackOperation: false);
+                    }
+
+                    Log("[Warmup] Worker warmup finished.");
+                    BroadcastNotification("notifications/message", new
+                    {
+                        level = "info",
+                        logger = "warmup",
+                        data = "Worker warmup finished.",
+                        timestamp = DateTime.UtcNow
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Log("[Warmup] Worker warmup failed: " + ex.Message);
+                    BroadcastNotification("notifications/message", new
+                    {
+                        level = "warning",
+                        logger = "warmup",
+                        data = "Worker warmup failed: " + ex.Message,
+                        timestamp = DateTime.UtcNow
+                    });
+                }
+            });
         }
 
         private static JToken TruncateResponseIfNeeded(JToken? result, string toolName)

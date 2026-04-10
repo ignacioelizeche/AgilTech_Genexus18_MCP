@@ -47,11 +47,14 @@ namespace GxMcp.Worker.Tests
 
         [Theory]
         [InlineData("Events", "Erro", "", true)]
+        [InlineData("Events", "Erro, line: 1", "", true)]
+        [InlineData("Events", "Error, line: 1", "", true)]
         [InlineData("Source", "Part save failed: Erro", "Erro", true)]
         [InlineData("Code", "", "", true)]
         [InlineData("Rules", "Erro", "", false)]
         [InlineData("Events", "Validation failed", "", false)]
         [InlineData("Events", "Erro", "Detailed SDK message", false)]
+        [InlineData("Events", "Erro, line: 1", "Detailed SDK message", false)]
         public void ShouldRetryWithoutPartSave_ShouldOnlyRetryGenericLogicalSourceFailures(string partName, string exceptionMessage, string diagnosticText, bool expected)
         {
             Assert.Equal(expected, WritePolicy.ShouldRetryWithoutPartSave(partName, exceptionMessage, diagnosticText));

@@ -177,6 +177,11 @@
           "description": "For patch mode: validates and computes patch result without persisting changes.",
           "default": false
         },
+        "verifyRollback": {
+          "type": "boolean",
+          "description": "For patch mode: applies the patch, verifies persisted content, then automatically restores the original content and verifies the rollback.",
+          "default": false
+        },
         "changes": {
           "type": "array",
           "items": {
@@ -214,6 +219,11 @@
               "dryRun": {
                 "type": "boolean",
                 "description": "For patch mode: validates patch without persisting.",
+                "default": false
+              },
+              "verifyRollback": {
+                "type": "boolean",
+                "description": "For patch mode: applies change, verifies persistence, and automatically rolls back to original content.",
                 "default": false
               }
             },
@@ -293,6 +303,11 @@
                     "dryRun": {
                       "type": "boolean",
                       "description": "For patch mode: validates patch without persisting.",
+                      "default": false
+                    },
+                    "verifyRollback": {
+                      "type": "boolean",
+                      "description": "For patch mode: applies change, verifies persistence, and automatically rolls back to original content.",
                       "default": false
                     }
                   },
