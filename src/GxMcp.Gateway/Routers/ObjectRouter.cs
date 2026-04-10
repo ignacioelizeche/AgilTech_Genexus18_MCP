@@ -54,7 +54,8 @@ namespace GxMcp.Gateway.Routers
                             content = args?["content"]?.ToString(),
                             context = args?["context"]?.ToString(),
                             expectedCount = args?["expectedCount"]?.ToObject<int?>() ?? 1,
-                            dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
+                            dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
+                            verifyRollback = args?["verifyRollback"]?.ToObject<bool?>() ?? false
                         };
                     }
                     else
@@ -75,7 +76,8 @@ namespace GxMcp.Gateway.Routers
                         content = args?["content"]?.ToString(),
                         context = args?["context"]?.ToString(),
                         expectedCount = args?["expectedCount"]?.ToObject<int?>() ?? 1,
-                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
+                        dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false,
+                        verifyRollback = args?["verifyRollback"]?.ToObject<bool?>() ?? false
                     };
                 case "genexus_write_object":
                     return new { module = "Write", action = part, target = target, payload = args?["code"]?.ToString() };

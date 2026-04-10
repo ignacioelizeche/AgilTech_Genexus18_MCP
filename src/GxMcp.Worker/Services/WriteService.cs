@@ -16,6 +16,8 @@ namespace GxMcp.Worker.Services
         private readonly ObjectService _objectService;
         private readonly PatternAnalysisService _patternAnalysisService;
         private ValidationService _validationService;
+        private static readonly object _persistenceWarmupLock = new object();
+        private static bool _persistenceWarmupDone = false;
         private static readonly object _flushLock = new object();
         private static System.Timers.Timer _flushTimer;
         private static bool _pendingCommit = false;
@@ -77,6 +79,30 @@ namespace GxMcp.Worker.Services
                 catch (Exception ex)
                 {
                     Logger.Error("[BACKGROUND-FLUSH] ERROR: " + ex.Message);
+                }
+            }
+        }
+
+        private void EnsurePersistenceWarmup()
+        {
+            if (_persistenceWarmupDone) return;
+
+            lock (_persistenceWarmupLock)
+            {
+                if (_persistenceWarmupDone) return;
+                try
+                {
+                    var kb = _objectService.GetKbService().GetKB();
+                    if (kb == null) return;
+                    Logger.Info("[DEBUG-SAVE] Warming up persistence pipeline...");
+                    dynamic tx = kb.BeginTransaction();
+                    tx.Commit();
+                    _persistenceWarmupDone = true;
+                    Logger.Info("[DEBUG-SAVE] Persistence warmup complete.");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn("[DEBUG-SAVE] Persistence warmup failed: " + ex.Message);
                 }
             }
         }
@@ -167,7 +193,7 @@ namespace GxMcp.Worker.Services
             return errorRes;
         }
 
-        public string WriteObject(string target, string partName, string code, string typeFilter = null, bool autoValidate = true)
+        public string WriteObject(string target, string partName, string code, string typeFilter = null, bool autoValidate = true, bool preferFastSourceSave = false, bool autoInjectVariables = true)
         {
             try
             {
@@ -219,6 +245,7 @@ namespace GxMcp.Worker.Services
                             StructureParser.ParseFromText(objToUpdate, decodedCode);
                             objToUpdate.EnsureSave();
                             ScheduleFlush();
+                            _objectService.MarkReadCacheDirty(objToUpdate, partName);
                             return Models.McpResponse.Success("Write", target, new JObject { ["details"] = "Structure DSL successfully applied" });
                         } catch (Exception ex) {
                             Logger.Error("[DEBUG-SAVE] Error parsing Structure DSL: " + ex.Message);
@@ -274,11 +301,14 @@ namespace GxMcp.Worker.Services
                     sourcePart.Source = decodedCode;
                     
                     // Auto-inject variables based on the new code (Optimized with Index)
-                    try {
-                        var index = _objectService.GetKbService().GetIndexCache().GetIndex();
-                        VariableInjector.InjectVariables(obj, decodedCode, index);
-                    } catch (Exception ex) {
-                        Logger.Warn("[DEBUG-SAVE] Auto-inject variables failed: " + ex.Message);
+                    if (autoInjectVariables)
+                    {
+                        try {
+                            var index = _objectService.GetKbService().GetIndexCache().GetIndex();
+                            VariableInjector.InjectVariables(obj, decodedCode, index);
+                        } catch (Exception ex) {
+                            Logger.Warn("[DEBUG-SAVE] Auto-inject variables failed: " + ex.Message);
+                        }
                     }
                     contentSet = true;
                 }
@@ -327,6 +357,42 @@ namespace GxMcp.Worker.Services
                 // 3. PERSISTENCE SEQUENCE
                 try
                 {
+                    EnsurePersistenceWarmup();
+
+                    if (preferFastSourceSave &&
+                        part is global::Artech.Architecture.Common.Objects.ISource &&
+                        WritePolicy.IsLogicalSourcePart(partName))
+                    {
+                        try
+                        {
+                            var saveMethod = obj.GetType().GetMethod("Save", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                            if (saveMethod != null)
+                            {
+                                Logger.Info("[DEBUG-SAVE] Fast persistence path: obj.Save() without explicit transaction.");
+                                saveMethod.Invoke(obj, null);
+                                ScheduleFlush();
+                                _objectService.MarkReadCacheDirty(obj, partName);
+                                return Models.McpResponse.Success("Write", target, new JObject
+                                {
+                                    ["fastPath"] = "save_without_transaction"
+                                });
+                            }
+
+                            Logger.Info("[DEBUG-SAVE] Fast persistence path fallback: obj.EnsureSave(false) without explicit transaction.");
+                            obj.EnsureSave(false);
+                            ScheduleFlush();
+                            _objectService.MarkReadCacheDirty(obj, partName);
+                            return Models.McpResponse.Success("Write", target, new JObject
+                            {
+                                ["fastPath"] = "ensure_save_without_transaction"
+                            });
+                        }
+                        catch (Exception fastEx)
+                        {
+                            Logger.Warn("[DEBUG-SAVE] Fast persistence path failed. Falling back to full transaction path. Reason: " + fastEx.Message);
+                        }
+                    }
+
                     var kb = _objectService.GetKbService().GetKB();
                     if (kb == null) throw new Exception("KB not opened");
 
@@ -349,28 +415,39 @@ namespace GxMcp.Worker.Services
                         failureStage = "part_save";
                         Logger.Info(string.Format("[DEBUG-SAVE] Invoking part.Save() for {0}...", part.TypeDescriptor?.Name));
                         bool skippedPartSave = false;
-                        try {
-                            part.Save();
-                            Logger.Info("[DEBUG-SAVE] part.Save() completed.");
-                        } catch (Exception exPart) {
-                            string partMsgs = GetSdkMessagesSafe(part);
-                            lastSdkMessages = partMsgs;
-                            var saveIssues = SdkDiagnosticsHelper.GetDiagnostics(obj);
-                            if (ShouldRetryWithoutPartSave(partName, part, exPart, partMsgs, saveIssues))
-                            {
-                                skippedPartSave = true;
-                                retryStrategy = "object_save_only";
-                                Logger.Warn($"[DEBUG-SAVE] part.Save() failed generically for {target} ({partName}). Retrying with object-level save only.");
-                            }
-                            else
-                            {
-                                string detailText = WritePolicy.BuildFailureDetails(partMsgs, saveIssues);
-                                Logger.Warn($"[DEBUG-SAVE] part.Save() threw exception: {exPart.Message}. Details: {detailText}");
-                                throw new Exception(
-                                    string.IsNullOrWhiteSpace(detailText)
-                                        ? $"Part save failed: {exPart.Message}"
-                                        : $"Part save failed: {exPart.Message}. Details: {detailText}",
-                                    exPart);
+                        if (preferFastSourceSave &&
+                            part is global::Artech.Architecture.Common.Objects.ISource &&
+                            WritePolicy.IsLogicalSourcePart(partName))
+                        {
+                            skippedPartSave = true;
+                            retryStrategy = "object_save_only_fast_path";
+                            Logger.Info($"[DEBUG-SAVE] Fast source save path enabled for {target} ({partName}). Skipping part.Save().");
+                        }
+                        else
+                        {
+                            try {
+                                part.Save();
+                                Logger.Info("[DEBUG-SAVE] part.Save() completed.");
+                            } catch (Exception exPart) {
+                                string partMsgs = GetSdkMessagesSafe(part);
+                                lastSdkMessages = partMsgs;
+                                var saveIssues = SdkDiagnosticsHelper.GetDiagnostics(obj);
+                                if (ShouldRetryWithoutPartSave(partName, part, exPart, partMsgs, saveIssues))
+                                {
+                                    skippedPartSave = true;
+                                    retryStrategy = "object_save_only";
+                                    Logger.Warn($"[DEBUG-SAVE] part.Save() failed generically for {target} ({partName}). Retrying with object-level save only.");
+                                }
+                                else
+                                {
+                                    string detailText = WritePolicy.BuildFailureDetails(partMsgs, saveIssues);
+                                    Logger.Warn($"[DEBUG-SAVE] part.Save() threw exception: {exPart.Message}. Details: {detailText}");
+                                    throw new Exception(
+                                        string.IsNullOrWhiteSpace(detailText)
+                                            ? $"Part save failed: {exPart.Message}"
+                                            : $"Part save failed: {exPart.Message}. Details: {detailText}",
+                                        exPart);
+                                }
                             }
                         }
 
@@ -425,6 +502,7 @@ namespace GxMcp.Worker.Services
                     ScheduleFlush();
 
                     Logger.Info("[DEBUG-SAVE] SAVE & COMMIT COMPLETE.");
+                    _objectService.MarkReadCacheDirty(obj, partName);
                     return Models.McpResponse.Success("Write", target);
                 }
                 catch (Exception saveEx)

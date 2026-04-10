@@ -1,12 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
 
 namespace GxMcp.Worker.Services
 {
     public static class WritePolicy
     {
+        private static readonly Regex GenericLineErrorRegex = new Regex(
+            @"^(erro|error)\s*,\s*line\s*:\s*\d+\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
         public static bool IsUnchangedSourceWrite(string existingSource, string incomingSource) =>
             string.Equals(
                 NormalizeSourceForComparison(existingSource),
@@ -75,11 +80,18 @@ namespace GxMcp.Worker.Services
                 return false;
             }
 
+            string normalizedException = exceptionMessage?.Trim() ?? string.Empty;
+            string normalizedDiagnostic = diagnosticText?.Trim() ?? string.Empty;
+
             bool genericFailure = string.IsNullOrWhiteSpace(exceptionMessage) ||
-                                  string.Equals(exceptionMessage.Trim(), "Erro", StringComparison.OrdinalIgnoreCase) ||
+                                  string.Equals(normalizedException, "Erro", StringComparison.OrdinalIgnoreCase) ||
+                                  string.Equals(normalizedException, "Error", StringComparison.OrdinalIgnoreCase) ||
+                                  GenericLineErrorRegex.IsMatch(normalizedException) ||
                                   exceptionMessage.IndexOf("Part save failed: Erro", StringComparison.OrdinalIgnoreCase) >= 0;
             bool genericDiagnostics = string.IsNullOrWhiteSpace(diagnosticText) ||
-                                      string.Equals(diagnosticText.Trim(), "Erro", StringComparison.OrdinalIgnoreCase);
+                                      string.Equals(normalizedDiagnostic, "Erro", StringComparison.OrdinalIgnoreCase) ||
+                                      string.Equals(normalizedDiagnostic, "Error", StringComparison.OrdinalIgnoreCase) ||
+                                      GenericLineErrorRegex.IsMatch(normalizedDiagnostic);
             return genericFailure && genericDiagnostics;
         }
     }
