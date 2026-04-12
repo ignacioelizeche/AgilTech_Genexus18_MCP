@@ -77,7 +77,12 @@ jobs:
 
       - name: Publish to npm
         if: steps.version.outputs.changed == 'true' && steps.npm_check.outputs.already_published == 'false'
-        run: npm publish --access public --provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Force Trusted Publishing (OIDC) even if a legacy NODE_AUTH_TOKEN exists in repo/org secrets.
+          unset NODE_AUTH_TOKEN
+          npm publish --access public --provenance
 
       - name: Create GitHub Release
         if: steps.version.outputs.changed == 'true'
