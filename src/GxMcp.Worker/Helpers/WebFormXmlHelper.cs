@@ -21,8 +21,22 @@ namespace GxMcp.Worker.Helpers
             return obj.Parts
                 .Cast<KBObjectPart>()
                 .FirstOrDefault(part =>
-                    string.Equals(part.TypeDescriptor?.Name, "WebForm", StringComparison.OrdinalIgnoreCase) ||
-                    part.GetType().Name.IndexOf("WebForm", StringComparison.OrdinalIgnoreCase) >= 0);
+                {
+                    string name = part.TypeDescriptor?.Name ?? "";
+                    string typeName = part.GetType().Name;
+                    
+                    // ELITE: In GeneXus Procedures, the 'Layout' part is often a ReportPart.
+                    // We allow it here so that ObjectService can read it as Visual XML.
+                    if (name.Equals("WebForm", StringComparison.OrdinalIgnoreCase) ||
+                        name.Equals("Layout", StringComparison.OrdinalIgnoreCase) ||
+                        typeName.IndexOf("WebForm", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        typeName.IndexOf("Report", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        return true;
+                    }
+
+                    return false;
+                });
         }
 
         public static string ReadEditableXml(KBObject obj)
@@ -30,7 +44,19 @@ namespace GxMcp.Worker.Helpers
             var part = GetWebFormPart(obj);
             if (part == null)
             {
+                Logger.Info($"[LayoutFix] GetWebFormPart returned NULL for {obj.Name}");
                 return string.Empty;
+            }
+
+            Logger.Info($"[LayoutFix] Found visual part for {obj.Name}: {part.TypeDescriptor?.Name} (GUID: {part.Type})");
+
+            // ELITE: If it's a ReportPart, we use the specialized ReportLayoutHelper.
+            if (ReportLayoutHelper.IsReportPart(part) != null)
+            {
+                Logger.Info($"[LayoutFix] Part identified as Report for {obj.Name}. Reading via ReportLayoutHelper.");
+                var xml = ReportLayoutHelper.ReadLayout(part);
+                if (!string.IsNullOrEmpty(xml)) return xml;
+                Logger.Info($"[LayoutFix] ReportLayoutHelper.ReadLayout returned empty/null for {obj.Name}");
             }
 
             try
@@ -39,13 +65,15 @@ namespace GxMcp.Worker.Helpers
                 var document = dPart.Document as XmlDocument;
                 if (document?.DocumentElement == null)
                 {
+                    Logger.Info($"[LayoutFix] DocumentElement is NULL for {obj.Name}");
                     return string.Empty;
                 }
 
                 return XDocument.Parse(document.OuterXml).ToString();
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.Info($"[LayoutFix] ReadEditableXml error for {obj.Name}: {ex.Message}");
                 try
                 {
                     dynamic dPart = part;
@@ -91,6 +119,17 @@ namespace GxMcp.Worker.Helpers
             }
 
             string normalized = NormalizeEditableXmlInput(xml, part.TypeDescriptor?.Name);
+
+            // ELITE: Support ReportPart persistence
+            if (ReportLayoutHelper.IsReportPart(part) != null)
+            {
+                if (!ReportLayoutHelper.WriteLayout(part, normalized))
+                {
+                    throw new InvalidOperationException("Failed to write Report layout via reflection.");
+                }
+                return;
+            }
+
             dynamic fallbackPart = part;
             XmlDocument existingDocument = fallbackPart.Document as XmlDocument;
             if (existingDocument == null)

@@ -488,6 +488,139 @@ namespace GxMcp.Gateway.Tests
         }
 
         [Fact]
+        public void ConvertToolCall_ShouldMapLayoutSetPropertyTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_layout","arguments":{"action":"set_property","name":"ComissaoParecerPDF","control":"printBlock1","propertyName":"Caption","value":"Novo Caption"}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Layout", json["module"]?.ToString());
+            Assert.Equal("SetProperty", json["action"]?.ToString());
+            Assert.Equal("ComissaoParecerPDF", json["target"]?.ToString());
+            Assert.Equal("printBlock1", json["control"]?.ToString());
+            Assert.Equal("Caption", json["propertyName"]?.ToString());
+            Assert.Equal("Novo Caption", json["value"]?.ToString());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapLayoutFindControlsTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_layout","arguments":{"action":"find_controls","name":"ComissaoParecerPDF","propertyName":"Caption","query":"VALOR","limit":30}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Layout", json["module"]?.ToString());
+            Assert.Equal("FindControls", json["action"]?.ToString());
+            Assert.Equal("ComissaoParecerPDF", json["target"]?.ToString());
+            Assert.Equal("Caption", json["propertyName"]?.ToString());
+            Assert.Equal("VALOR", json["query"]?.ToString());
+            Assert.Equal(30, json["limit"]?.Value<int>());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapLayoutTargetAliasWhenNameIsMissing()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_layout","arguments":{"action":"get_tree","target":"ComissaoParecerPDF","limit":30}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Layout", json["module"]?.ToString());
+            Assert.Equal("GetTree", json["action"]?.ToString());
+            Assert.Equal("ComissaoParecerPDF", json["target"]?.ToString());
+            Assert.Equal(30, json["limit"]?.Value<int>());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapLayoutSetPropertiesTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_layout","arguments":{"action":"set_properties","name":"ComissaoParecerPDF","changes":[{"control":"printBlock1","propertyName":"Caption","value":"A"},{"control":"printBlock2","propertyName":"Caption","value":"B"}]}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Layout", json["module"]?.ToString());
+            Assert.Equal("SetProperties", json["action"]?.ToString());
+            Assert.Equal("ComissaoParecerPDF", json["target"]?.ToString());
+            Assert.Equal(2, json["changes"]?.Value<JArray>()?.Count);
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapLayoutInspectSurfaceTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_layout","arguments":{"action":"inspect_surface","name":"ComissaoParecerPDF"}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Layout", json["module"]?.ToString());
+            Assert.Equal("InspectSurface", json["action"]?.ToString());
+            Assert.Equal("ComissaoParecerPDF", json["target"]?.ToString());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapLayoutScanMutatorsTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_layout","arguments":{"action":"scan_mutators","name":"ComissaoParecerPDF","limit":50}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Layout", json["module"]?.ToString());
+            Assert.Equal("ScanMutators", json["action"]?.ToString());
+            Assert.Equal("ComissaoParecerPDF", json["target"]?.ToString());
+            Assert.Equal(50, json["limit"]?.Value<int>());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapLayoutRenamePrintBlockTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_layout","arguments":{"action":"rename_printblock","name":"ComissaoParecerPDF","currentName":"printBlock3","newName":"printBlock3Renamed"}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Layout", json["module"]?.ToString());
+            Assert.Equal("RenamePrintBlock", json["action"]?.ToString());
+            Assert.Equal("ComissaoParecerPDF", json["target"]?.ToString());
+            Assert.Equal("printBlock3", json["currentName"]?.ToString());
+            Assert.Equal("printBlock3Renamed", json["newName"]?.ToString());
+        }
+
+        [Fact]
+        public void ConvertToolCall_ShouldMapLayoutAddPrintBlockTool()
+        {
+            var request = JObject.Parse(
+                """{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"genexus_layout","arguments":{"action":"add_printblock","name":"ComissaoParecerPDF","printBlockName":"printBlockMcp","height":60}}}"""
+            );
+
+            var result = McpRouter.ConvertToolCall(request);
+
+            var json = JObject.FromObject(result!);
+            Assert.Equal("Layout", json["module"]?.ToString());
+            Assert.Equal("AddPrintBlock", json["action"]?.ToString());
+            Assert.Equal("ComissaoParecerPDF", json["target"]?.ToString());
+            Assert.Equal("printBlockMcp", json["printBlockName"]?.ToString());
+            Assert.Equal(60, json["height"]?.Value<int>());
+        }
+
+        [Fact]
         public void ConvertToolCall_ShouldPreserveHistoryVersionId()
         {
             var request = JObject.Parse(

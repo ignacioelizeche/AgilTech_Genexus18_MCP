@@ -66,6 +66,8 @@ namespace GxMcp.Gateway.Routers
 
                 case "genexus_structure":
                     return ConvertStructureToolCall(args);
+                case "genexus_layout":
+                    return ConvertLayoutToolCall(args);
 
                 default:
                     return null;
@@ -179,6 +181,50 @@ namespace GxMcp.Gateway.Routers
                 payload = args?["payload"]?.Type == JTokenType.Object || args?["payload"]?.Type == JTokenType.Array
                     ? args?["payload"]?.ToString()
                     : args?["payload"]?.ToString()
+            };
+        }
+
+        private static object? ConvertLayoutToolCall(JObject? args)
+        {
+            string? action = args?["action"]?.ToString();
+            if (string.IsNullOrWhiteSpace(action)) return null;
+            string? objectName = args?["name"]?.ToString();
+            if (string.IsNullOrWhiteSpace(objectName))
+            {
+                objectName = args?["target"]?.ToString();
+            }
+
+            string? mappedAction = action switch
+            {
+                "get_tree" => "GetTree",
+                "set_property" => "SetProperty",
+                "find_controls" => "FindControls",
+                "set_properties" => "SetProperties",
+                "inspect_surface" => "InspectSurface",
+                "get_preview" => "GetVisualPreview",
+                "scan_mutators" => "ScanMutators",
+                "rename_printblock" => "RenamePrintBlock",
+                "add_printblock" => "AddPrintBlock",
+                _ => null
+            };
+
+            if (mappedAction == null) return null;
+
+            return new
+            {
+                module = "Layout",
+                action = mappedAction,
+                target = objectName,
+                control = args?["control"]?.ToString(),
+                propertyName = args?["propertyName"]?.ToString(),
+                value = args?["value"]?.ToString(),
+                query = args?["query"]?.ToString(),
+                changes = args?["changes"],
+                limit = args?["limit"]?.ToObject<int?>(),
+                currentName = args?["currentName"]?.ToString(),
+                newName = args?["newName"]?.ToString(),
+                printBlockName = args?["printBlockName"]?.ToString(),
+                height = args?["height"]?.ToObject<int?>()
             };
         }
     }

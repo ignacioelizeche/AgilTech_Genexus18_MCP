@@ -887,6 +887,113 @@
     }
   },
   {
+    "name": "genexus_layout",
+    "description": "Native SDK layout/WebForm operations. Use get_tree for deterministic node discovery, set_property for direct visual metadata updates, inspect_surface for structural introspection, and scan_mutators for deep reflective discovery of persistent mutation endpoints.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "get_tree",
+            "set_property",
+            "find_controls",
+            "set_properties",
+            "inspect_surface",
+            "get_preview",
+            "scan_mutators",
+            "rename_printblock",
+            "add_printblock"
+          ],
+          "description": "Layout operation."
+        },
+        "name": {
+          "type": "string",
+          "description": "Object name. Preferred field."
+        },
+        "target": {
+          "type": "string",
+          "description": "Object name alias for backward compatibility with older prompts/clients."
+        },
+        "control": {
+          "type": "string",
+          "description": "Control identifier (ControlName/InternalName)."
+        },
+        "propertyName": {
+          "type": "string",
+          "description": "Visual property to mutate (for example Caption, Class, Visible, X, Y, Width, Height, ForeColor, BackColor, BorderColor)."
+        },
+        "value": {
+          "type": "string",
+          "description": "New value for set_property. For colors, prefer palette names (Black, Blue, Red, Transparent) or RGB token format (e.g. 0; 0; 0|)."
+        },
+        "query": {
+          "type": "string",
+          "description": "Search term for find_controls."
+        },
+        "changes": {
+          "type": "array",
+          "description": "Batch changes for set_properties.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "control": {
+                "type": "string"
+              },
+              "propertyName": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "control",
+              "propertyName",
+              "value"
+            ]
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum nodes for get_tree/find_controls.",
+          "default": 500
+        },
+        "currentName": {
+          "type": "string",
+          "description": "Current print block name for rename_printblock."
+        },
+        "newName": {
+          "type": "string",
+          "description": "New print block name for rename_printblock."
+        },
+        "printBlockName": {
+          "type": "string",
+          "description": "Print block name for add_printblock."
+        },
+        "height": {
+          "type": "integer",
+          "description": "Optional band height for add_printblock."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "name"
+          ]
+        },
+        {
+          "required": [
+            "target"
+          ]
+        }
+      ]
+    }
+  },
+  {
     "name": "genexus_doc",
     "description": "Knowledge extraction and documentation generation.",
     "inputSchema": {

@@ -49,6 +49,7 @@ namespace GxMcp.Worker.Structure
                 if (p == "rules") return Guid.Parse("9b0a32a3-de6d-4be1-a4dd-1b85d3741534");
                 if (p == "variables") return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
                 if (p == "help") return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");
+                if (p == "layout") return Guid.Parse("c414ed00-8cc4-4f44-8820-4baf93547173");
             }
             
             if (objType.Equals("WebPanel", StringComparison.OrdinalIgnoreCase))
@@ -89,6 +90,7 @@ namespace GxMcp.Worker.Structure
                 case "events": return Guid.Parse("c44bd5ff-f918-415b-98e6-aca44fed84fa");
                 case "variables": return Guid.Parse("e4c4ade7-53f0-4a56-bdfd-843735b66f47");
                 case "structure": return Guid.Parse("1608677c-a7a2-4a00-8809-6d2466085a5a");
+                case "layout": return Guid.Parse("c414ed00-8cc4-4f44-8820-4baf93547173");
                 case "webform": return Guid.Parse("d24a58ad-57ba-41b7-9e6e-eaca3543c778");
                 case "patterninstance": return Guid.Parse("a51ced48-7bee-0001-ab12-04e9e32123d1");
                 case "help": return Guid.Parse("017ea008-6202-4468-a400-3f412c938473");

@@ -61,6 +61,26 @@ test('llm help returns machine-oriented usage guidance', () => {
     assert.ok(parsed.ok.resources.includes('genexus://kb/llm-playbook'));
 });
 
+test('layout status returns structured payload', () => {
+    const result = runCli(['layout', 'status', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.meta.command, 'layout.status');
+    assert.equal(typeof parsed.ok.running, 'boolean');
+    assert.equal(typeof parsed.ok.layoutTabDetected, 'boolean');
+});
+
+test('layout inspect returns structured controls payload', () => {
+    const result = runCli(['layout', 'inspect', '--limit', '10', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.meta.command, 'layout.inspect');
+    assert.equal(typeof parsed.ok.returned, 'number');
+    assert.ok(Array.isArray(parsed.ok.controls));
+});
+
 test('subcommand help works with status --help', () => {
     const result = runCli(['status', '--help', '--format', 'json']);
     assert.equal(result.status, 0);
@@ -69,6 +89,17 @@ test('subcommand help works with status --help', () => {
     assert.equal(parsed.ok.command, 'status');
     assert.equal(typeof parsed.ok.bin, 'string');
     assert.ok(parsed.ok.usage.includes('genexus-mcp status'));
+});
+
+test('layout --help returns usage with run action contract', () => {
+    const result = runCli(['layout', '--help', '--format', 'json']);
+    assert.equal(result.status, 0);
+
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.meta.command, 'help');
+    assert.equal(parsed.ok.command, 'layout');
+    assert.ok(parsed.ok.usage.includes('layout run'));
+    assert.ok(parsed.ok.usage.includes('layout inspect'));
 });
 
 test('init without required non-interactive flags exits with usage code', () => {

@@ -1069,7 +1069,18 @@ namespace GxMcp.Gateway
                         toolName: "gateway_warmup_list",
                         trackOperation: false);
 
-                    string? objectName = listResponse?["result"]?["results"]?.First?["name"]?.ToString();
+                    var result = listResponse?["result"];
+                    JArray? items = null;
+                    if (result is JObject obj)
+                    {
+                        items = (obj["results"] ?? obj["objects"]) as JArray;
+                    }
+                    else if (result is JArray arr)
+                    {
+                        items = arr;
+                    }
+
+                    string? objectName = items?.FirstOrDefault()?["name"]?.ToString();
                     if (!string.IsNullOrWhiteSpace(objectName))
                     {
                         var readCommand = new JObject
@@ -1278,6 +1289,15 @@ namespace GxMcp.Gateway
                 return string.Equals(args?["action"]?.ToString(), "update_visual", StringComparison.OrdinalIgnoreCase);
             }
 
+            if (string.Equals(toolName, "genexus_layout", StringComparison.OrdinalIgnoreCase))
+            {
+                string? action = args?["action"]?.ToString();
+                return string.Equals(action, "set_property", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(action, "set_properties", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(action, "rename_printblock", StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(action, "add_printblock", StringComparison.OrdinalIgnoreCase);
+            }
+
             if (string.Equals(toolName, "genexus_lifecycle", StringComparison.OrdinalIgnoreCase))
             {
                 string? action = args?["action"]?.ToString();
@@ -1357,7 +1377,7 @@ namespace GxMcp.Gateway
                 obj["noChange"] = true;
             }
 
-            string[] collectionKeys = { "results", "objects", "items", "tools", "checks", "entries" };
+            string[] collectionKeys = { "results", "objects", "items", "tools", "checks", "entries", "nodes", "controls" };
             foreach (var key in collectionKeys)
             {
                 if (obj[key] is not JArray arr)

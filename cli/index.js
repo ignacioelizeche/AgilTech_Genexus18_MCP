@@ -17,6 +17,7 @@ const {
     handleInit,
     handleHome,
     handleLlmHelp,
+    handleLayout,
     handleHelp,
     usageEnvelope,
     commandHelpMap
@@ -42,7 +43,7 @@ const GLOBAL_DEFAULTS = {
     help: false
 };
 
-const KNOWN_COMMANDS = new Set(['status', 'doctor', 'tools', 'config', 'init', 'setup', 'help', 'home', 'axi', 'llm']);
+const KNOWN_COMMANDS = new Set(['status', 'doctor', 'tools', 'config', 'init', 'setup', 'help', 'home', 'axi', 'llm', 'layout']);
 
 function parseArgs(argv) {
     const result = {
@@ -94,6 +95,11 @@ function parseArgs(argv) {
 
     if (result.command === 'llm' && tokens[0] === 'help') {
         result.subcommand = 'help';
+        tokens.shift();
+    }
+
+    if (result.command === 'layout' && (tokens[0] === 'status' || tokens[0] === 'run' || tokens[0] === 'inspect')) {
+        result.subcommand = tokens[0];
         tokens.shift();
     }
 
@@ -159,6 +165,64 @@ function parseArgs(argv) {
                 const val = takeValue();
                 if (val) result.options.query = val;
                 else result.unknownFlags.push('--query requires a value');
+                break;
+            }
+            case 'action': {
+                const val = takeValue();
+                if (val) result.options.action = val;
+                else result.unknownFlags.push('--action requires a value');
+                break;
+            }
+            case 'title': {
+                const val = takeValue();
+                if (val) result.options.title = val;
+                else result.unknownFlags.push('--title requires a value');
+                break;
+            }
+            case 'tab': {
+                const val = takeValue();
+                if (val) result.options.tab = val;
+                else result.unknownFlags.push('--tab requires a value');
+                break;
+            }
+            case 'keys': {
+                const val = takeValue();
+                if (val) result.options.keys = val;
+                else result.unknownFlags.push('--keys requires a value');
+                break;
+            }
+            case 'text': {
+                const val = takeValue();
+                if (val) result.options.text = val;
+                else result.unknownFlags.push('--text requires a value');
+                break;
+            }
+            case 'x': {
+                const val = takeValue();
+                if (!val) {
+                    result.unknownFlags.push('--x requires a value');
+                    break;
+                }
+                const parsed = Number.parseInt(val, 10);
+                if (!Number.isFinite(parsed)) {
+                    result.unknownFlags.push('--x must be an integer');
+                    break;
+                }
+                result.options.x = parsed;
+                break;
+            }
+            case 'y': {
+                const val = takeValue();
+                if (!val) {
+                    result.unknownFlags.push('--y requires a value');
+                    break;
+                }
+                const parsed = Number.parseInt(val, 10);
+                if (!Number.isFinite(parsed)) {
+                    result.unknownFlags.push('--y must be an integer');
+                    break;
+                }
+                result.options.y = parsed;
                 break;
             }
             case 'full':
@@ -263,6 +327,11 @@ function resolveMetaCommand(parsed, targetHelp) {
     if (parsed.command === 'config') return 'config.show';
     if (parsed.command === 'axi' || parsed.command === 'home') return 'home';
     if (parsed.command === 'llm') return 'llm.help';
+    if (parsed.command === 'layout') {
+        if (parsed.subcommand === 'run') return 'layout.run';
+        if (parsed.subcommand === 'inspect') return 'layout.inspect';
+        return 'layout.status';
+    }
     return parsed.command || 'unknown';
 }
 
@@ -354,6 +423,17 @@ async function main(argv) {
                 return EXIT_CODES.USAGE;
             }
             result = await handleLlmHelp(parsed.options, ctx);
+            break;
+        case 'layout':
+            if (parsed.subcommand !== 'status' && parsed.subcommand !== 'run' && parsed.subcommand !== 'inspect') {
+                writeStructured(
+                    process.stdout,
+                    withCommandMeta(usageEnvelope('layout requires subcommand `status`, `run`, or `inspect`.', EXIT_CODES.USAGE), resolveMetaCommand(parsed)),
+                    parsed.options.format
+                );
+                return EXIT_CODES.USAGE;
+            }
+            result = await handleLayout(parsed.subcommand, parsed.options, ctx);
             break;
         case 'init':
             result = await handleInit(parsed.options, ctx);

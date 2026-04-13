@@ -534,6 +534,215 @@ async function handleConfigShow(options, ctx) {
     };
 }
 
+async function runLayoutAutomation(payload, cwd) {
+    const scriptPath = path.join(__dirname, '..', '..', 'scripts', 'gx_layout_uia.ps1');
+    if (!fs.existsSync(scriptPath)) {
+        return { ok: false, error: `Layout automation script not found at ${scriptPath}.` };
+    }
+
+    const shell = process.platform === 'win32' ? 'powershell' : 'pwsh';
+    const args = process.platform === 'win32'
+        ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Payload', JSON.stringify(payload)]
+        : ['-NoProfile', '-File', scriptPath, '-Payload', JSON.stringify(payload)];
+
+    return await new Promise((resolve) => {
+        let stdout = '';
+        let stderr = '';
+        let resolved = false;
+        let timer = null;
+        const timeoutMs = 30000; // 30 second timeout
+
+        const finish = (payload) => {
+            if (resolved) return;
+            resolved = true;
+            if (timer) clearTimeout(timer);
+            resolve(payload);
+        };
+
+        try {
+            const child = spawn(shell, args, {
+                cwd,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+                env: process.env
+            });
+
+            child.stdout.on('data', (chunk) => {
+                stdout += chunk.toString();
+            });
+
+            child.stderr.on('data', (chunk) => {
+                stderr += chunk.toString();
+            });
+
+            child.on('error', (err) => {
+                finish({ ok: false, error: `Failed to launch layout automation: ${err.message}` });
+            });
+
+            child.on('exit', (code) => {
+                const output = (stdout || '').trim();
+                if (code !== 0) {
+                    const detail = sanitizeOperationalMessage((stderr || output || '').trim(), 'Layout automation failed.');
+                    finish({ ok: false, error: detail });
+                    return;
+                }
+
+                try {
+                    const parsed = output ? JSON.parse(output) : {};
+                    finish({ ok: true, data: parsed });
+                } catch {
+                    finish({
+                        ok: false,
+                        error: sanitizeOperationalMessage(`Layout automation returned invalid JSON: ${output || stderr}`, 'Invalid layout automation response.')
+                    });
+                }
+            });
+
+            timer = setTimeout(() => {
+                try {
+                    child.kill();
+                } catch (e) {}
+                finish({ ok: false, error: `Layout automation timed out after ${timeoutMs}ms` });
+            }, timeoutMs);
+
+        } catch (err) {
+            finish({ ok: false, error: `Layout automation crashed before launch: ${err.message}` });
+        }
+    });
+}
+
+async function handleLayout(subcommand, options, ctx) {
+    if (subcommand === 'status') {
+        const outcome = await runLayoutAutomation({ action: 'status', title: options.title || null }, ctx.cwd);
+        if (!outcome.ok) {
+            return {
+                exitCode: ctx.EXIT_CODES.ERROR,
+                envelope: operationalErrorEnvelope(outcome.error, ctx.EXIT_CODES.ERROR, [
+                    'Run `genexus-mcp layout status --format json` to inspect raw status.',
+                    'Open GeneXus and focus an object with the Layout tab visible.'
+                ])
+            };
+        }
+
+        const data = outcome.data && typeof outcome.data === 'object' ? outcome.data : {};
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    running: !!data.running,
+                    focused: !!data.focused,
+                    pid: data.pid || null,
+                    title: data.title || null,
+                    layoutTabDetected: !!data.layoutTabDetected
+                },
+                help: data.running
+                    ? ['Run `genexus-mcp layout run --action activate-layout` to focus the Layout tab.']
+                    : ['Open GeneXus and rerun `genexus-mcp layout status`.']
+            }
+        };
+    }
+
+    if (subcommand === 'run') {
+        if (!options.action) {
+            return {
+                exitCode: ctx.EXIT_CODES.USAGE,
+                envelope: usageEnvelope('layout run requires --action. Supported: focus, activate-layout, activate-tab, send-keys, type-text, click.', ctx.EXIT_CODES.USAGE)
+            };
+        }
+
+        const payload = {
+            action: options.action,
+            title: options.title || null,
+            tab: options.tab || null,
+            keys: options.keys || null,
+            text: options.text || null,
+            x: Number.isFinite(options.x) ? options.x : null,
+            y: Number.isFinite(options.y) ? options.y : null
+        };
+
+        const outcome = await runLayoutAutomation(payload, ctx.cwd);
+        if (!outcome.ok) {
+            return {
+                exitCode: ctx.EXIT_CODES.ERROR,
+                envelope: operationalErrorEnvelope(outcome.error, ctx.EXIT_CODES.ERROR, [
+                    'Validate GeneXus window is visible and not blocked by modal dialogs.',
+                    'Use `genexus-mcp layout status` before retrying.'
+                ])
+            };
+        }
+
+        const data = outcome.data && typeof outcome.data === 'object' ? outcome.data : {};
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    action: data.action || options.action,
+                    success: data.success !== false,
+                    title: data.title || null,
+                    pid: data.pid || null,
+                    tab: data.tab || options.tab || null,
+                    detail: data.detail || null
+                },
+                help: [
+                    'Run `genexus-mcp layout run --action send-keys --keys "^{S}"` to trigger save.',
+                    'Run `genexus-mcp layout run --action click --x <screenX> --y <screenY>` for deterministic designer clicks.'
+                ]
+            }
+        };
+    }
+
+    if (subcommand === 'inspect') {
+        const payload = {
+            action: 'inspect',
+            title: options.title || null,
+            tab: options.tab || 'Layout',
+            limit: options.limit
+        };
+
+        const outcome = await runLayoutAutomation(payload, ctx.cwd);
+        if (!outcome.ok) {
+            return {
+                exitCode: ctx.EXIT_CODES.ERROR,
+                envelope: operationalErrorEnvelope(outcome.error, ctx.EXIT_CODES.ERROR, [
+                    'Validate GeneXus window is visible and object tab strip is rendered.',
+                    'Try `genexus-mcp layout inspect --tab Layout --format json` after focusing the target object.'
+                ])
+            };
+        }
+
+        const data = outcome.data && typeof outcome.data === 'object' ? outcome.data : {};
+        const controlsRaw = Array.isArray(data.controls) ? data.controls : [];
+        const controls = controlsRaw.map((row) => {
+            if (options.full) return row;
+            return pickFields(row, ['name', 'controlType', 'automationId', 'bounds']);
+        });
+
+        return {
+            exitCode: ctx.EXIT_CODES.OK,
+            envelope: {
+                ok: {
+                    running: data.running !== false,
+                    pid: data.pid || null,
+                    title: data.title || null,
+                    tab: data.tab || (options.tab || 'Layout'),
+                    tabActivated: data.tabActivated !== false,
+                    returned: controls.length,
+                    total: Number.isFinite(data.total) ? data.total : controls.length,
+                    controls
+                },
+                help: controls.length === 0
+                    ? ['No controls found. Try `genexus-mcp layout inspect --tab Layout --full --format json`.']
+                    : ['Run `genexus-mcp layout inspect --full --limit 300 --format json` for full control metadata.']
+            }
+        };
+    }
+
+    return {
+        exitCode: ctx.EXIT_CODES.USAGE,
+        envelope: usageEnvelope('layout requires subcommand `status`, `run`, or `inspect`.', ctx.EXIT_CODES.USAGE)
+    };
+}
+
 async function runInteractiveInit(ctx) {
     const defaultGx = discoverGeneXusInstallation() || 'C:\\Program Files (x86)\\GeneXus\\GeneXus18';
 
@@ -661,6 +870,10 @@ function commandHelpMap() {
         llm: {
             usage: 'genexus-mcp llm help [--full] [--fields f1,f2] [--format toon|json|text]',
             examples: ['genexus-mcp llm help --format json', 'genexus-mcp llm help --full --format json']
+        },
+        layout: {
+            usage: 'genexus-mcp layout status [--title "GeneXus"] [--format ...] OR genexus-mcp layout run --action <focus|activate-layout|activate-tab|send-keys|type-text|click> [--tab "Layout"] [--keys "..."] [--text "..."] [--x N --y N] [--title "..."] [--format ...] OR genexus-mcp layout inspect [--tab "Layout"] [--limit N] [--full] [--title "..."] [--format ...]',
+            examples: ['genexus-mcp layout status --format json', 'genexus-mcp layout run --action activate-tab --tab "Layout" --format json', 'genexus-mcp layout inspect --tab Layout --format json']
         }
     };
 }
@@ -685,7 +898,7 @@ async function handleHome(_options, ctx) {
                 description: 'GeneXus MCP launcher and AXI-oriented utility CLI',
                 ready: data.ready,
                 next: data.ready
-                    ? ['genexus-mcp status', 'genexus-mcp doctor --mcp-smoke', 'genexus-mcp tools list --limit 10']
+                    ? ['genexus-mcp status', 'genexus-mcp doctor --mcp-smoke', 'genexus-mcp tools list --limit 10', 'genexus-mcp layout status', 'genexus-mcp layout inspect --tab Layout']
                     : ['genexus-mcp status', 'genexus-mcp doctor --full', 'genexus-mcp init --kb "<kbPath>" --gx "<geneXusPath>"']
             },
             help: []
@@ -722,7 +935,7 @@ async function handleHelp(targetCommand, ctx) {
                 bin: binPath,
                 command: 'genexus-mcp',
                 description: 'GeneXus MCP launcher and AXI-oriented utility CLI',
-                commands: ['home', 'axi home', 'status', 'doctor', 'tools list', 'config show', 'init', 'llm help', 'help'],
+                commands: ['home', 'axi home', 'status', 'doctor', 'tools list', 'config show', 'layout status', 'layout run', 'layout inspect', 'init', 'llm help', 'help'],
                 defaults: { format: 'toon', limit: 100 }
             },
             help: [
@@ -827,6 +1040,7 @@ module.exports = {
     handleInit,
     handleHome,
     handleLlmHelp,
+    handleLayout,
     handleHelp,
     usageEnvelope,
     operationalErrorEnvelope,

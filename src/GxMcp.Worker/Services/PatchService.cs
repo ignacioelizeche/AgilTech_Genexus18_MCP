@@ -206,7 +206,58 @@ namespace GxMcp.Worker.Services
                     writePayload = new JObject { ["status"] = "Error", ["error"] = writeResult };
                 }
 
-                if (string.Equals(writePayload["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase))
+                bool primaryWriteSuccess = string.Equals(writePayload["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase);
+                bool persistedMatches = false;
+                if (primaryWriteSuccess)
+                {
+                    persistedMatches = VerifyPersistedSource(target, partName, typeFilter, finalCode, out string verifyError);
+                    writePayload["persistedVerified"] = persistedMatches;
+                    if (!string.IsNullOrWhiteSpace(verifyError))
+                    {
+                        writePayload["persistedVerifyError"] = verifyError;
+                    }
+
+                    if (!persistedMatches)
+                    {
+                        // Fast path can report success before the physical source part is fully persisted.
+                        string fallbackWrite = _writeService.WriteObject(target, partName, finalCode, typeFilter, autoValidate: false, preferFastSourceSave: false, autoInjectVariables: false);
+                        JObject fallbackPayload;
+                        try
+                        {
+                            fallbackPayload = JObject.Parse(fallbackWrite);
+                        }
+                        catch
+                        {
+                            fallbackPayload = new JObject { ["status"] = "Error", ["error"] = fallbackWrite };
+                        }
+
+                        bool fallbackSuccess = string.Equals(fallbackPayload["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase);
+                        writePayload["fallbackWriteStatus"] = fallbackPayload["status"]?.ToString() ?? "Error";
+                        if (!fallbackSuccess)
+                        {
+                            writePayload["status"] = "Error";
+                            writePayload["error"] = "Patch write fallback failed after persistence mismatch.";
+                            writePayload["fallbackWriteError"] = fallbackPayload["error"]?.ToString() ?? "Unknown fallback write error.";
+                        }
+                        else
+                        {
+                            persistedMatches = VerifyPersistedSource(target, partName, typeFilter, finalCode, out string fallbackVerifyError);
+                            writePayload["persistedVerified"] = persistedMatches;
+                            if (!string.IsNullOrWhiteSpace(fallbackVerifyError))
+                            {
+                                writePayload["persistedVerifyError"] = fallbackVerifyError;
+                            }
+
+                            if (!persistedMatches)
+                            {
+                                writePayload["status"] = "Error";
+                                writePayload["error"] = "Patch write verification mismatch after fallback write.";
+                            }
+                        }
+                    }
+                }
+
+                if (string.Equals(writePayload["status"]?.ToString(), "Success", StringComparison.OrdinalIgnoreCase) && persistedMatches)
                 {
                     UpdateCachedSource(cacheKey, finalCode);
                 }
@@ -620,6 +671,30 @@ namespace GxMcp.Worker.Services
                 Source = source,
                 UpdatedUtc = DateTime.UtcNow
             };
+        }
+
+        private bool VerifyPersistedSource(string target, string partName, string typeFilter, string expectedSource, out string error)
+        {
+            error = null;
+            try
+            {
+                string verifyReadResponse = ReadSourceFast(target, partName, typeFilter);
+                string verifyReadError = TryExtractError(verifyReadResponse);
+                if (!string.IsNullOrWhiteSpace(verifyReadError))
+                {
+                    error = verifyReadError;
+                    return false;
+                }
+
+                var verifyJson = JObject.Parse(verifyReadResponse);
+                string persistedSource = verifyJson["source"]?.ToString() ?? string.Empty;
+                return NormalizeSourceForComparison(persistedSource) == NormalizeSourceForComparison(expectedSource);
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
         }
 
         private static string AttachTimings(string patchResultJson, long readMs, long patchMs, long writeMs, bool usedSourceCache)

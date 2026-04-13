@@ -58,6 +58,10 @@ genexus-mcp status
 genexus-mcp doctor --mcp-smoke
 genexus-mcp tools list
 genexus-mcp config show
+genexus-mcp layout status
+genexus-mcp layout run --action activate-layout
+genexus-mcp layout run --action activate-tab --tab "Layout"
+genexus-mcp layout inspect --tab "Layout"
 ```
 
 Global AXI flags:
@@ -68,6 +72,18 @@ Global AXI flags:
 - `--full` (expand truncated long-form content when supported)
 - `--mcp-smoke` (for `doctor`; executes protocol smoke checks)
 - `--quiet` and `--no-color` (agent-safe output control)
+
+Layout automation flags (`layout run`):
+- `--action focus|activate-layout|activate-tab|send-keys|type-text|click`
+- `--title "<window-title-fragment>"` to target a specific GeneXus window
+- `--tab "<tab-name>"` for `activate-tab`
+- `--keys "<sendkeys-pattern>"` for `send-keys`
+- `--text "<text>"` for `type-text`
+- `--x <screenX> --y <screenY>` for `click`
+
+Layout inspection:
+- `genexus-mcp layout inspect [--tab "<tab-name>"] [--limit N] [--full] [--title "<window-title-fragment>"]`
+- Returns UI Automation controls with bounding rectangles (`bounds.x/y/width/height`) to support deterministic replay.
 
 Notes:
 - Structured data/errors are emitted on `stdout`.
@@ -92,6 +108,10 @@ Notes:
 - **Analysis:** `genexus_analyze`, `genexus_inject_context`, `genexus_doc`, `genexus_explain_code`, `genexus_summarize`
 - **File System & Assets**: `genexus_asset`, `genexus_export_object`, `genexus_import_object`
 - **History & DB**: `genexus_history`, `genexus_get_sql`, `genexus_structure`
+- **Native Layout SDK**: `genexus_layout` (`get_tree`, `find_controls`, `set_property`, `set_properties`, `rename_printblock`, `add_printblock`, `get_preview`, `scan_mutators`)
+
+Layout color note:
+- For `ForeColor`, `BackColor`, `BorderColor`, send color values as palette names (`Black`, `Blue`, `Red`, `Transparent`) or RGB token (`R; G; B|`) to avoid nested SDK wrappers.
 - **Lifecycle & Build**: `genexus_lifecycle`, `genexus_test`, `genexus_format`
 - **Patterns**: Smart XML generation and interpretation (e.g., WorkWithPlus PatternInstance mapping).
 
@@ -118,6 +138,16 @@ Timeout behavior for long-running MCP tools:
 ## 💻 Development & Building from Source
 
 If you want to contribute, build the project yourself, or use the local **Nexus-IDE** VS Code Extension, use the classic source-based workflow.
+
+### Automated Release (npm + GitHub)
+- Workflow: `.github/workflows/release.yml`
+- Trigger: `push` na `main` com mudança em `package.json`
+- Behavior:
+- compara a versão atual com a versão do commit anterior
+- publica no npm apenas se a versão for nova
+- cria GitHub Release com tag `v<version>`
+- Required secret:
+- `NPM_TOKEN` (token de publicação no npm com permissão para o pacote `genexus-mcp`)
 
 ### One-Click Build
 1. Clone the repository to your Windows machine.

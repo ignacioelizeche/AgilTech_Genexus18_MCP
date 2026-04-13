@@ -46,6 +46,7 @@ namespace GxMcp.Worker.Services
         private readonly SummarizeService _summarizeService;
         private readonly InjectionService _injectionService;
         private readonly ListService _listService;
+        private readonly LayoutService _layoutService;
 
         private CommandDispatcher()
         {
@@ -65,6 +66,7 @@ namespace GxMcp.Worker.Services
             _summarizeService = new SummarizeService(_kbService, _objectService);
             _injectionService = new InjectionService(_kbService, _objectService, _analyzeService);
             _patternAnalysisService = new PatternAnalysisService(_objectService);
+            _layoutService = new LayoutService(_objectService);
             _validationService = new ValidationService(_kbService);
             _searchService = new SearchService(_indexCacheService);
             _versionControlService = new VersionControlService(_kbService);
@@ -275,6 +277,63 @@ namespace GxMcp.Worker.Services
                         break;
                     case "ui":
                         if (action == "GetUIContext") return _uiService.GetUIContext(target);
+                        break;
+                    case "layout":
+                        if (action == "GetTree")
+                        {
+                            return _layoutService.GetTree(
+                                target,
+                                args?["control"]?.ToString(),
+                                args?["limit"]?.ToObject<int?>() ?? 500);
+                        }
+                        if (action == "FindControls")
+                        {
+                            return _layoutService.FindControls(
+                                target,
+                                args?["propertyName"]?.ToString(),
+                                args?["query"]?.ToString(),
+                                args?["limit"]?.ToObject<int?>() ?? 200);
+                        }
+                        if (action == "SetProperty")
+                        {
+                            return _layoutService.SetProperty(
+                                target,
+                                args?["control"]?.ToString(),
+                                args?["propertyName"]?.ToString(),
+                                args?["value"]?.ToString());
+                        }
+                        if (action == "SetProperties")
+                        {
+                            return _layoutService.SetProperties(
+                                target,
+                                args?["changes"] as JArray);
+                        }
+                        if (action == "InspectSurface")
+                        {
+                            return _layoutService.InspectSurface(target, args?["limit"]?.ToObject<int?>() ?? 50);
+                        }
+                        if (action == "GetVisualPreview")
+                        {
+                            return _layoutService.GetVisualPreview(target);
+                        }
+                        if (action == "ScanMutators")
+                        {
+                            return _layoutService.ScanMutators(target, args?["limit"]?.ToObject<int?>() ?? 100);
+                        }
+                        if (action == "RenamePrintBlock")
+                        {
+                            return _layoutService.RenamePrintBlock(
+                                target,
+                                args?["currentName"]?.ToString(),
+                                args?["newName"]?.ToString());
+                        }
+                        if (action == "AddPrintBlock")
+                        {
+                            return _layoutService.AddPrintBlock(
+                                target,
+                                args?["printBlockName"]?.ToString(),
+                                args?["height"]?.ToObject<int?>());
+                        }
                         break;
                     case "structure":
                         if (action == "GetVisualStructure") return _structureService.GetVisualStructure(target);

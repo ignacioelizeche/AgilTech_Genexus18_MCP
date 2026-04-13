@@ -210,8 +210,6 @@ namespace GxMcp.Gateway
                     return new { prompts = BuildPromptCatalog() };
                 case "prompts/get":
                     return BuildPromptResponse(request);
-                case "notifications/initialized":
-                    return null;
                 case "ping":
                     return new { };
                 default:

@@ -8,6 +8,7 @@ using GxMcp.Worker.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Reflection;
+using System.Windows.Forms;
 
 namespace GxMcp.Worker
 {
@@ -22,6 +23,8 @@ namespace GxMcp.Worker
         private static TextWriter _originalOut;
         private static TextWriter _originalError;
         private static StreamWriter _pipeWriter;
+        private static Form _bridgeForm;
+        private static readonly ManualResetEvent _uiReady = new ManualResetEvent(false);
 
         [STAThread]
         static void Main(string[] args)
@@ -148,16 +151,37 @@ namespace GxMcp.Worker
                 }) { IsBackground = true, Name = "HeartbeatReader" };
                 readerThread.Start();
 
-                // DEDICATED SDK WORKER THREAD (STA)
+                                // DEDICATED SDK WORKER THREAD (STA with WinForms Bridge)
                 var sdkWorker = new Thread(() => {
-                    Logger.Info("SDK Worker Thread started.");
-                    foreach (var line in SdkCommandQueue.GetConsumingEnumerable())
-                    {
-                        ProcessCommand(line);
-                    }
+                    Logger.Info("SDK Worker Thread started (WinForms Bridge enabled).");
+                    _bridgeForm = new Form { 
+                        ShowInTaskbar = false, 
+                        WindowState = FormWindowState.Minimized,
+                        Visible = false 
+                    };
+                    
+                    // The 'Quiet Mode' loop: process commands on the UI thread
+                    var pollTimer = new System.Windows.Forms.Timer { Interval = 10 };
+                    pollTimer.Tick += (s, e) => {
+                        if (SdkCommandQueue.TryTake(out string line))
+                        {
+                            try { ProcessCommand(line); }
+                            catch (Exception ex) { Logger.Error("SDK Command Error: " + ex.Message); }
+                        }
+                    };
+                    
+                    _bridgeForm.Load += (s, e) => {
+                        pollTimer.Start();
+                        _uiReady.Set();
+                        Logger.Debug("WinForms Bridge Ready.");
+                    };
+                    
+                    Application.Run(_bridgeForm);
                 }) { IsBackground = true, Name = "SdkWorker", Priority = ThreadPriority.AboveNormal };
                 sdkWorker.SetApartmentState(ApartmentState.STA);
                 sdkWorker.Start();
+                
+                _uiReady.WaitOne(10000); // Wait for the bridge to come online
 
                 // DEDICATED STA BACKGROUND TASK THREAD
                 var backgroundWorker = new Thread(() => {

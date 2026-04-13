@@ -446,11 +446,16 @@ namespace GxMcp.Worker.Services
                     string xml = WebFormXmlHelper.ReadEditableXml(obj);
                     if (string.IsNullOrEmpty(xml))
                     {
+                        var diagnosticPart = WebFormXmlHelper.GetWebFormPart(obj);
+                        string details = diagnosticPart == null 
+                            ? "No visual part (Layout/WebForm) found." 
+                            : $"Rejected part {diagnosticPart.TypeDescriptor?.Name} (Class: {diagnosticPart.GetType().Name}, GUID: {diagnosticPart.Type}) as a valid visual part.";
+
                         return Models.McpResponse.Error(
                             "Visual XML not available",
                             targetName,
                             partName,
-                            "The object does not expose editable WebForm XML through the current SDK path.",
+                            details,
                             obj.Name,
                             obj.TypeDescriptor?.Name,
                             new JArray(GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj)));
