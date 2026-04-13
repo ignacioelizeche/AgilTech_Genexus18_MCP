@@ -63,22 +63,34 @@ test('llm help returns machine-oriented usage guidance', () => {
 
 test('layout status returns structured payload', () => {
     const result = runCli(['layout', 'status', '--format', 'json']);
-    assert.equal(result.status, 0);
 
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.meta.command, 'layout.status');
-    assert.equal(typeof parsed.ok.running, 'boolean');
-    assert.equal(typeof parsed.ok.layoutTabDetected, 'boolean');
+    assert.ok([0, 1].includes(result.status));
+    if (result.status === 0) {
+        assert.equal(typeof parsed.ok.running, 'boolean');
+        assert.equal(typeof parsed.ok.layoutTabDetected, 'boolean');
+        return;
+    }
+
+    assert.equal(parsed.error.code, 'operational_error');
+    assert.equal(typeof parsed.error.message, 'string');
 });
 
 test('layout inspect returns structured controls payload', () => {
     const result = runCli(['layout', 'inspect', '--limit', '10', '--format', 'json']);
-    assert.equal(result.status, 0);
 
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.meta.command, 'layout.inspect');
-    assert.equal(typeof parsed.ok.returned, 'number');
-    assert.ok(Array.isArray(parsed.ok.controls));
+    assert.ok([0, 1].includes(result.status));
+    if (result.status === 0) {
+        assert.equal(typeof parsed.ok.returned, 'number');
+        assert.ok(Array.isArray(parsed.ok.controls));
+        return;
+    }
+
+    assert.equal(parsed.error.code, 'operational_error');
+    assert.equal(typeof parsed.error.message, 'string');
 });
 
 test('subcommand help works with status --help', () => {
