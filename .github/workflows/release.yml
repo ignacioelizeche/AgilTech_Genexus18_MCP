@@ -17,7 +17,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install npm deps
+        run: npm install
+
+      - name: CLI tests
+        run: npm test
+
+      - name: Gateway tests
+        run: dotnet test src/GxMcp.Gateway.Tests/GxMcp.Gateway.Tests.csproj -v minimal
+
+      - name: LLM contract smoke
+        shell: pwsh
+        run: ./scripts/mcp_llm_contract_smoke.ps1
+
   publish-and-release:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
