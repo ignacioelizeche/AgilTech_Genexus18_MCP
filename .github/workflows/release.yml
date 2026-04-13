@@ -59,7 +59,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 20
-          registry-url: https://registry.npmjs.org
 
       - name: Detect version bump
         id: version
@@ -104,8 +103,19 @@ jobs:
         if: steps.npm_check.outputs.already_published == 'false'
         run: npm install
 
+      - name: Prepare Trusted Publishing auth
+        if: steps.npm_check.outputs.already_published == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          EMPTY_NPMRC="$RUNNER_TEMP/npmrc-empty"
+          : > "$EMPTY_NPMRC"
+          echo "NPM_CONFIG_USERCONFIG=$EMPTY_NPMRC" >> "$GITHUB_ENV"
+
       - name: Publish to npm
         if: steps.npm_check.outputs.already_published == 'false'
+        env:
+          NODE_AUTH_TOKEN: ""
         shell: bash
         run: |
           set -euo pipefail
