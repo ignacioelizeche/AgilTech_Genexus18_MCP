@@ -106,13 +106,33 @@ jobs:
         if: steps.npm_check.outputs.already_published == 'false'
         run: npm install
 
+      - name: Enforce OIDC-only npm auth
+        if: steps.npm_check.outputs.already_published == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Remove any injected legacy token auth; Trusted Publishing must use OIDC.
+          unset NODE_AUTH_TOKEN NPM_TOKEN
+
+          if [[ -n "${NPM_CONFIG_USERCONFIG:-}" && -f "${NPM_CONFIG_USERCONFIG}" ]]; then
+            sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG}" || true
+          fi
+
+          OIDC_NPMRC="$RUNNER_TEMP/npmrc-oidc"
+          {
+            echo "registry=https://registry.npmjs.org/"
+            echo "always-auth=false"
+          } > "$OIDC_NPMRC"
+
+          echo "NPM_CONFIG_USERCONFIG=$OIDC_NPMRC" >> "$GITHUB_ENV"
+
       - name: Publish to npm
         if: steps.npm_check.outputs.already_published == 'false'
         shell: bash
         run: |
           set -euo pipefail
-          # Force Trusted Publishing (OIDC) even if a legacy NODE_AUTH_TOKEN exists in repo/org secrets.
-          unset NODE_AUTH_TOKEN
+          unset NODE_AUTH_TOKEN NPM_TOKEN
           npm publish --access public --provenance
 
       - name: Create GitHub Release
