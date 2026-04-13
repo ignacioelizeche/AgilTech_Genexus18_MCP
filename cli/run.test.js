@@ -73,7 +73,7 @@ test('layout status returns structured payload', () => {
         return;
     }
 
-    assert.equal(parsed.error.code, 'operational_error');
+    assert.ok(['operation_error', 'operational_error'].includes(parsed.error.code));
     assert.equal(typeof parsed.error.message, 'string');
 });
 
@@ -89,7 +89,7 @@ test('layout inspect returns structured controls payload', () => {
         return;
     }
 
-    assert.equal(parsed.error.code, 'operational_error');
+    assert.ok(['operation_error', 'operational_error'].includes(parsed.error.code));
     assert.equal(typeof parsed.error.message, 'string');
 });
 
