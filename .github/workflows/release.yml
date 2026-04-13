@@ -63,6 +63,11 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      - name: Upgrade npm for Trusted Publishing
+        run: |
+          npm install -g npm@11
+          npm --version
+
       - name: Detect version bump
         id: version
         shell: bash
