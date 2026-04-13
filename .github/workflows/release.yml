@@ -88,7 +88,6 @@ jobs:
 
       - name: Check if version is already published on npm
         id: npm_check
-        if: steps.version.outputs.changed == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -102,11 +101,11 @@ jobs:
           fi
 
       - name: Install dependencies
-        if: steps.version.outputs.changed == 'true' && steps.npm_check.outputs.already_published == 'false'
+        if: steps.npm_check.outputs.already_published == 'false'
         run: npm install
 
       - name: Publish to npm
-        if: steps.version.outputs.changed == 'true' && steps.npm_check.outputs.already_published == 'false'
+        if: steps.npm_check.outputs.already_published == 'false'
         shell: bash
         run: |
           set -euo pipefail
@@ -115,7 +114,7 @@ jobs:
           npm publish --access public --provenance
 
       - name: Create GitHub Release
-        if: steps.version.outputs.changed == 'true'
+        if: steps.npm_check.outputs.already_published == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
