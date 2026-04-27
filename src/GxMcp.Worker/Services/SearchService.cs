@@ -21,7 +21,7 @@ namespace GxMcp.Worker.Services
             _indexCacheService = indexCacheService;
         }
 
-        public string Search(string query, string typeFilter = null, string domainFilter = null, int limit = 50)
+        public string Search(string query, string typeFilter = null, string domainFilter = null, int limit = 50, bool exactMatch = false)
         {
             try
             {
@@ -42,12 +42,33 @@ namespace GxMcp.Worker.Services
                     query = Regex.Replace(query, @"\s*@quick\b", "", RegexOptions.IgnoreCase).Trim();
                 }
 
-                string cacheKey = string.Format("{0}|{1}|{2}|{3}|{4}", query ?? "", typeFilter ?? "", domainFilter ?? "", limit, isQuick ? "quick" : "full");
+                string cacheKey = string.Format("{0}|{1}|{2}|{3}|{4}|{5}", query ?? "", typeFilter ?? "", domainFilter ?? "", limit, isQuick ? "quick" : "full", exactMatch ? "exact" : "fuzzy");
                 if (_queryCache.TryGetValue(cacheKey, out var cached)) return cached;
 
                 var criteria = ParseQuery(query);
                 if (!string.IsNullOrEmpty(typeFilter)) criteria.TypeFilter = typeFilter;
                 if (!string.IsNullOrEmpty(domainFilter)) criteria.DomainFilter = domainFilter;
+
+                if (exactMatch && criteria.Terms.Count > 0)
+                {
+                    var exactCandidates = index.Objects.Values
+                        .Where(e => criteria.Terms.Any(t => string.Equals(e.Name, t, StringComparison.OrdinalIgnoreCase)));
+                    if (!string.IsNullOrEmpty(criteria.TypeFilter))
+                        exactCandidates = exactCandidates.Where(e => IsTypeMatch(e.Type, criteria.TypeFilter));
+                    var exactList = exactCandidates.ToList();
+                    var exactJson = Newtonsoft.Json.JsonConvert.SerializeObject(new {
+                        count = exactList.Count,
+                        total = exactList.Count,
+                        hasMore = false,
+                        results = exactList.Select(e => new {
+                            guid = e.Guid, name = e.Name, type = e.Type, description = e.Description,
+                            parent = e.Parent, module = e.Module, path = e.Path, parentPath = e.ParentPath,
+                            dataType = e.DataType, table = e.RootTable
+                        })
+                    });
+                    _queryCache.TryAdd(cacheKey, exactJson);
+                    return exactJson;
+                }
 
                 IEnumerable<SearchIndex.IndexEntry> sourceSet = null;
 
@@ -234,7 +255,7 @@ namespace GxMcp.Worker.Services
             string desc = entry.Description ?? "";
             
             foreach (var term in terms) {
-                if (name.Equals(term, StringComparison.OrdinalIgnoreCase)) score += 2000;
+                if (name.Equals(term, StringComparison.OrdinalIgnoreCase)) score += 10000;
                 else if (name.StartsWith(term, StringComparison.OrdinalIgnoreCase)) score += 1000;
                 else if (name.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0) score += 500;
                 

@@ -28,14 +28,14 @@ namespace GxMcp.Worker.Services
             _uiService = uiService;
         }
 
-        public string Analyze(string target)
+        public string Analyze(string target, string typeFilter = null)
         {
             try
             {
                 var kb = _kbService.GetKB();
                 if (target == null) return "{\"status\":\"KB analysis not implemented for all objects yet\"}";
-                
-                var obj = _objectService.FindObject(target);
+
+                var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null) return HealingService.FormatNotFoundError(target, _indexCacheService.GetIndex());
 
                 var result = new JObject();
@@ -235,11 +235,11 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string GetVariables(string name)
+        public string GetVariables(string name, string typeFilter = null)
         {
             try
             {
-                var obj = _objectService.FindObject(name);
+                var obj = _objectService.FindObject(name, typeFilter);
                 if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 dynamic vPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.GetType().Name.Equals("VariablesPart"));
@@ -265,12 +265,12 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string GetHierarchy(string name)
+        public string GetHierarchy(string name, string typeFilter = null)
         {
             try
             {
                 var kb = _kbService.GetKB();
-                var obj = _objectService.FindObject(name);
+                var obj = _objectService.FindObject(name, typeFilter);
                 if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 var result = new JObject();
@@ -311,11 +311,11 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string GetConversionContext(string name, JArray include = null)
+        public string GetConversionContext(string name, JArray include = null, string typeFilter = null)
         {
             try
             {
-                var obj = _objectService.FindObject(name);
+                var obj = _objectService.FindObject(name, typeFilter);
                 if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 var result = new JObject();
@@ -420,6 +420,19 @@ namespace GxMcp.Worker.Services
                 // 6. Metadata (Sync)
                 if (includeAll || requested.Contains("metadata")) result["wwpMetadata"] = GetWWPMetadata(obj);
 
+                // 6.1 Available parts (Sync) — discovery aid
+                if (includeAll || requested.Contains("parts"))
+                {
+                    try
+                    {
+                        var partsArr = new JArray();
+                        var available = GxMcp.Worker.Structure.PartAccessor.GetAvailableParts(obj);
+                        foreach (var p in available) partsArr.Add(p);
+                        result["availableParts"] = partsArr;
+                    }
+                    catch { }
+                }
+
                 // 7. Final Summary
                 result["summary"] = GenerateSummary(obj, result);
 
@@ -471,7 +484,21 @@ namespace GxMcp.Worker.Services
                 }
 
                 bool isWWP = false;
-                if (obj.Description.Contains("WorkWithPlus") || obj.Description.Contains("WWP")) isWWP = true;
+                try
+                {
+                    if (obj.Parts.Cast<KBObjectPart>().Any(p =>
+                        (p.TypeDescriptor?.Name ?? string.Empty).IndexOf("Pattern", StringComparison.OrdinalIgnoreCase) >= 0))
+                    {
+                        isWWP = true;
+                    }
+                }
+                catch { }
+                if (!isWWP && !string.IsNullOrEmpty(obj.Description) &&
+                    (obj.Description.IndexOf("WorkWithPlus", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     obj.Description.IndexOf("WWP", StringComparison.OrdinalIgnoreCase) >= 0))
+                {
+                    isWWP = true;
+                }
                 wwp["isWorkWithPlusAware"] = isWWP;
             } catch {}
             return wwp;
@@ -486,11 +513,11 @@ namespace GxMcp.Worker.Services
             return null;
         }
 
-        public string GetSignature(string name)
+        public string GetSignature(string name, string typeFilter = null)
         {
             try
             {
-                var obj = _objectService.FindObject(name);
+                var obj = _objectService.FindObject(name, typeFilter);
                 if (obj == null) return HealingService.FormatNotFoundError(name, _indexCacheService.GetIndex());
 
                 var (parmRule, parms) = _objectService.GetParametersInternal(obj);

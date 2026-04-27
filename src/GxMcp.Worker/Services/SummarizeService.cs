@@ -21,11 +21,11 @@ namespace GxMcp.Worker.Services
             _objectService = objectService;
         }
 
-        public string Summarize(string target)
+        public string Summarize(string target, string typeFilter = null)
         {
             try
             {
-                var obj = _objectService.FindObject(target);
+                var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null) return Models.McpResponse.Error("Object not found", target, null, "The requested object is not available in the active Knowledge Base.");
 
                 var result = new JObject();

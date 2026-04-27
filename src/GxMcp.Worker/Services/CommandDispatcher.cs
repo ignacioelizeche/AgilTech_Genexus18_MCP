@@ -47,6 +47,7 @@ namespace GxMcp.Worker.Services
         private readonly InjectionService _injectionService;
         private readonly ListService _listService;
         private readonly LayoutService _layoutService;
+        private readonly KbValidationService _kbValidationService;
 
         private CommandDispatcher()
         {
@@ -72,7 +73,7 @@ namespace GxMcp.Worker.Services
             _versionControlService = new VersionControlService(_kbService);
             _dataInsightService = new DataInsightService(_kbService, _objectService, _navigationService, _patternAnalysisService);
             _writeService = new WriteService(_objectService);
-            _refactorService = new RefactorService(_kbService, _objectService, _indexCacheService);
+            _refactorService = new RefactorService(_kbService, _objectService, _indexCacheService, _writeService, _patternAnalysisService);
             _patchService = new PatchService(_objectService, _writeService);
             _batchService = new BatchService(_kbService, _writeService, _patchService, _objectService);
             _forgeService = new ForgeService(_kbService);
@@ -86,6 +87,7 @@ namespace GxMcp.Worker.Services
             _propertyService = new PropertyService(_objectService);
             _conversionService = new ConversionService(_objectService);
             _selfTestService = new SelfTestService(_kbService, _searchService, _linterService);
+            _kbValidationService = new KbValidationService(_indexCacheService, _objectService, _patternAnalysisService);
 
             // Phase 2: Late Linking
             _kbService.SetBuildService(_buildService);
@@ -172,6 +174,9 @@ namespace GxMcp.Worker.Services
                         if (action == "BulkIndex") return _kbService.BulkIndex();
                         if (action == "SelfTest") return _selfTestService.RunAllTests();
                         if (action == "GetIndexStatus") return _kbService.GetIndexStatus();
+                        if (action == "ValidateConditions") return _kbValidationService.ValidateConditions(args?["limit"]?.ToObject<int?>() ?? 0);
+                        if (action == "ListPatternSnapshots") return _kbValidationService.ListPatternSnapshots(target);
+                        if (action == "RestorePatternSnapshot") return _kbValidationService.RestorePatternSnapshot(target, args?["snapshotPath"]?.ToString(), _writeService);
                         break;
                     case "batch":
                         if (action == "BatchRead") return _batchService.BatchRead(args?["items"] as JArray);
@@ -185,7 +190,8 @@ namespace GxMcp.Worker.Services
                                 target,
                                 args?["typeFilter"]?.ToString(),
                                 args?["domainFilter"]?.ToString(),
-                                args?["limit"]?.ToObject<int?>() ?? 50
+                                args?["limit"]?.ToObject<int?>() ?? 50,
+                                args?["exactMatch"]?.ToObject<bool?>() ?? false
                             );
                         break;
                     case "list":
@@ -226,7 +232,15 @@ namespace GxMcp.Worker.Services
                                 args?["varName"]?.ToString(),
                                 args?["typeName"]?.ToString());
                         }
-                        return _writeService.WriteObject(target, action, payload);
+                        return _writeService.WriteObject(
+                            target,
+                            action,
+                            payload,
+                            args?["type"]?.ToString(),
+                            true,
+                            false,
+                            true,
+                            args?["dryRun"]?.ToObject<bool?>() ?? false);
                     case "patch":
                         if (action == "Apply") return _patchService.ApplyPatch(
                             target,
@@ -240,21 +254,22 @@ namespace GxMcp.Worker.Services
                             args?["verifyRollback"]?.ToObject<bool?>() ?? false);
                         break;
                     case "analyze":
+                        var analyzeType = args?["type"]?.ToString();
                         if (action == "GetNavigation") return _navigationService.GetNavigation(target);
-                        if (action == "GetParameters") return _analyzeService.GetSignature(target);
-                        if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target);
+                        if (action == "GetParameters") return _analyzeService.GetSignature(target, analyzeType);
+                        if (action == "GetHierarchy") return _analyzeService.GetHierarchy(target, analyzeType);
                         if (action == "GetDataContext") return _dataInsightService.GetDataContext(target);
-                        if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target, args?["include"] as JArray);
+                        if (action == "GetConversionContext") return _analyzeService.GetConversionContext(target, args?["include"] as JArray, analyzeType);
                         if (action == "GetPatternMetadata") return _patternAnalysisService.GetWWPStructure(target);
-                        if (action == "Summarize") return _summarizeService.Summarize(target);
+                        if (action == "Summarize") return _summarizeService.Summarize(target, analyzeType);
                         if (action == "GetSQL") return _dataInsightService.GetTableDDL(target);
                         if (action == "ExplainCode") return _analyzeService.ExplainCode(target, payload);
-                        if (action == "InjectContext") 
+                        if (action == "InjectContext")
                         {
                             bool recursive = args?["recursive"]?.ToObject<bool>() ?? false;
-                            return _injectionService.InjectContext(target, recursive);
+                            return _injectionService.InjectContext(target, recursive, analyzeType);
                         }
-                        return _analyzeService.Analyze(target);
+                        return _analyzeService.Analyze(target, analyzeType);
                     case "linter":
                         return _linterService.Lint(target);
                     case "forge":
@@ -358,15 +373,17 @@ namespace GxMcp.Worker.Services
                         int verId = args?["versionId"]?.ToObject<int?>() ?? 0;
                         return _historyService.Execute(target, action, verId);
                     case "property":
+                        var propType = args?["type"]?.ToString();
                         if (action == "Set")
                         {
                             return _propertyService.SetProperty(
                                 target,
                                 args?["propertyName"]?.ToString(),
                                 args?["value"]?.ToString(),
-                                args?["control"]?.ToString());
+                                args?["control"]?.ToString(),
+                                propType);
                         }
-                        return _propertyService.GetProperties(target, args?["control"]?.ToString());
+                        return _propertyService.GetProperties(target, args?["control"]?.ToString(), propType);
                     case "asset":
                         if (action == "Find")
                         {

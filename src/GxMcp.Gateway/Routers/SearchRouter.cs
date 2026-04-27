@@ -20,6 +20,7 @@ namespace GxMcp.Gateway.Routers
                         limit = args?["limit"]?.ToObject<int?>() ?? 50,
                         typeFilter = args?["typeFilter"]?.ToString(),
                         domainFilter = args?["domainFilter"]?.ToString(),
+                        exactMatch = args?["exactMatch"]?.ToObject<bool?>() ?? false,
                     };
                 case "genexus_list_objects":
                     return new

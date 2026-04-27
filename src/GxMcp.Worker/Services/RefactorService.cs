@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Xml.Linq;
 using Artech.Architecture.Common.Objects;
 using Artech.Architecture.Common.Services;
 using Artech.Genexus.Common.Parts;
@@ -14,12 +15,17 @@ namespace GxMcp.Worker.Services
         private readonly KbService _kbService;
         private readonly ObjectService _objectService;
         private readonly IndexCacheService _indexCacheService;
+        private readonly WriteService _writeService;
+        private readonly PatternAnalysisService _patternAnalysisService;
 
-        public RefactorService(KbService kbService, ObjectService objectService, IndexCacheService indexCacheService)
+        public RefactorService(KbService kbService, ObjectService objectService, IndexCacheService indexCacheService,
+            WriteService writeService = null, PatternAnalysisService patternAnalysisService = null)
         {
             _kbService = kbService;
             _objectService = objectService;
             _indexCacheService = indexCacheService;
+            _writeService = writeService;
+            _patternAnalysisService = patternAnalysisService;
         }
 
         public string Refactor(string target, string action, string payload)
@@ -28,6 +34,12 @@ namespace GxMcp.Worker.Services
                 if (action == "ExtractProcedure") {
                     var data = JObject.Parse(payload);
                     return ExtractProcedure(target, data["code"]?.ToString(), data["procedureName"]?.ToString());
+                }
+
+                if (action == "WWPSetCondition")
+                {
+                    var data = JObject.Parse(payload);
+                    return WWPSetCondition(target, data["controlAttribute"]?.ToString(), data["value"]?.ToString(), data["typeFilter"]?.ToString());
                 }
 
                 string oldName = null;
@@ -48,15 +60,57 @@ namespace GxMcp.Worker.Services
                 if (action == "RenameVariable" || (oldName != null && oldName.StartsWith("&"))) {
                     return RenameVariable(target, oldName, newName);
                 }
-                
+
                 if (action == "RenameAttribute" || action == "RenameObject") {
                     return RenameAttribute(oldName, newName);
                 }
 
-                return Models.McpResponse.Error("Refactor action not found", target, action, "Supported actions are RenameVariable, RenameAttribute, RenameObject and ExtractProcedure.");
+                return Models.McpResponse.Error("Refactor action not found", target, action, "Supported actions are RenameVariable, RenameAttribute, RenameObject, ExtractProcedure, WWPSetCondition.");
             } catch (Exception ex) {
                 return "{\"error\":\"" + CommandDispatcher.EscapeJsonString(ex.Message) + "\"}";
             }
+        }
+
+        private string WWPSetCondition(string target, string controlAttribute, string newConditionValue, string typeFilter)
+        {
+            if (_writeService == null || _patternAnalysisService == null)
+                return Models.McpResponse.Error("WWPSetCondition unavailable", target, "PatternInstance", "RefactorService missing WriteService/PatternAnalysisService dependencies.");
+            if (string.IsNullOrEmpty(controlAttribute))
+                return Models.McpResponse.Error("controlAttribute is required", target, "PatternInstance", "Provide the gridAttribute attribute name (e.g., 'DocCod').");
+            if (newConditionValue == null)
+                return Models.McpResponse.Error("value is required", target, "PatternInstance", "Provide the conditions string (e.g., 'DocTipOri = 24;'). Empty string clears.");
+
+            var obj = _objectService.FindObject(target, typeFilter);
+            if (obj == null) return Models.McpResponse.Error("Object not found", target, "PatternInstance", "Use type=<Transaction> to disambiguate.");
+
+            string xml = _patternAnalysisService.ReadPatternPartXml(obj, "PatternInstance", out _, out _);
+            if (string.IsNullOrWhiteSpace(xml))
+                return Models.McpResponse.Error("PatternInstance not found", target, "PatternInstance", "Object does not expose a WorkWithPlus PatternInstance.");
+
+            XDocument doc;
+            try { doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace); }
+            catch (Exception ex) { return Models.McpResponse.Error("PatternInstance parse failed", target, "PatternInstance", ex.Message); }
+
+            var matches = doc.Descendants("gridAttribute")
+                .Where(e => {
+                    var a = e.Attribute("attribute")?.Value;
+                    if (string.IsNullOrEmpty(a)) return false;
+                    var dash = a.LastIndexOf('-');
+                    var localName = dash >= 0 ? a.Substring(dash + 1) : a;
+                    return string.Equals(localName, controlAttribute, StringComparison.OrdinalIgnoreCase);
+                }).ToList();
+
+            if (matches.Count == 0)
+                return Models.McpResponse.Error("Control not found", target, "PatternInstance", "No gridAttribute named '" + controlAttribute + "' in PatternInstance.");
+
+            foreach (var el in matches)
+            {
+                if (string.IsNullOrEmpty(newConditionValue)) el.SetAttributeValue("conditions", null);
+                else el.SetAttributeValue("conditions", newConditionValue);
+            }
+
+            string newXml = doc.ToString(SaveOptions.DisableFormatting);
+            return _writeService.WriteObject(target, "PatternInstance", newXml, typeFilter);
         }
 
         private string ExtractProcedure(string sourceObjectName, string codeToExtract, string newProcName)

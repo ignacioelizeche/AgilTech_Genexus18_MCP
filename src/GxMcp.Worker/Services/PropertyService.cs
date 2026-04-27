@@ -19,11 +19,11 @@ namespace GxMcp.Worker.Services
             _objectService = objectService;
         }
 
-        public string GetProperties(string target, string controlName = null)
+        public string GetProperties(string target, string controlName = null, string typeFilter = null)
         {
             try
             {
-                var obj = _objectService.FindObject(target);
+                var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null) return Models.McpResponse.Error("Object not found", target);
 
                 dynamic container = obj;
@@ -41,11 +41,11 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        public string SetProperty(string target, string propName, string value, string controlName = null)
+        public string SetProperty(string target, string propName, string value, string controlName = null, string typeFilter = null)
         {
             try
             {
-                var obj = _objectService.FindObject(target);
+                var obj = _objectService.FindObject(target, typeFilter);
                 if (obj == null) return Models.McpResponse.Error("Object not found", target);
 
                 dynamic container = obj;
@@ -80,28 +80,46 @@ namespace GxMcp.Worker.Services
 
         private dynamic FindControl(KBObject obj, string name)
         {
-            // Try WebForm
+            if (string.IsNullOrEmpty(name)) return null;
+
+            // Support qualified paths: "Documento.DocCod" or "Documento/DocCod"
+            var segments = name.Split(new[] { '.', '/' }, StringSplitOptions.RemoveEmptyEntries);
+            string leaf = segments[segments.Length - 1];
+
             var webFormPart = obj.Parts.Cast<KBObjectPart>().FirstOrDefault(p => p.TypeDescriptor.Name == "WebForm");
             if (webFormPart != null)
             {
                 dynamic dPart = webFormPart;
-                try {
-                   // Defensive discovery for different SDK versions
-                   if (dPart.Form != null) {
-                       var ctrl = FindInControlCollection(dPart.Form, name);
-                       if (ctrl != null) return ctrl;
-                   }
-                } catch {}
-                
-                try {
-                   if (dPart.WebForm != null && dPart.WebForm.Form != null) {
-                       var ctrl = FindInControlCollection(dPart.WebForm.Form, name);
-                       if (ctrl != null) return ctrl;
-                   }
-                } catch {}
+
+                dynamic root = null;
+                try { if (dPart.Form != null) root = dPart.Form; } catch { }
+                if (root == null) { try { if (dPart.WebForm != null && dPart.WebForm.Form != null) root = dPart.WebForm.Form; } catch { } }
+
+                if (root != null)
+                {
+                    if (segments.Length > 1)
+                    {
+                        var qualified = FindByPath(root, segments);
+                        if (qualified != null) return qualified;
+                    }
+                    var ctrl = FindInControlCollection(root, leaf);
+                    if (ctrl != null) return ctrl;
+                }
             }
 
             return null;
+        }
+
+        private dynamic FindByPath(dynamic root, string[] segments)
+        {
+            dynamic current = root;
+            foreach (var seg in segments)
+            {
+                if (current == null) return null;
+                current = FindInControlCollection(current, seg);
+                if (current == null) return null;
+            }
+            return current;
         }
 
         private dynamic FindInControlCollection(dynamic root, string name)

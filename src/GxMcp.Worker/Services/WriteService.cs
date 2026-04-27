@@ -193,7 +193,7 @@ namespace GxMcp.Worker.Services
             return errorRes;
         }
 
-        public string WriteObject(string target, string partName, string code, string typeFilter = null, bool autoValidate = true, bool preferFastSourceSave = false, bool autoInjectVariables = true)
+        public string WriteObject(string target, string partName, string code, string typeFilter = null, bool autoValidate = true, bool preferFastSourceSave = false, bool autoInjectVariables = true, bool dryRun = false)
         {
             try
             {
@@ -226,12 +226,22 @@ namespace GxMcp.Worker.Services
 
                 if (PatternAnalysisService.IsPatternPart(partName))
                 {
-                    return WritePatternPart(obj, target, partName, decodedCode);
+                    return WritePatternPart(obj, target, partName, decodedCode, dryRun);
                 }
 
                 if (WebFormXmlHelper.IsVisualPart(partName))
                 {
-                    return WriteVisualPart(obj, target, partName, decodedCode);
+                    return WriteVisualPart(obj, target, partName, decodedCode, dryRun);
+                }
+
+                if (dryRun)
+                {
+                    return Models.McpResponse.Success("Write", target, new JObject
+                    {
+                        ["status"] = "DryRun",
+                        ["part"] = partName,
+                        ["details"] = "Dry-run for non-pattern/visual parts: input received; not validated against SDK. Save skipped."
+                    });
                 }
 
                 // ... (rest of the log)
@@ -558,7 +568,26 @@ namespace GxMcp.Worker.Services
                 }
             }
 
+            var suggestion = BuildSuggestion(error, partName);
+            if (!string.IsNullOrEmpty(suggestion)) response["suggestion"] = suggestion;
+
             return response.ToString();
+        }
+
+        private static string BuildSuggestion(string error, string partName)
+        {
+            if (string.IsNullOrEmpty(error)) return null;
+            if (error.IndexOf("Part not found", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Try mode='full', or read the object first to see availableParts.";
+            if (error.IndexOf("does not expose text source", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Resolve via parent Transaction (e.g., type='Transaction') or use mode='full'.";
+            if (error.IndexOf("verification failed", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Compare requested XML with persisted via genexus_read; see 'details' diff for the divergent path.";
+            if (error.IndexOf("Invalid", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Check XML well-formedness; verify single root element and quoted attribute values.";
+            if (error.IndexOf("Object not found", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Disambiguate with type=<Transaction|Procedure|...> or list_objects to confirm the name.";
+            return null;
         }
 
         public string AddVariable(string target, string varName, string typeName = null)
@@ -635,7 +664,7 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private string WriteVisualPart(global::Artech.Architecture.Common.Objects.KBObject obj, string target, string partName, string xml)
+        private string WriteVisualPart(global::Artech.Architecture.Common.Objects.KBObject obj, string target, string partName, string xml, bool dryRun = false)
         {
             var webFormPart = WebFormXmlHelper.GetWebFormPart(obj);
             if (webFormPart == null)
@@ -661,20 +690,37 @@ namespace GxMcp.Worker.Services
             try
             {
                 string currentXml = WebFormXmlHelper.ReadEditableXml(obj);
-                string normalizedCurrent = XDocument.Parse(currentXml, LoadOptions.PreserveWhitespace).ToString();
-                if (string.Equals(normalizedCurrent, normalizedInput, StringComparison.Ordinal))
+                if (XmlEquivalence.AreEquivalent(currentXml, normalizedInput, out _))
                 {
                     return Models.McpResponse.Success("Write", target, new JObject
                     {
                         ["status"] = "NoChange",
                         ["part"] = partName,
-                        ["details"] = "No change"
+                        ["details"] = dryRun ? "Dry-run: no change would be applied." : "No change"
+                    });
+                }
+                if (dryRun)
+                {
+                    return Models.McpResponse.Success("Write", target, new JObject
+                    {
+                        ["status"] = "DryRun",
+                        ["part"] = partName,
+                        ["details"] = "Dry-run: input parsed and would update visual XML. Save skipped."
                     });
                 }
             }
             catch (Exception ex)
             {
                 Logger.Debug("[DEBUG-SAVE] Visual no-change precheck skipped: " + ex.Message);
+                if (dryRun)
+                {
+                    return Models.McpResponse.Success("Write", target, new JObject
+                    {
+                        ["status"] = "DryRun",
+                        ["part"] = partName,
+                        ["details"] = "Dry-run: input parsed; current visual read failed (" + ex.Message + "). Save skipped."
+                    });
+                }
             }
 
             var kb = _objectService.GetKbService().GetKB();
@@ -703,14 +749,13 @@ namespace GxMcp.Worker.Services
 
                     var refreshedObj = _objectService.FindObject(target);
                     string persistedXml = WebFormXmlHelper.ReadEditableXml(refreshedObj ?? obj);
-                    string normalizedPersisted = XDocument.Parse(persistedXml, LoadOptions.PreserveWhitespace).ToString();
-                    if (!string.Equals(normalizedPersisted, normalizedInput, StringComparison.Ordinal))
+                    if (!XmlEquivalence.AreEquivalent(persistedXml, normalizedInput, out var visualDiff))
                     {
                         return CreateWriteError(
                             "Visual write verification failed",
                             target,
                             partName,
-                            "The SDK save path completed, but the persisted WebForm XML does not match the requested content.",
+                            "The SDK save path completed, but the persisted WebForm XML does not match the requested content. Diff: " + (visualDiff ?? "n/a"),
                             obj);
                     }
 
@@ -728,7 +773,7 @@ namespace GxMcp.Worker.Services
             }
         }
 
-        private string WritePatternPart(global::Artech.Architecture.Common.Objects.KBObject obj, string target, string partName, string xml)
+        private string WritePatternPart(global::Artech.Architecture.Common.Objects.KBObject obj, string target, string partName, string xml, bool dryRun = false)
         {
             string normalizedInput;
             try
@@ -743,25 +788,51 @@ namespace GxMcp.Worker.Services
             try
             {
                 string currentXml = _patternAnalysisService.ReadPatternPartXml(obj, partName, out _, out _);
-                string normalizedCurrent = string.IsNullOrWhiteSpace(currentXml)
-                    ? string.Empty
-                    : XDocument.Parse(currentXml, LoadOptions.PreserveWhitespace).ToString();
-                if (string.Equals(normalizedCurrent, normalizedInput, StringComparison.Ordinal))
+                if (XmlEquivalence.AreEquivalent(currentXml, normalizedInput, out _))
                 {
                     return Models.McpResponse.Success("Write", target, new JObject
                     {
                         ["status"] = "NoChange",
                         ["part"] = partName,
-                        ["details"] = "No change"
+                        ["details"] = dryRun ? "Dry-run: no change would be applied." : "No change"
+                    });
+                }
+                if (dryRun)
+                {
+                    return Models.McpResponse.Success("Write", target, new JObject
+                    {
+                        ["status"] = "DryRun",
+                        ["part"] = partName,
+                        ["details"] = "Dry-run: input parsed and would update pattern XML. Save skipped."
                     });
                 }
             }
             catch (Exception ex)
             {
                 Logger.Debug("[DEBUG-SAVE] Pattern no-change precheck skipped: " + ex.Message);
+                if (dryRun)
+                {
+                    return Models.McpResponse.Success("Write", target, new JObject
+                    {
+                        ["status"] = "DryRun",
+                        ["part"] = partName,
+                        ["details"] = "Dry-run: input parsed; current pattern read failed (" + ex.Message + "). Save skipped."
+                    });
+                }
             }
 
             LogRequestedPatternPayloadIfEnabled(normalizedInput);
+
+            try
+            {
+                var preXml = _patternAnalysisService.ReadPatternPartXml(obj, partName, out _, out _);
+                if (!string.IsNullOrWhiteSpace(preXml))
+                {
+                    var snap = PatternSnapshotStore.SaveSnapshot(obj.Guid.ToString(), partName, preXml);
+                    if (!string.IsNullOrEmpty(snap)) Logger.Debug("[PatternSnapshot] Saved pre-write snapshot: " + snap);
+                }
+            }
+            catch (Exception ex) { Logger.Debug("[PatternSnapshot] skipped: " + ex.Message); }
 
             var envelope = _patternAnalysisService.BuildPatternPartEnvelope(obj, partName, normalizedInput, out var resolvedObject, out var resolvedPart);
             if (resolvedObject == null || resolvedPart == null || string.IsNullOrWhiteSpace(envelope))
@@ -808,17 +879,14 @@ namespace GxMcp.Worker.Services
                     ScheduleFlush();
 
                     string persistedXml = _patternAnalysisService.ReadPatternPartXml(obj, partName, out var refreshedObject, out _);
-                    string normalizedPersisted = string.IsNullOrWhiteSpace(persistedXml)
-                        ? string.Empty
-                        : XDocument.Parse(persistedXml, LoadOptions.PreserveWhitespace).ToString();
 
-                    if (!string.Equals(normalizedPersisted, normalizedInput, StringComparison.Ordinal))
+                    if (!XmlEquivalence.AreEquivalent(persistedXml, normalizedInput, out var patternDiff))
                     {
                         return CreateWriteError(
                             "Pattern write verification failed",
                             target,
                             partName,
-                            "The SDK save path completed, but the persisted WorkWithPlus pattern XML does not match the requested content.",
+                            "The SDK save path completed, but the persisted WorkWithPlus pattern XML does not match the requested content. Diff: " + (patternDiff ?? "n/a"),
                             refreshedObject ?? resolvedObject);
                     }
 

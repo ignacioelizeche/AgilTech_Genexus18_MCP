@@ -94,6 +94,22 @@ namespace GxMcp.Gateway.Routers
                 };
             }
 
+            if (action == "WWPSetCondition")
+            {
+                return new
+                {
+                    module = "Refactor",
+                    action,
+                    target = args?["target"]?.ToString() ?? args?["objectName"]?.ToString(),
+                    payload = new JObject
+                    {
+                        ["controlAttribute"] = args?["controlAttribute"]?.ToString(),
+                        ["value"] = args?["value"]?.ToString(),
+                        ["typeFilter"] = args?["type"]?.ToString()
+                    }.ToString()
+                };
+            }
+
             string? target = args?["target"]?.ToString();
             if (action == "RenameVariable")
             {
@@ -127,7 +143,8 @@ namespace GxMcp.Gateway.Routers
                     target = args?["name"]?.ToString(),
                     propertyName = args?["propertyName"]?.ToString(),
                     value = args?["value"]?.ToString(),
-                    control = args?["control"]?.ToString()
+                    control = args?["control"]?.ToString(),
+                    type = args?["type"]?.ToString()
                 };
             }
 
@@ -136,7 +153,8 @@ namespace GxMcp.Gateway.Routers
                 module = "Property",
                 action = "Get",
                 target = args?["name"]?.ToString(),
-                control = args?["control"]?.ToString()
+                control = args?["control"]?.ToString(),
+                type = args?["type"]?.ToString()
             };
         }
 

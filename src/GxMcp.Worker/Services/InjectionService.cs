@@ -20,7 +20,7 @@ namespace GxMcp.Worker.Services
             _objectService = objectService;
         }
 
-        public string InjectContext(string targetName, bool recursive = false)
+        public string InjectContext(string targetName, bool recursive = false, string typeFilter = null)
         {
             var sb = new StringBuilder();
             var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -31,7 +31,7 @@ namespace GxMcp.Worker.Services
                 var kb = _kbService.GetKB();
                 if (kb == null) return McpResponse.Error("KB not opened", targetName, null, "Open a Knowledge Base before requesting dependency injection.");
 
-                var obj = _objectService.FindObject(targetName);
+                var obj = _objectService.FindObject(targetName, typeFilter);
                 if (obj == null) return McpResponse.Error("Object not found", targetName, null, "The requested object is not available in the active Knowledge Base.");
 
                 sb.AppendLine($"# Context for {obj.TypeDescriptor.Name} {obj.Name}");

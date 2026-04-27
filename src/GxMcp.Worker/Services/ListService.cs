@@ -105,7 +105,9 @@ namespace GxMcp.Worker.Services
 
                     if (!string.IsNullOrEmpty(nameFilter))
                     {
-                        entries = entries.Where(e => (e.Name ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                        entries = entries.Where(e =>
+                            (e.Name ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            (e.Description ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
                     }
 
                     var orderedIndexEntries = entries
@@ -160,7 +162,9 @@ namespace GxMcp.Worker.Services
 
                 if (!string.IsNullOrEmpty(nameFilter))
                 {
-                    filteredObjects = filteredObjects.Where(x => x.Object.Name.IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
+                    filteredObjects = filteredObjects.Where(x =>
+                        (x.Object.Name ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        (x.Object.Description ?? string.Empty).IndexOf(nameFilter, StringComparison.OrdinalIgnoreCase) >= 0);
                 }
 
                 if (parentPathFilter != null)

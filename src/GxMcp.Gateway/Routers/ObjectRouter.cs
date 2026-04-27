@@ -60,7 +60,14 @@ namespace GxMcp.Gateway.Routers
                     }
                     else
                     {
-                        return new { module = "Write", action = part, target = target, payload = args?["content"]?.ToString() };
+                        return new {
+                            module = "Write",
+                            action = part,
+                            target = target,
+                            payload = args?["content"]?.ToString(),
+                            type = args?["type"]?.ToString(),
+                            dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
+                        };
                     }
                 
                 // Aliases legados (escondidos mas funcionais para a Gateway interna se necessário)

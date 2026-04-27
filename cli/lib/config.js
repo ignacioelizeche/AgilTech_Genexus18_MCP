@@ -100,11 +100,13 @@ function patchClientConfig(targetConfigPath) {
     const claudeWin = path.join(os.homedir(), 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json');
     const claudeMac = path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
     const antigravityCfg = path.join(os.homedir(), '.gemini', 'antigravity', 'mcp_config.json');
+    const claudeCodeCfg = path.join(os.homedir(), '.claude.json');
 
     const clients = [
         { path: claudeWin, name: 'Claude Desktop (Windows)' },
         { path: claudeMac, name: 'Claude Desktop (macOS)' },
-        { path: antigravityCfg, name: 'Antigravity' }
+        { path: antigravityCfg, name: 'Antigravity' },
+        { path: claudeCodeCfg, name: 'Claude Code' }
     ];
 
     const patched = [];

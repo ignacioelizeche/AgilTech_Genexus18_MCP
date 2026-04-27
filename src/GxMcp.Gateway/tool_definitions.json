@@ -444,12 +444,15 @@
             "rebuild",
             "reorg",
             "validate",
+            "validate-kb",
             "sync",
             "index",
             "status",
-            "result"
+            "result",
+            "snapshots-list",
+            "snapshots-restore"
           ],
-          "description": "Lifecycle action."
+          "description": "Lifecycle action. 'validate-kb' scans PatternInstance conditions for unknown attribute references. 'snapshots-list'/'snapshots-restore' manage pre-write pattern snapshots."
         },
         "target": {
           "type": "string",
@@ -458,6 +461,14 @@
         "code": {
           "type": "string",
           "description": "For validation: the code to check."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "For validate-kb: max objects to scan (0 = unlimited)."
+        },
+        "snapshotPath": {
+          "type": "string",
+          "description": "For snapshots-restore: full path returned by snapshots-list."
         }
       },
       "required": [
@@ -634,7 +645,7 @@
   },
   {
     "name": "genexus_refactor",
-    "description": "Runs supported GeneXus refactor operations such as renaming and procedure extraction.",
+    "description": "Runs supported GeneXus refactor operations such as renaming, procedure extraction, and WorkWithPlus condition setting.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -644,7 +655,8 @@
             "RenameAttribute",
             "RenameVariable",
             "RenameObject",
-            "ExtractProcedure"
+            "ExtractProcedure",
+            "WWPSetCondition"
           ],
           "description": "Refactor action."
         },
@@ -667,6 +679,18 @@
         "procedureName": {
           "type": "string",
           "description": "New procedure name for ExtractProcedure."
+        },
+        "controlAttribute": {
+          "type": "string",
+          "description": "For WWPSetCondition: gridAttribute attribute local-name (e.g., 'DocCod')."
+        },
+        "value": {
+          "type": "string",
+          "description": "For WWPSetCondition: new conditions string (e.g., 'DocTipOri = 24;'). Empty clears."
+        },
+        "type": {
+          "type": "string",
+          "description": "Optional object type to disambiguate (e.g., 'Transaction')."
         }
       },
       "required": [

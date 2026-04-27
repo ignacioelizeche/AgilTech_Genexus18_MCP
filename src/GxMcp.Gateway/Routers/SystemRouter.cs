@@ -19,6 +19,9 @@ namespace GxMcp.Gateway.Routers
                         case "rebuild": return new { module = "Build", action = "RebuildAll", target = target };
                         case "reorg": return new { module = "Build", action = "Reorg", target = target };
                         case "validate": return new { module = "Validation", action = "Check", target = target, payload = args?["code"]?.ToString() };
+                        case "validate-kb": return new { module = "KB", action = "ValidateConditions", limit = args?["limit"]?.ToObject<int?>() };
+                        case "snapshots-list": return new { module = "KB", action = "ListPatternSnapshots", target = target };
+                        case "snapshots-restore": return new { module = "KB", action = "RestorePatternSnapshot", target = target, snapshotPath = args?["snapshotPath"]?.ToString() };
                         case "sync": return new { module = "Build", action = "Sync", target = target };
                         case "index": return new { module = "KB", action = "BulkIndex" };
                         case "status": 
