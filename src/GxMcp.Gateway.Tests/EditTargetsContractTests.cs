@@ -40,6 +40,18 @@ namespace GxMcp.Gateway.Tests
 
             var ex = Assert.Throws<UsageException>(() => router.ConvertToolCall("genexus_read", args));
             Assert.Contains("mutually exclusive", ex.Message);
+            Assert.Equal("usage_error", ex.Code);
+        }
+
+        [Fact]
+        public void Edit_RejectsBothTargetForms()
+        {
+            var router = new ObjectRouter();
+            var args = JObject.Parse("""{"name":"A","targets":[{"name":"B","content":"y"}]}""");
+
+            var ex = Assert.Throws<UsageException>(() => router.ConvertToolCall("genexus_edit", args));
+            Assert.Contains("mutually exclusive", ex.Message);
+            Assert.Equal("usage_error", ex.Code);
         }
 
         [Fact]
@@ -63,7 +75,8 @@ namespace GxMcp.Gateway.Tests
             var args = JObject.Parse("""{"name":"A","changes":[]}""");
 
             var ex = Assert.Throws<UsageException>(() => router.ConvertToolCall("genexus_edit", args));
-            Assert.Contains("changes", ex.Message);
+            Assert.Equal("usage_error", ex.Code);
+            Assert.Equal("argument 'changes' removed in v2.0.0; use 'targets' instead", ex.Message);
         }
     }
 }

@@ -959,7 +959,7 @@ namespace GxMcp.Gateway
                         {
                             ["code"] = -32602,
                             ["message"] = ux.Message,
-                            ["data"] = new JObject { ["code"] = ux.Code }
+                            ["data"] = new JObject { ["usageCode"] = ux.Code }
                         }
                     };
                 }
