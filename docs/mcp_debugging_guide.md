@@ -89,10 +89,11 @@ Prefer checking `patchStatus` and `details` before retrying with larger payload 
 
 `tools/call` responses may now include additive gateway metadata inside the JSON text payload:
 
-- `meta.schemaVersion` (current: `mcp-axi/1`)
-- `meta.tool`
+- `_meta.schemaVersion` (current: `mcp-axi/2`, bumped in v2.0.0; field is underscore-prefixed per MCP convention)
+- `_meta.tool`
 - list helpers (`returned`, `total`, `empty`, `hasMore`, `nextOffset`) when inferable
-- truncation signal (`meta.truncated=true`) and contextual `help` hints
+- truncation signal (`_meta.truncated=true`) and contextual `help` hints
+- v2.0.0 fields: `_meta.idempotent`, `_meta.batched`, `_meta.dryRun`, `_meta.removedTools` (see `docs/llm_cli_mcp_playbook.md`)
 
 If a client seems to "lose fields", check whether `fields` or `axiCompact` was passed in the tool arguments for `genexus_query` or `genexus_list_objects`.
 

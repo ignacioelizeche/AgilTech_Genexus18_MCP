@@ -57,16 +57,17 @@ The extension uses this MCP discovery flow directly.
 - Worker lifecycle and restart boundaries
 - Dynamic tool publication from `tool_definitions.json`
 - Resource, prompt, and completion exposure
-- Additive response normalization for `tools/call` payloads (`mcp-axi/1` metadata and lightweight aggregates)
+- Additive response normalization for `tools/call` payloads (`mcp-axi/2` metadata under `_meta` and lightweight aggregates)
 
 ## Tool call response contract (gateway-normalized)
 
 For MCP `tools/call`, the gateway returns standard MCP `content[].text`, but normalizes JSON payloads with additive metadata:
 
-- `meta.schemaVersion = "mcp-axi/1"`
-- `meta.tool = <tool-name>`
+- `_meta.schemaVersion = "mcp-axi/2"` (v2.0.0; field is underscore-prefixed per MCP convention)
+- `_meta.tool = <tool-name>`
 - collection helpers when inferable: `returned`, `total`, `empty`, `hasMore`, `nextOffset`
-- truncation hints: `meta.truncated=true` plus actionable `help` message
+- truncation hints: `_meta.truncated=true` plus actionable `help` message
+- v2.0.0 fields: `_meta.idempotent` (cache hit), `_meta.batched` (`targets[]`), `_meta.dryRun` (preview), `_meta.removedTools` (advertised on `initialize`)
 - idempotent marker: `noChange=true` when the worker reports successful no-op
 
 Compatibility rules:
@@ -80,4 +81,4 @@ Compatibility rules:
 - New features should target MCP tools, resources, prompts, or completion endpoints.
 - New extension flows must only target MCP contracts.
 - Resource reads should be preferred for stable browsable context.
-- Large object reads should be paginated with `genexus_read` or coordinated with `genexus_batch_read`.
+- Large object reads should be paginated with `genexus_read` or coordinated with `genexus_read(targets=[...])` (plural form, v2.0.0+; the legacy `genexus_batch_read` was removed).

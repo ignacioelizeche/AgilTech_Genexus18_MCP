@@ -29,12 +29,13 @@ Query notes:
 - Prefer `parentPath` whenever the KB contains duplicate folder names under different modules.
 
 Tool response notes (`tools/call` text payload):
-- Gateway now enriches worker payloads with AXI-like metadata under `meta`.
-- `meta.schemaVersion` currently uses `mcp-axi/1`.
-- `meta.tool` identifies the normalized tool name.
+- Gateway now enriches worker payloads with AXI-like metadata under `_meta` (underscore-prefixed per MCP convention for non-standard fields).
+- `_meta.schemaVersion` currently uses `mcp-axi/2` (bumped in v2.0.0).
+- `_meta.tool` identifies the normalized tool name.
 - For collection responses, gateway may add `returned`, `total`, `empty`, `hasMore`, and `nextOffset` when enough context is available.
-- For truncated responses, gateway sets `meta.truncated=true` and appends an actionable `help` hint.
+- For truncated responses, gateway sets `_meta.truncated=true` and appends an actionable `help` hint.
 - For idempotent success (`status=Success` + `details=No change`), gateway adds `noChange=true`.
+- v2.0.0 added: `_meta.idempotent=true` on idempotency-cache hits, `_meta.batched=true` when `targets[]` plural form is used, `_meta.dryRun=true` on preview responses, `_meta.removedTools` on `initialize` for proactive agent detection of removed tools.
 - For worker timeout budget events, gateway returns a structured payload with `result.isError=true`, `status=Running`, `operationId`, `correlationId`, and `help` follow-up guidance.
 - These enrichments are additive and keep existing response fields for backward compatibility.
 
@@ -48,10 +49,10 @@ Optional response-shaping arguments for list-heavy tools:
 | --- | --- | --- |
 | `genexus_query` | active | `Search -> Query` |
 | `genexus_list_objects` | active | `List -> Objects` |
-| `genexus_read` | active | `Read -> ExtractSource` |
-| `genexus_batch_read` | active | `Batch -> BatchRead` |
-| `genexus_edit` | active | `Write` or `Patch -> Apply` via router conversion |
-| `genexus_batch_edit` | active | `Batch -> MultiEdit` |
+| `genexus_read` | active | `Read -> ExtractSource`; `targets[]` plural form routes to `Batch -> BatchRead` |
+| `genexus_batch_read` | **removed (v2.0.0)** | superseded by `genexus_read` with `targets[]` |
+| `genexus_edit` | active | `Write`, `SemanticOps -> Apply` (mode=ops), `JsonPatch -> Apply` (mode=patch + array), or legacy `Patch -> Apply` (mode=patch + string); `targets[]` plural form routes to `Batch -> MultiEdit` |
+| `genexus_batch_edit` | **removed (v2.0.0)** | superseded by `genexus_edit` with `targets[]` |
 | `genexus_inspect` | active | `Analyze -> GetConversionContext` |
 | `genexus_analyze` | active | `Analyze`, `Linter`, or `UI` depending on mode |
 | `genexus_summarize` | active | `Analyze -> Summarize` |

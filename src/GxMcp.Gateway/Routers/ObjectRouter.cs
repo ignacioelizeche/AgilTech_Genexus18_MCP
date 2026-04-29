@@ -146,12 +146,6 @@ namespace GxMcp.Gateway.Routers
                 case "genexus_get_properties":
                     return new { module = "Property", action = "Get", target = target, control = args?["control"]?.ToString() };
 
-                case "genexus_batch_edit":
-                    return new { module = "Batch", action = "MultiEdit", items = args?["items"] };
-
-                case "genexus_batch_read":
-                    return new { module = "Batch", action = "BatchRead", items = args?["items"] };
-
                 case "genexus_export_object":
                     return new
                     {

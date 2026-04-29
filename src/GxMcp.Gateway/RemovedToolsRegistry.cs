@@ -21,7 +21,7 @@ namespace GxMcp.Gateway
             new Dictionary<string, RemovedToolInfo>(StringComparer.OrdinalIgnoreCase)
             {
                 ["genexus_batch_read"] = new RemovedToolInfo("genexus_read", "use targets[] (array of {name, part})"),
-                ["genexus_batch_edit"] = new RemovedToolInfo("genexus_edit", "use targets[] (array of {name, changes[]})")
+                ["genexus_batch_edit"] = new RemovedToolInfo("genexus_edit", "use targets[] (array of edit requests, each {name, mode, content|ops|patch, ...})")
             };
     }
 }

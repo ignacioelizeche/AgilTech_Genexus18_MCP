@@ -47,12 +47,17 @@ Recommended flags:
 
 For `tools/call`, parse `result.content[0].text` as JSON.
 
-Gateway AXI-like enrichments are additive:
-- `meta.schemaVersion = mcp-axi/1`
-- `meta.tool = <tool-name>`
+Gateway AXI-like enrichments are additive (under `_meta` — underscore-prefixed per MCP convention):
+- `_meta.schemaVersion = mcp-axi/2` (v2.0.0+)
+- `_meta.tool = <tool-name>`
 - Collection helpers when inferable: `returned`, `total`, `empty`, `hasMore`, `nextOffset`
-- Truncation signal: `meta.truncated=true` + contextual `help`
+- Truncation signal: `_meta.truncated=true` + contextual `help`
 - Idempotent writes may include `noChange=true`
+- v2.0.0 fields:
+  - `_meta.idempotent=true` on idempotency-cache hits.
+  - `_meta.batched=true` when the request used the `targets[]` plural form.
+  - `_meta.dryRun=true` on `dryRun` preview responses; full preview shape: `{plan:{touchedObjects, xmlDiff, brokenRefs, warnings}}`.
+  - `_meta.removedTools` advertised on `initialize` so agents can self-correct before a runtime `-32601`.
 
 Optional shaping for `genexus_query` and `genexus_list_objects`:
 - `fields`: array or CSV projection.
@@ -69,11 +74,22 @@ Disambiguation:
 
 Efficient reads:
 - `genexus_read(name='Obj', part='Source', offset=1, limit=200)`
-- For many files, prefer `genexus_batch_read`.
+- For many files, prefer `genexus_read(targets=['A','B','C'], part='Source')` (plural form).
 
-Safe edits:
-- Use `genexus_edit(mode='patch', operation='Replace', context=..., content=..., expectedCount=1, dryRun=true)` before applying.
-- Use `genexus_batch_edit` for multi-object coordinated changes.
+Safe edits (v2.0.0):
+- Preview before applying: any `genexus_edit` call accepts `dryRun: true` and returns `{plan: {touchedObjects, xmlDiff, brokenRefs, warnings}}` without mutation.
+- Three edit modes:
+  - `mode='xml'` (default) — full XML replacement.
+  - `mode='ops'` — typed semantic ops, e.g. `ops=[{op:'set_attribute', name:'Phone', type:'Character(20)'}]`. Catalog: `set_attribute`, `add_attribute`, `remove_attribute`, `add_rule`, `remove_rule`, `set_property`.
+  - `mode='patch'` — JSON-Patch RFC 6902 array, e.g. `patch=[{op:'replace', path:'/description', value:'new'}]`. Legacy string-form text patch (`mode='patch'` with string `patch`) still works for backward compatibility.
+- Multi-object coordinated changes: `genexus_edit(targets=[{name:'A', mode:'ops', ops:[...]}, {name:'B', mode:'xml', content:'...'}])`. Mutually exclusive with singular `name`.
+- Safe retries: pass `idempotencyKey: '<token>'` (charset `[A-Za-z0-9_-]`, 1–128 chars). Same key + same payload = cached result; same key + different payload = `idempotency_conflict` error. `dryRun` bypasses the cache.
+
+Removed in v2.0.0:
+- `genexus_batch_read` → use `genexus_read` with `targets[]`.
+- `genexus_batch_edit` → use `genexus_edit` with `targets[]`.
+- `genexus_edit` `changes` arg → use `targets[]`.
+- Calling a removed tool returns `-32601` with `error.data.replacedBy` and `error.data.argHint` for self-correction. `initialize` advertises `_meta.removedTools` upfront.
 
 ## Timeout and Long-Running Operations
 

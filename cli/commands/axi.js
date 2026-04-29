@@ -988,7 +988,7 @@ async function handleLlmHelp(options, ctx) {
         },
         mcp: {
             parsePath: 'result.content[0].text',
-            expectedMeta: ['schemaVersion=mcp-axi/1', 'tool=<tool-name>'],
+            expectedMeta: ['_meta.schemaVersion=mcp-axi/2', '_meta.tool=<tool-name>'],
             listHelpers: ['returned', 'total', 'empty', 'hasMore', 'nextOffset'],
             shaping: ['fields=<csv|array>', 'axiCompact=true (query/list_objects)']
         },

@@ -12,8 +12,7 @@ The worker maintains caches for performance. After any successful MCP write path
 
 Current write-oriented MCP contracts include:
 
-- `genexus_edit`
-- `genexus_batch_edit`
+- `genexus_edit` (modes: `xml`, `ops`, `patch`; supports `targets[]` for multi-object atomic edits)
 - `genexus_doc`
 - `genexus_properties`
 - `genexus_structure`
