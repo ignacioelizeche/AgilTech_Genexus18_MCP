@@ -68,6 +68,17 @@ namespace GxMcp.Gateway.Routers
                     }
 
                     string? mode = args?["mode"]?.ToString();
+                    if (mode == "ops")
+                    {
+                        return new {
+                            module = "SemanticOps",
+                            action = "Apply",
+                            target = target,
+                            part = part,
+                            ops = args?["ops"],
+                            dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
+                        };
+                    }
                     if (mode == "patch")
                     {
                         return new { 

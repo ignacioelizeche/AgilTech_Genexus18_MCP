@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using GxMcp.Worker.Models;
 
 namespace GxMcp.Worker.Services
 {
@@ -31,6 +32,126 @@ namespace GxMcp.Worker.Services
         }
 
         public void SetValidationService(ValidationService vs) { _validationService = vs; }
+
+        public string ApplySemanticOps(JObject req)
+        {
+            // Validation runs here — no GeneXus types referenced in this method body.
+            // GeneXus SDK types are isolated in ApplySemanticOpsCore so JIT can load
+            // this method even when GeneXus assemblies are absent (unit-test environment).
+            try
+            {
+                if (req == null)
+                    throw new UsageException("usage_error", "request required");
+
+                string target = req["target"]?.ToString();
+                string partName = req["part"]?.ToString();
+                JArray opsRaw = req["ops"] as JArray;
+                bool dryRun = req["dryRun"]?.ToObject<bool?>() ?? false;
+
+                if (string.IsNullOrEmpty(target))
+                    throw new UsageException("usage_error", "target required");
+                if (opsRaw == null || opsRaw.Count == 0)
+                    throw new UsageException("usage_error", "ops[] required");
+                if (string.IsNullOrEmpty(partName))
+                    partName = "Structure";
+
+                // Pre-flight: reject immediately when no KB is open, before JIT-loading GeneXus types.
+                if (!_objectService.GetKbService().IsOpen)
+                    throw new UsageException("usage_error", "object '" + target + "' not found");
+
+                return ApplySemanticOpsCore(target, partName, opsRaw, dryRun);
+            }
+            catch (UsageException ux)
+            {
+                return new JObject
+                {
+                    ["isError"] = true,
+                    ["error"] = new JObject
+                    {
+                        ["code"] = ux.Code,
+                        ["message"] = ux.Message
+                    }
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            catch (Exception ex)
+            {
+                return new JObject
+                {
+                    ["isError"] = true,
+                    ["error"] = new JObject
+                    {
+                        ["code"] = "internal_error",
+                        ["message"] = ex.Message
+                    }
+                }.ToString(Newtonsoft.Json.Formatting.None);
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private string ApplySemanticOpsCore(string target, string partName, JArray opsRaw, bool dryRun)
+        {
+            var obj = _objectService.FindObject(target, null);
+            if (obj == null)
+                throw new UsageException("usage_error", "object '" + target + "' not found");
+
+            string kind = obj.TypeDescriptor?.Name ?? "";
+
+            var part = GxMcp.Worker.Structure.PartAccessor.GetPart(obj, partName);
+            if (part == null)
+                throw new UsageException("usage_error",
+                    "part '" + partName + "' not found in " + kind);
+
+            string currentXml = part.SerializeToXml();
+            if (string.IsNullOrEmpty(currentXml))
+                throw new UsageException("usage_error",
+                    "part '" + partName + "' produced empty XML");
+
+            var ops = opsRaw.OfType<JObject>().Select(SemanticOp.From).ToList();
+
+            string newXml = new SemanticOpsService().Apply(currentXml, kind, ops);
+
+            if (dryRun)
+            {
+                var planResp = new JObject
+                {
+                    ["isError"] = false,
+                    ["meta"] = new JObject
+                    {
+                        ["dryRun"] = true,
+                        ["tool"] = "genexus_edit",
+                        ["mode"] = "ops"
+                    },
+                    ["plan"] = new JObject
+                    {
+                        ["touchedObjects"] = new JArray(new JObject
+                        {
+                            ["type"] = kind,
+                            ["name"] = target,
+                            ["part"] = partName,
+                            ["op"] = "modify"
+                        }),
+                        ["xmlDiff"] = (JValue)JValue.CreateNull()
+                    }
+                };
+                return planResp.ToString(Newtonsoft.Json.Formatting.None);
+            }
+
+            string writeResult = WriteObject(target, partName, newXml, null, false, false, false, false);
+            JObject writeJson;
+            try { writeJson = JObject.Parse(writeResult); }
+            catch { writeJson = new JObject { ["raw"] = writeResult }; }
+
+            var resp = new JObject
+            {
+                ["isError"] = false,
+                ["target"] = target,
+                ["part"] = partName,
+                ["mode"] = "ops",
+                ["opsApplied"] = ops.Count,
+                ["write"] = writeJson
+            };
+            return resp.ToString(Newtonsoft.Json.Formatting.None);
+        }
 
         private void InitializeFlushTimer()
         {

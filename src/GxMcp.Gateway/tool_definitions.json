@@ -99,7 +99,7 @@
   },
   {
     "name": "genexus_edit",
-    "description": "Mutation tool for source/metadata. Prefer mode='patch' with dryRun=true + expectedCount before applying changes. Use mode='full' only for intentional full overwrite. Use 'name' for a single edit, or 'targets' (plural) for batch edits across one or many objects. The two are mutually exclusive.",
+    "description": "Mutation tool for source/metadata. Prefer mode='patch' with dryRun=true + expectedCount before applying changes. Use mode='full' only for intentional full overwrite. Use mode='ops' to apply a list of structural semantic operations (set_attribute, add_attribute, remove_attribute, add_rule, remove_rule, set_property) against a single part XML. Use 'name' for a single edit, or 'targets' (plural) for batch edits across one or many objects. The two are mutually exclusive.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -116,13 +116,30 @@
           "type": "string",
           "enum": [
             "full",
-            "patch"
+            "patch",
+            "ops"
           ],
           "description": "Edit mode."
         },
         "content": {
           "type": "string",
           "description": "New code or patch content."
+        },
+        "ops": {
+          "type": "array",
+          "description": "For mode='ops': list of semantic operations applied to the resolved part XML.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "description": "Operation name (set_attribute, add_attribute, remove_attribute, add_rule, remove_rule, set_property)."
+              }
+            },
+            "required": [
+              "op"
+            ]
+          }
         },
         "context": {
           "type": "string",

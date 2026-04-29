@@ -34,6 +34,7 @@ namespace GxMcp.Worker.Services
         public IndexCacheService GetIndexCache() { return _indexCacheService; }
         public bool IsInitializing => _isOpenInProgress;
         public bool IsIndexing => _isIndexing;
+        public bool IsOpen { get { lock (_kbLock) { return _kb != null; } } }
 
         public dynamic GetKB()
         {

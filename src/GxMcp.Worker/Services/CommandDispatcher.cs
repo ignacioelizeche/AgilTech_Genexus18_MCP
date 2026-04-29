@@ -241,6 +241,9 @@ namespace GxMcp.Worker.Services
                             false,
                             true,
                             args?["dryRun"]?.ToObject<bool?>() ?? false);
+                    case "semanticops":
+                        if (action == "Apply") return _writeService.ApplySemanticOps(args ?? request);
+                        break;
                     case "patch":
                         if (action == "Apply") return _patchService.ApplyPatch(
                             target,
