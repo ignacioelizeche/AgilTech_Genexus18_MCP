@@ -223,12 +223,14 @@ Failure at any stage returns structured error with `path` pointing into the offe
 
 ```csharp
 record CachedEntry(
-  string PayloadHash,         // SHA256 of canonicalized request args
+  string PayloadHash,         // SHA256 of canonicalized request args, excluding idempotencyKey itself
   JsonNode Result,            // full successful result
   DateTime CreatedAt,
   DateTime LastAccessedAt
 );
 ```
+
+Payload canonicalization: stable JSON sort, strip `idempotencyKey` field (otherwise the key would always match itself), strip `dryRun` field (cannot reach cache anyway). All other args contribute to the hash.
 
 ### Lifecycle
 
@@ -263,7 +265,7 @@ Bump `meta.schemaVersion` from `mcp-axi/1` → `mcp-axi/2`. Handshake `initializ
 
 - `meta.schemaVersion` (always)
 - `meta.tool` (always)
-- `meta.batched` (when `targets[]` used)
+- `meta.batched` (always `true` when `targets[]` form used, even if length 1; absent when `target` singular form used)
 - `meta.dryRun` (when applicable)
 - `meta.idempotent` (when cache hit)
 - `meta.removedTools` (handshake only)
