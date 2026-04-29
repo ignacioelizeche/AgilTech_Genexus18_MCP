@@ -141,6 +141,25 @@
             ]
           }
         },
+        "patch": {
+          "oneOf": [
+            { "type": "string", "description": "legacy text patch (passed to PatchService)" },
+            {
+              "type": "array",
+              "description": "JSON-Patch RFC 6902 ops applied over canonical JSON",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "op": { "type": "string", "description": "Operation name (add, remove, replace, test)." },
+                  "path": { "type": "string", "description": "JSON Pointer (RFC 6901) to the target location." },
+                  "value": { "description": "Value for add/replace/test ops." }
+                },
+                "required": ["op", "path"]
+              }
+            }
+          ],
+          "description": "string = legacy text patch; array = JSON-Patch (RFC 6902). Used when mode='patch'."
+        },
         "context": {
           "type": "string",
           "description": "For patch mode: The exact text (old_string) to replace."

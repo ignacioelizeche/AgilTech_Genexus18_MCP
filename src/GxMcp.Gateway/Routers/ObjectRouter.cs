@@ -81,9 +81,23 @@ namespace GxMcp.Gateway.Routers
                     }
                     if (mode == "patch")
                     {
-                        return new { 
-                            module = "Patch", 
-                            action = "Apply", 
+                        var patchTok = args?["patch"];
+                        if (patchTok is JArray patchArr)
+                        {
+                            // RFC 6902 JSON-Patch (array payload)
+                            return new {
+                                module = "JsonPatch",
+                                action = "Apply",
+                                target = target,
+                                part = part,
+                                patch = patchArr,
+                                dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
+                            };
+                        }
+                        // Legacy text-patch (string payload) — unchanged
+                        return new {
+                            module = "Patch",
+                            action = "Apply",
                             target = target,
                             part = part,
                             operation = args?["operation"]?.ToString() ?? "Replace",

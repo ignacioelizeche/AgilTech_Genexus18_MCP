@@ -58,6 +58,56 @@ namespace GxMcp.Worker.Tests
             Assert.Contains("not found", json["error"]?["message"]?.ToString());
         }
 
+        [Fact]
+        public void ApplyJsonPatch_RejectsMissingTarget()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse("{\"part\":\"Structure\",\"patch\":[{\"op\":\"replace\",\"path\":\"/description\",\"value\":\"x\"}]}");
+            string result = ws.ApplyJsonPatch(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("target", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplyJsonPatch_RejectsMissingPart()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse("{\"target\":\"Customer\",\"patch\":[{\"op\":\"replace\",\"path\":\"/description\",\"value\":\"x\"}]}");
+            string result = ws.ApplyJsonPatch(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("part", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplyJsonPatch_RejectsMissingPatch()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse("{\"target\":\"Customer\",\"part\":\"Structure\"}");
+            string result = ws.ApplyJsonPatch(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("patch", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplyJsonPatch_NoKb_ReportsObjectNotFound()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse(
+                "{\"target\":\"Customer\",\"part\":\"Structure\"," +
+                "\"patch\":[{\"op\":\"replace\",\"path\":\"/description\",\"value\":\"x\"}]}");
+            string result = ws.ApplyJsonPatch(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("not found", json["error"]?["message"]?.ToString());
+        }
+
         [Theory]
         [InlineData("Events", "Events", true)]
         [InlineData("Events", "Source", false)]
