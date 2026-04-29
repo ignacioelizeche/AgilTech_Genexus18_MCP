@@ -96,38 +96,6 @@
     }
   },
   {
-    "name": "genexus_batch_read",
-    "description": "Reads source code from multiple objects in a single call. Drastically improves context-gathering speed.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Object name."
-              },
-              "part": {
-                "type": "string",
-                "description": "Part (Source, Rules, Events).",
-                "default": "Source"
-              }
-            },
-            "required": [
-              "name"
-            ]
-          }
-        }
-      },
-      "required": [
-        "items"
-      ]
-    }
-  },
-  {
     "name": "genexus_edit",
     "description": "Mutation tool for source/metadata. Prefer mode='patch' with dryRun=true + expectedCount before applying changes. Use mode='full' only for intentional full overwrite.",
     "inputSchema": {
@@ -240,94 +208,6 @@
       },
       "required": [
         "name"
-      ]
-    }
-  },
-  {
-    "name": "genexus_batch_edit",
-    "description": "Applies edits across multiple objects in a single call. Each item specifies a target object and an array of changes (patch or full). More efficient than multiple genexus_edit calls.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Target object name."
-              },
-              "changes": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "part": {
-                      "type": "string",
-                      "description": "Part name (Source, Rules, Events).",
-                      "default": "Source"
-                    },
-                    "mode": {
-                      "type": "string",
-                      "enum": [
-                        "full",
-                        "patch"
-                      ],
-                      "description": "Edit mode.",
-                      "default": "patch"
-                    },
-                    "content": {
-                      "type": "string",
-                      "description": "New code or patch content."
-                    },
-                    "context": {
-                      "type": "string",
-                      "description": "For patch mode: exact text to replace."
-                    },
-                    "operation": {
-                      "type": "string",
-                      "enum": [
-                        "Replace",
-                        "Insert_After",
-                        "Append"
-                      ],
-                      "description": "Patch operation.",
-                      "default": "Replace"
-                    },
-                    "expectedCount": {
-                      "type": "integer",
-                      "description": "For patch mode: expected number of matching context blocks.",
-                      "default": 1
-                    },
-                    "dryRun": {
-                      "type": "boolean",
-                      "description": "For patch mode: validates patch without persisting.",
-                      "default": false
-                    },
-                    "verifyRollback": {
-                      "type": "boolean",
-                      "description": "For patch mode: applies change, verifies persistence, and automatically rolls back to original content.",
-                      "default": false
-                    }
-                  },
-                  "required": [
-                    "content"
-                  ]
-                },
-                "description": "Changes to apply to this object."
-              }
-            },
-            "required": [
-              "name",
-              "changes"
-            ]
-          },
-          "description": "Array of objects to edit, each with its own changes."
-        }
-      },
-      "required": [
-        "items"
       ]
     }
   },

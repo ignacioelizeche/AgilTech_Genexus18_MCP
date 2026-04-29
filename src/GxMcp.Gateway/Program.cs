@@ -21,7 +21,7 @@ namespace GxMcp.Gateway
 {
     class Program
     {
-        private const string McpAxiSchemaVersion = "mcp-axi/1";
+        private const string McpAxiSchemaVersion = "mcp-axi/2";
         private static WorkerProcess? _worker;
         private sealed class PendingWorkerRequest
         {
@@ -742,10 +742,35 @@ namespace GxMcp.Gateway
             return 60000;
         }
 
-        private static async Task<JObject?> ProcessMcpRequest(JObject request)
+        internal static async Task<JObject?> ProcessMcpRequest(JObject request)
         {
             string? method = request["method"]?.ToString();
             var idToken = request["id"];
+
+            // Reject removed tools early with JSON-RPC -32601 + structured `data`
+            if (string.Equals(method, "tools/call", StringComparison.OrdinalIgnoreCase))
+            {
+                string? earlyToolName = (request["params"] as JObject)?["name"]?.ToString();
+                if (!string.IsNullOrEmpty(earlyToolName) &&
+                    McpRouter.RemovedTools.TryGetValue(earlyToolName, out var removedInfo))
+                {
+                    return new JObject
+                    {
+                        ["jsonrpc"] = "2.0",
+                        ["id"] = idToken?.DeepClone(),
+                        ["error"] = new JObject
+                        {
+                            ["code"] = -32601,
+                            ["message"] = $"Method not found: {earlyToolName}",
+                            ["data"] = new JObject
+                            {
+                                ["replacedBy"] = removedInfo.ReplacedBy,
+                                ["argHint"] = removedInfo.ArgHint
+                            }
+                        }
+                    };
+                }
+            }
 
             // Protocol level
             var mcpResponse = McpRouter.Handle(request);

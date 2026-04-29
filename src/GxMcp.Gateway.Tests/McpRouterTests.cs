@@ -106,7 +106,7 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal("genexus://kb/llm-playbook", first["uri"]?.ToString());
             Assert.Equal("text/markdown", first["mimeType"]?.ToString());
             Assert.Contains("LLM CLI+MCP Playbook", first["text"]?.ToString());
-            Assert.Contains("mcp-axi/1", first["text"]?.ToString());
+            Assert.Contains("mcp-axi/2", first["text"]?.ToString());
         }
 
         [Fact]

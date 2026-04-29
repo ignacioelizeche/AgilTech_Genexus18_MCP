@@ -12,6 +12,25 @@ namespace GxMcp.Gateway
     {
         public const string ServerVersion = "1.1.7";
         public const string SupportedProtocolVersion = "2025-06-18";
+
+        public sealed class RemovedToolInfo
+        {
+            public RemovedToolInfo(string replacedBy, string argHint)
+            {
+                ReplacedBy = replacedBy;
+                ArgHint = argHint;
+            }
+            public string ReplacedBy { get; }
+            public string ArgHint { get; }
+        }
+
+        public static readonly IReadOnlyDictionary<string, RemovedToolInfo> RemovedTools =
+            new Dictionary<string, RemovedToolInfo>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["genexus_batch_read"] = new RemovedToolInfo("genexus_read", "use targets[] (array of {name, part})"),
+                ["genexus_batch_edit"] = new RemovedToolInfo("genexus_edit", "use targets[] (array of {name, changes[]})")
+            };
+
         private static readonly string[] _objectParts = { "Source", "Rules", "Events", "Variables", "Structure", "Layout", "WebForm", "PatternInstance", "PatternVirtual" };
         private static readonly string[] _analysisIncludes = { "metadata", "variables", "signature", "structure" };
         private static readonly string[] _targetLanguages = { "CSharp", "TypeScript", "Java", "Python" };
@@ -90,24 +109,51 @@ namespace GxMcp.Gateway
             }
         }
 
+        public const string McpAxiSchemaVersion = "mcp-axi/2";
+
+        private static JObject BuildInitializeResponse()
+        {
+            var removed = new JArray();
+            foreach (var kvp in RemovedTools)
+            {
+                removed.Add(new JObject
+                {
+                    ["name"] = kvp.Key,
+                    ["replacedBy"] = kvp.Value.ReplacedBy,
+                    ["argHint"] = kvp.Value.ArgHint
+                });
+            }
+
+            return new JObject
+            {
+                ["protocolVersion"] = SupportedProtocolVersion,
+                ["capabilities"] = new JObject
+                {
+                    ["prompts"] = new JObject { ["listChanged"] = false },
+                    ["tools"] = new JObject { ["listChanged"] = true },
+                    ["resources"] = new JObject { ["listChanged"] = true, ["subscribe"] = true },
+                    ["completion"] = new JObject()
+                },
+                ["serverInfo"] = new JObject
+                {
+                    ["name"] = "genexus-mcp-server",
+                    ["version"] = ServerVersion
+                },
+                ["_meta"] = new JObject
+                {
+                    ["schemaVersion"] = McpAxiSchemaVersion,
+                    ["removedTools"] = removed
+                }
+            };
+        }
+
         public static object? Handle(JObject request)
         {
             string? method = request["method"]?.ToString();
             switch (method)
             {
                 case "initialize":
-                    return new
-                    {
-                        protocolVersion = SupportedProtocolVersion,
-                        capabilities = new
-                        {
-                            prompts = new { listChanged = false },
-                            tools = new { listChanged = true },
-                            resources = new { listChanged = true, subscribe = true },
-                            completion = new { }
-                        },
-                        serverInfo = new { name = "genexus-mcp-server", version = ServerVersion }
-                    };
+                    return BuildInitializeResponse();
                 case "tools/list":
                     return new { tools = _toolDefinitions };
                 case "resources/list":
@@ -650,7 +696,7 @@ namespace GxMcp.Gateway
                 "3. For list/read operations, always set `limit`/`offset`; prefer narrow, paginated requests.\n" +
                 "4. For `genexus_query` and `genexus_list_objects`, use `fields` or `axiCompact=true` to reduce tokens.\n" +
                 "5. Parse MCP tool payload from `result.content[0].text` as JSON.\n" +
-                "6. Expect additive metadata: `meta.schemaVersion=mcp-axi/1`, `meta.tool`, plus collection helpers (`returned`, `total`, `empty`, `hasMore`, `nextOffset`) when inferable.\n" +
+                "6. Expect additive metadata: `meta.schemaVersion=mcp-axi/2`, `meta.tool`, plus collection helpers (`returned`, `total`, `empty`, `hasMore`, `nextOffset`) when inferable.\n" +
                 "7. If `result.isError=true` and `operationId` is present, treat as running operation and poll `genexus_lifecycle(action='status'|'result', target='op:<operationId>')`.\n" +
                 "8. For safe mutation flows, use patch `dryRun` first, then apply and re-read for persistence confirmation.\n\n" +
                 "Recommended bootstrap sequence:\n" +

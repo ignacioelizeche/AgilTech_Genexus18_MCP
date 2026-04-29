@@ -182,7 +182,7 @@ namespace GxMcp.Gateway.Tests
             Assert.NotNull(normalized);
 
             var obj = Assert.IsType<JObject>(normalized);
-            Assert.Equal("mcp-axi/1", obj["meta"]?["schemaVersion"]?.ToString());
+            Assert.Equal("mcp-axi/2", obj["meta"]?["schemaVersion"]?.ToString());
             Assert.Equal("genexus_query", obj["meta"]?["tool"]?.ToString());
             Assert.Equal(2, obj["returned"]?.Value<int>());
             Assert.Equal(3, obj["total"]?.Value<int>());
@@ -211,7 +211,7 @@ namespace GxMcp.Gateway.Tests
 
             var obj = Assert.IsType<JObject>(normalized);
             Assert.True(obj["noChange"]?.Value<bool>() ?? false);
-            Assert.Equal("mcp-axi/1", obj["meta"]?["schemaVersion"]?.ToString());
+            Assert.Equal("mcp-axi/2", obj["meta"]?["schemaVersion"]?.ToString());
         }
 
         [Fact]
@@ -353,7 +353,7 @@ namespace GxMcp.Gateway.Tests
             var normalized = (JToken?)method!.Invoke(null, new object?[] { payload, "genexus_list_objects", args, false });
             var obj = Assert.IsType<JObject>(normalized);
 
-            Assert.Equal("mcp-axi/1", obj["meta"]?["schemaVersion"]?.ToString());
+            Assert.Equal("mcp-axi/2", obj["meta"]?["schemaVersion"]?.ToString());
             Assert.Equal("genexus_list_objects", obj["meta"]?["tool"]?.ToString());
             Assert.Equal(2, obj["returned"]?.Value<int>());
             Assert.False(obj["empty"]?.Value<bool>() ?? true);
