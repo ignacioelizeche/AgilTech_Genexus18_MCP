@@ -21,7 +21,7 @@ namespace GxMcp.Gateway
 {
     class Program
     {
-        private const string McpAxiSchemaVersion = "mcp-axi/1";
+        private const string McpAxiSchemaVersion = "mcp-axi/2";
         private static WorkerProcess? _worker;
         private sealed class PendingWorkerRequest
         {
@@ -35,6 +35,7 @@ namespace GxMcp.Gateway
         private static ConcurrentDictionary<string, PendingWorkerRequest> _pendingRequests = new ConcurrentDictionary<string, PendingWorkerRequest>();
         private static ConcurrentDictionary<string, JObject> _semanticCache = new ConcurrentDictionary<string, JObject>();
         private static HttpSessionRegistry _httpSessions = new HttpSessionRegistry(TimeSpan.FromMinutes(10));
+        private static IdempotencyCache _idempotencyCache = new IdempotencyCache(15, 1000);
         private static readonly OperationTracker _operationTracker = new OperationTracker(TimeSpan.FromMinutes(60));
         private static int _workerWarmupStarted;
         private static readonly TimeSpan _pendingRequestRetention = TimeSpan.FromMinutes(65);
@@ -272,6 +273,9 @@ namespace GxMcp.Gateway
             Log("=== Gateway starting (Stdio Mode) ===");
             
             _httpSessions = new HttpSessionRegistry(TimeSpan.FromMinutes(config.Server?.SessionIdleTimeoutMinutes ?? 10));
+            _idempotencyCache = new IdempotencyCache(
+                config.Server?.IdempotencyTtlMinutes ?? 15,
+                config.Server?.IdempotencyCacheSize ?? 1000);
             
             // Subscribing to Configuration Changes
             Configuration.OnConfigurationChanged += (newConfig) => {
@@ -742,10 +746,35 @@ namespace GxMcp.Gateway
             return 60000;
         }
 
-        private static async Task<JObject?> ProcessMcpRequest(JObject request)
+        internal static async Task<JObject?> ProcessMcpRequest(JObject request)
         {
             string? method = request["method"]?.ToString();
             var idToken = request["id"];
+
+            // Reject removed tools early with JSON-RPC -32601 + structured `data`
+            if (string.Equals(method, "tools/call", StringComparison.OrdinalIgnoreCase))
+            {
+                string? earlyToolName = (request["params"] as JObject)?["name"]?.ToString();
+                if (!string.IsNullOrEmpty(earlyToolName) &&
+                    RemovedToolsRegistry.Map.TryGetValue(earlyToolName, out var removedInfo))
+                {
+                    return new JObject
+                    {
+                        ["jsonrpc"] = "2.0",
+                        ["id"] = idToken?.DeepClone(),
+                        ["error"] = new JObject
+                        {
+                            ["code"] = -32601,
+                            ["message"] = $"Method not found: {earlyToolName}",
+                            ["data"] = new JObject
+                            {
+                                ["replacedBy"] = removedInfo.ReplacedBy,
+                                ["argHint"] = removedInfo.ArgHint
+                            }
+                        }
+                    };
+                }
+            }
 
             // Protocol level
             var mcpResponse = McpRouter.Handle(request);
@@ -862,109 +891,144 @@ namespace GxMcp.Gateway
                         return BuildToolTextResponse(idToken, _operationTracker.BuildMetricsPayload(), isError: false, toolName: "genexus_lifecycle", toolArgs: args);
                     }
                 }
-                
-                // 1. CACHE INVALIDATION: If it's a write operation or a re-index, clear the cache
-                if (IsMutatingTool(toolName, args))
-                {
-                    Log($"[Cache] Invalidation triggered by {toolName}");
-                    _semanticCache.Clear();
-                    BroadcastResourcesListChanged($"cache_invalidated:{toolName}");
-                    BroadcastResourceUpdated("genexus://objects", $"tool:{toolName}");
-                }
 
-                // 2. SEMANTIC CACHE: Try to get from cache for read-only tools
-                string cacheKey = $"{toolName}:{args?.ToString(Formatting.None)}";
-                if (_semanticCache.TryGetValue(cacheKey, out var cachedResponse))
+                // Idempotency middleware wraps the rest of the tool dispatch
+                string activeKbPath = _activeConfig?.Environment?.KBPath ?? "";
+                var idempotencyMiddleware = new IdempotencyMiddleware(_idempotencyCache, activeKbPath);
+                var toolCallParams = request["params"] as JObject ?? new JObject();
+
+                // Inner dispatch: returns { isError, content } (tool result payload, no JSON-RPC envelope)
+                async Task<JObject> DispatchCore(JObject tcParams)
                 {
-                    Log($"[Cache] HIT for {toolName}");
-                    var cloned = cachedResponse.DeepClone() as JObject;
-                    if (cloned != null) {
-                        cloned["id"] = idToken?.DeepClone();
-                        return cloned;
+                    string tName = tcParams["name"]?.ToString() ?? "";
+                    var tArgs = tcParams["arguments"] as JObject;
+
+                    // 1. CACHE INVALIDATION: If it's a write operation or a re-index, clear the cache
+                    if (IsMutatingTool(tName, tArgs))
+                    {
+                        Log($"[Cache] Invalidation triggered by {tName}");
+                        _semanticCache.Clear();
+                        BroadcastResourcesListChanged($"cache_invalidated:{tName}");
+                        BroadcastResourceUpdated("genexus://objects", $"tool:{tName}");
                     }
-                }
 
-                object? rawWorkerCmd = null;
-                if (string.Equals(toolName, "genexus_open_kb", StringComparison.OrdinalIgnoreCase))
-                {
-                    rawWorkerCmd = new
+                    // 2. SEMANTIC CACHE: Try to get from cache for read-only tools
+                    string cKey = $"{tName}:{tArgs?.ToString(Formatting.None)}";
+                    if (_semanticCache.TryGetValue(cKey, out var cachedResponse))
                     {
-                        module = "KB",
-                        action = "Open",
-                        target = args?["path"]?.ToString()
-                    };
-                }
-                else if (string.Equals(toolName, "genexus_export_object", StringComparison.OrdinalIgnoreCase))
-                {
-                    rawWorkerCmd = new
-                    {
-                        module = "Object",
-                        action = "ExportText",
-                        target = args?["name"]?.ToString(),
-                        path = args?["outputPath"]?.ToString(),
-                        part = args?["part"]?.ToString() ?? "Source",
-                        type = args?["type"]?.ToString(),
-                        overwrite = args?["overwrite"]?.ToObject<bool?>() ?? false
-                    };
-                }
-                else if (string.Equals(toolName, "genexus_import_object", StringComparison.OrdinalIgnoreCase))
-                {
-                    rawWorkerCmd = new
-                    {
-                        module = "Object",
-                        action = "ImportText",
-                        target = args?["name"]?.ToString(),
-                        path = args?["inputPath"]?.ToString(),
-                        part = args?["part"]?.ToString() ?? "Source",
-                        type = args?["type"]?.ToString()
-                    };
-                }
+                        Log($"[Cache] HIT for {tName}");
+                        var cached = cachedResponse["result"] as JObject;
+                        if (cached != null) return (JObject)cached.DeepClone();
+                    }
 
-                rawWorkerCmd ??= McpRouter.ConvertToolCall(request);
-                var workerCmd = rawWorkerCmd != null ? JObject.FromObject(rawWorkerCmd) : null;
-                if (workerCmd != null)
-                {
+                    // Rebuild full request so ConvertToolCall works
+                    var fullReq = new JObject
+                    {
+                        ["method"] = "tools/call",
+                        ["params"] = tcParams
+                    };
+
+                    object? rawWorkerCmd = null;
+                    if (string.Equals(tName, "genexus_open_kb", StringComparison.OrdinalIgnoreCase))
+                    {
+                        rawWorkerCmd = new
+                        {
+                            module = "KB",
+                            action = "Open",
+                            target = tArgs?["path"]?.ToString()
+                        };
+                    }
+                    else if (string.Equals(tName, "genexus_export_object", StringComparison.OrdinalIgnoreCase))
+                    {
+                        rawWorkerCmd = new
+                        {
+                            module = "Object",
+                            action = "ExportText",
+                            target = tArgs?["name"]?.ToString(),
+                            path = tArgs?["outputPath"]?.ToString(),
+                            part = tArgs?["part"]?.ToString() ?? "Source",
+                            type = tArgs?["type"]?.ToString(),
+                            overwrite = tArgs?["overwrite"]?.ToObject<bool?>() ?? false
+                        };
+                    }
+                    else if (string.Equals(tName, "genexus_import_object", StringComparison.OrdinalIgnoreCase))
+                    {
+                        rawWorkerCmd = new
+                        {
+                            module = "Object",
+                            action = "ImportText",
+                            target = tArgs?["name"]?.ToString(),
+                            path = tArgs?["inputPath"]?.ToString(),
+                            part = tArgs?["part"]?.ToString() ?? "Source",
+                            type = tArgs?["type"]?.ToString()
+                        };
+                    }
+
+                    try
+                    {
+                        rawWorkerCmd ??= McpRouter.ConvertToolCall(fullReq);
+                    }
+                    catch (UsageException ux)
+                    {
+                        // Return as error result (not JSON-RPC level — that happens in wrapper below)
+                        return new JObject
+                        {
+                            ["isError"] = true,
+                            ["usageException"] = true,
+                            ["code"] = -32602,
+                            ["message"] = ux.Message,
+                            ["usageCode"] = ux.Code
+                        };
+                    }
+
+                    var workerCmd = rawWorkerCmd != null ? JObject.FromObject(rawWorkerCmd) : null;
+                    if (workerCmd == null)
+                    {
+                        return new JObject { ["isError"] = true, ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = "{}" } } };
+                    }
+
                     workerCmd["client"] = "mcp";
-                    int timeoutMs = GetToolTimeoutMs(toolName, args);
+                    int timeoutMs = GetToolTimeoutMs(tName, tArgs);
 
-                    return await SendWorkerCommandAsync(
+                    JObject? innerResult = null;
+                    innerResult = await SendWorkerCommandAsync(
                         workerCmd,
                         timeoutMs,
-                        $"Timeout waiting for tool: {toolName}",
+                        $"Timeout waiting for tool: {tName}",
                         resultObj =>
                         {
                             JToken? finalResult = null;
                             try {
-                                finalResult = TruncateResponseIfNeeded(resultObj["result"] ?? resultObj["error"], toolName);
+                                finalResult = TruncateResponseIfNeeded(resultObj["result"] ?? resultObj["error"], tName);
                             } catch (Exception exTrunc) {
                                 Log($"[Gateway] Error during truncation: {exTrunc.Message}");
                                 finalResult = resultObj["result"] ?? resultObj["error"];
                             }
 
-                            bool isError = resultObj["error"] != null || string.Equals(resultObj["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
-                            JToken axiPayload = NormalizeToolPayloadForAxi(finalResult, toolName, args, isError);
+                            bool isErr = resultObj["error"] != null || string.Equals(resultObj["status"]?.ToString(), "Error", StringComparison.OrdinalIgnoreCase);
+                            JToken axiPayload = NormalizeToolPayloadForAxi(finalResult, tName, tArgs, isErr);
 
-                            var response = new JObject
+                            var toolResult = new JObject
                             {
-                                ["jsonrpc"] = "2.0",
-                                ["id"] = idToken?.DeepClone(),
-                                ["result"] = JToken.FromObject(new
-                                {
-                                    content = new[] { new { type = "text", text = axiPayload.ToString(Formatting.None) } },
-                                    isError
-                                })
+                                ["isError"] = isErr,
+                                ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = axiPayload.ToString(Formatting.None) } }
                             };
 
-                            if (!isError && !toolName.Contains("write") && !toolName.Contains("patch"))
+                            if (!isErr && !tName.Contains("write") && !tName.Contains("patch"))
                             {
-                                _semanticCache[cacheKey] = response;
+                                // Store full envelope in semantic cache (rebuilt on hit above)
+                                _semanticCache[cKey] = new JObject
+                                {
+                                    ["jsonrpc"] = "2.0",
+                                    ["result"] = toolResult
+                                };
                             }
 
-                            return response;
+                            return toolResult;
                         },
                         (operationId, correlationId) =>
                         {
-                            string message = $"GeneXus MCP Worker timed out executing tool: {toolName}.";
+                            string message = $"GeneXus MCP Worker timed out executing tool: {tName}.";
                             var timeoutPayload = new JObject
                             {
                                 ["status"] = "Running",
@@ -986,31 +1050,73 @@ namespace GxMcp.Gateway
                             }
                             timeoutPayload["help"] = help;
 
-                            JToken axiPayload = NormalizeToolPayloadForAxi(timeoutPayload, toolName, args, true);
+                            JToken axiPayload = NormalizeToolPayloadForAxi(timeoutPayload, tName, tArgs, true);
                             return new JObject
                             {
-                                ["jsonrpc"] = "2.0",
-                                ["id"] = idToken?.DeepClone(),
-                                ["result"] = JToken.FromObject(new
-                                {
-                                    content = new[] { new { type = "text", text = axiPayload.ToString(Formatting.None) } },
-                                    isError = true
-                                })
+                                ["isError"] = true,
+                                ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = axiPayload.ToString(Formatting.None) } }
                             };
                         },
-                        toolName: toolName,
-                        toolArgs: args,
+                        toolName: tName,
+                        toolArgs: tArgs,
                         trackOperation: true);
+
+                    return innerResult ?? new JObject { ["isError"] = true };
                 }
+
+                JObject toolInnerResult;
+                try
+                {
+                    toolInnerResult = await idempotencyMiddleware.Invoke(toolCallParams, DispatchCore);
+                }
+                catch (UsageException ux)
+                {
+                    return new JObject
+                    {
+                        ["jsonrpc"] = "2.0",
+                        ["id"] = idToken?.DeepClone(),
+                        ["error"] = new JObject
+                        {
+                            ["code"] = -32602,
+                            ["message"] = ux.Message,
+                            ["data"] = new JObject { ["usageCode"] = ux.Code }
+                        }
+                    };
+                }
+
+                // Handle UsageException surfaced from DispatchCore as a result object
+                if (toolInnerResult["usageException"]?.ToObject<bool>() == true)
+                {
+                    return new JObject
+                    {
+                        ["jsonrpc"] = "2.0",
+                        ["id"] = idToken?.DeepClone(),
+                        ["error"] = new JObject
+                        {
+                            ["code"] = toolInnerResult["code"]?.ToObject<int?>() ?? -32602,
+                            ["message"] = toolInnerResult["message"]?.ToString() ?? "Usage error",
+                            ["data"] = new JObject { ["usageCode"] = toolInnerResult["usageCode"]?.ToString() }
+                        }
+                    };
+                }
+
+                // Wrap tool result in JSON-RPC envelope
+                return new JObject
+                {
+                    ["jsonrpc"] = "2.0",
+                    ["id"] = idToken?.DeepClone(),
+                    ["result"] = toolInnerResult
+                };
             }
 
             // Explicitly return an error for unknown tools if convert failed
             if (method == "tools/call")
             {
-                return new JObject { 
-                    ["jsonrpc"] = "2.0", 
-                    ["id"] = idToken?.DeepClone(), 
-                    ["error"] = JToken.FromObject(new { code = -32601, message = "Method not found or could not be converted." }) 
+                string fallbackToolName = (request["params"] as JObject)?["name"]?.ToString() ?? "";
+                return new JObject {
+                    ["jsonrpc"] = "2.0",
+                    ["id"] = idToken?.DeepClone(),
+                    ["error"] = JToken.FromObject(new { code = -32601, message = $"Method not found: {fallbackToolName}" })
                 };
             }
             

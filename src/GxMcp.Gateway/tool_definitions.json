@@ -64,13 +64,18 @@
   },
   {
     "name": "genexus_read",
-    "description": "Reads source/metadata parts. Use after discovery (query/list) and keep reads paginated with offset/limit. Supports parts like Source, Rules, Events, Layout, WebForm, PatternInstance, and PatternVirtual.",
+    "description": "Reads source/metadata parts. Use after discovery (query/list) and keep reads paginated with offset/limit. Supports parts like Source, Rules, Events, Layout, WebForm, PatternInstance, and PatternVirtual. Use 'name' for a single object, or 'targets' (plural) for batch reads. The two are mutually exclusive.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
-          "description": "Object name."
+          "description": "Single object name. Mutually exclusive with 'targets'."
+        },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Plural form: list of object names for batch read. Mutually exclusive with 'name'."
         },
         "part": {
           "type": "string",
@@ -89,47 +94,12 @@
           "type": "string",
           "description": "Optional object type (e.g., 'Procedure', 'File') to resolve name collisions."
         }
-      },
-      "required": [
-        "name"
-      ]
-    }
-  },
-  {
-    "name": "genexus_batch_read",
-    "description": "Reads source code from multiple objects in a single call. Drastically improves context-gathering speed.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Object name."
-              },
-              "part": {
-                "type": "string",
-                "description": "Part (Source, Rules, Events).",
-                "default": "Source"
-              }
-            },
-            "required": [
-              "name"
-            ]
-          }
-        }
-      },
-      "required": [
-        "items"
-      ]
+      }
     }
   },
   {
     "name": "genexus_edit",
-    "description": "Mutation tool for source/metadata. Prefer mode='patch' with dryRun=true + expectedCount before applying changes. Use mode='full' only for intentional full overwrite.",
+    "description": "Mutation tool for source/metadata. Prefer mode='patch' with dryRun=true + expectedCount before applying changes. Use mode='full' only for intentional full overwrite. Use mode='ops' to apply a list of structural semantic operations (set_attribute, add_attribute, remove_attribute, add_rule, remove_rule, set_property) against a single part XML. Use 'name' for a single edit, or 'targets' (plural) for batch edits across one or many objects. The two are mutually exclusive.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -146,13 +116,49 @@
           "type": "string",
           "enum": [
             "full",
-            "patch"
+            "patch",
+            "ops"
           ],
           "description": "Edit mode."
         },
         "content": {
           "type": "string",
           "description": "New code or patch content."
+        },
+        "ops": {
+          "type": "array",
+          "description": "For mode='ops': list of semantic operations applied to the resolved part XML.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "description": "Operation name (set_attribute, add_attribute, remove_attribute, add_rule, remove_rule, set_property)."
+              }
+            },
+            "required": [
+              "op"
+            ]
+          }
+        },
+        "patch": {
+          "oneOf": [
+            { "type": "string", "description": "legacy text patch (passed to PatchService)" },
+            {
+              "type": "array",
+              "description": "JSON-Patch RFC 6902 ops applied over canonical JSON",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "op": { "type": "string", "description": "Operation name (add, remove, replace, test)." },
+                  "path": { "type": "string", "description": "JSON Pointer (RFC 6901) to the target location." },
+                  "value": { "description": "Value for add/replace/test ops." }
+                },
+                "required": ["op", "path"]
+              }
+            }
+          ],
+          "description": "string = legacy text patch; array = JSON-Patch (RFC 6902). Used when mode='patch'."
         },
         "context": {
           "type": "string",
@@ -182,11 +188,15 @@
           "description": "For patch mode: applies the patch, verifies persisted content, then automatically restores the original content and verifies the rollback.",
           "default": false
         },
-        "changes": {
+        "targets": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
+              "name": {
+                "type": "string",
+                "description": "Object name for this target."
+              },
               "part": {
                 "type": "string"
               },
@@ -228,107 +238,17 @@
               }
             },
             "required": [
+              "name",
               "content"
             ]
           },
-          "description": "Batch of changes to apply to this object."
+          "description": "Plural form: list of edit requests across one or many objects. Mutually exclusive with 'name'."
         },
         "type": {
           "type": "string",
           "description": "Optional object type to resolve name collisions."
         }
-      },
-      "required": [
-        "name"
-      ]
-    }
-  },
-  {
-    "name": "genexus_batch_edit",
-    "description": "Applies edits across multiple objects in a single call. Each item specifies a target object and an array of changes (patch or full). More efficient than multiple genexus_edit calls.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "Target object name."
-              },
-              "changes": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "part": {
-                      "type": "string",
-                      "description": "Part name (Source, Rules, Events).",
-                      "default": "Source"
-                    },
-                    "mode": {
-                      "type": "string",
-                      "enum": [
-                        "full",
-                        "patch"
-                      ],
-                      "description": "Edit mode.",
-                      "default": "patch"
-                    },
-                    "content": {
-                      "type": "string",
-                      "description": "New code or patch content."
-                    },
-                    "context": {
-                      "type": "string",
-                      "description": "For patch mode: exact text to replace."
-                    },
-                    "operation": {
-                      "type": "string",
-                      "enum": [
-                        "Replace",
-                        "Insert_After",
-                        "Append"
-                      ],
-                      "description": "Patch operation.",
-                      "default": "Replace"
-                    },
-                    "expectedCount": {
-                      "type": "integer",
-                      "description": "For patch mode: expected number of matching context blocks.",
-                      "default": 1
-                    },
-                    "dryRun": {
-                      "type": "boolean",
-                      "description": "For patch mode: validates patch without persisting.",
-                      "default": false
-                    },
-                    "verifyRollback": {
-                      "type": "boolean",
-                      "description": "For patch mode: applies change, verifies persistence, and automatically rolls back to original content.",
-                      "default": false
-                    }
-                  },
-                  "required": [
-                    "content"
-                  ]
-                },
-                "description": "Changes to apply to this object."
-              }
-            },
-            "required": [
-              "name",
-              "changes"
-            ]
-          },
-          "description": "Array of objects to edit, each with its own changes."
-        }
-      },
-      "required": [
-        "items"
-      ]
+      }
     }
   },
   {

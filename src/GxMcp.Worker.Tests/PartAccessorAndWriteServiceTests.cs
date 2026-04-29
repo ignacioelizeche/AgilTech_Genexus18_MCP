@@ -1,3 +1,4 @@
+using GxMcp.Worker;
 using GxMcp.Worker.Structure;
 using GxMcp.Worker.Services;
 using Newtonsoft.Json.Linq;
@@ -7,6 +8,106 @@ namespace GxMcp.Worker.Tests
 {
     public class PartAccessorAndWriteServiceTests
     {
+        private static WriteService BuildIsolatedWriteService()
+        {
+            var indexCache = new IndexCacheService();
+            var build = new BuildService();
+            var kb = new KbService(indexCache);
+            kb.SetBuildService(build);
+            build.SetKbService(kb);
+            indexCache.SetBuildService(build);
+            var obj = new ObjectService(kb, build);
+            return new WriteService(obj);
+        }
+
+        [Fact]
+        public void ApplySemanticOps_RejectsMissingTarget()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse("{\"ops\":[{\"op\":\"set_attribute\",\"name\":\"X\"}]}");
+            string result = ws.ApplySemanticOps(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("target", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplySemanticOps_RejectsMissingOps()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse("{\"target\":\"Customer\"}");
+            string result = ws.ApplySemanticOps(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("ops", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplySemanticOps_NoKb_ReportsObjectNotFound()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse(
+                "{\"target\":\"Customer\",\"part\":\"Structure\"," +
+                "\"ops\":[{\"op\":\"set_attribute\",\"name\":\"X\",\"type\":\"Numeric(8.0)\"}]}");
+            string result = ws.ApplySemanticOps(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("not found", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplyJsonPatch_RejectsMissingTarget()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse("{\"part\":\"Structure\",\"patch\":[{\"op\":\"replace\",\"path\":\"/description\",\"value\":\"x\"}]}");
+            string result = ws.ApplyJsonPatch(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("target", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplyJsonPatch_RejectsMissingPart()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse("{\"target\":\"Customer\",\"patch\":[{\"op\":\"replace\",\"path\":\"/description\",\"value\":\"x\"}]}");
+            string result = ws.ApplyJsonPatch(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("part", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplyJsonPatch_RejectsMissingPatch()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse("{\"target\":\"Customer\",\"part\":\"Structure\"}");
+            string result = ws.ApplyJsonPatch(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("patch", json["error"]?["message"]?.ToString());
+        }
+
+        [Fact]
+        public void ApplyJsonPatch_NoKb_ReportsObjectNotFound()
+        {
+            var ws = BuildIsolatedWriteService();
+            var req = JObject.Parse(
+                "{\"target\":\"Customer\",\"part\":\"Structure\"," +
+                "\"patch\":[{\"op\":\"replace\",\"path\":\"/description\",\"value\":\"x\"}]}");
+            string result = ws.ApplyJsonPatch(req);
+            var json = JObject.Parse(result);
+            Assert.True(json["isError"]?.ToObject<bool>());
+            Assert.Equal("usage_error", json["error"]?["code"]?.ToString());
+            Assert.Contains("not found", json["error"]?["message"]?.ToString());
+        }
+
         [Theory]
         [InlineData("Events", "Events", true)]
         [InlineData("Events", "Source", false)]
