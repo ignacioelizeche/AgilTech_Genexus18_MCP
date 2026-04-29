@@ -64,13 +64,18 @@
   },
   {
     "name": "genexus_read",
-    "description": "Reads source/metadata parts. Use after discovery (query/list) and keep reads paginated with offset/limit. Supports parts like Source, Rules, Events, Layout, WebForm, PatternInstance, and PatternVirtual.",
+    "description": "Reads source/metadata parts. Use after discovery (query/list) and keep reads paginated with offset/limit. Supports parts like Source, Rules, Events, Layout, WebForm, PatternInstance, and PatternVirtual. Use 'name' for a single object, or 'targets' (plural) for batch reads. The two are mutually exclusive.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
-          "description": "Object name."
+          "description": "Single object name. Mutually exclusive with 'targets'."
+        },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Plural form: list of object names for batch read. Mutually exclusive with 'name'."
         },
         "part": {
           "type": "string",
@@ -89,15 +94,12 @@
           "type": "string",
           "description": "Optional object type (e.g., 'Procedure', 'File') to resolve name collisions."
         }
-      },
-      "required": [
-        "name"
-      ]
+      }
     }
   },
   {
     "name": "genexus_edit",
-    "description": "Mutation tool for source/metadata. Prefer mode='patch' with dryRun=true + expectedCount before applying changes. Use mode='full' only for intentional full overwrite.",
+    "description": "Mutation tool for source/metadata. Prefer mode='patch' with dryRun=true + expectedCount before applying changes. Use mode='full' only for intentional full overwrite. Use 'name' for a single edit, or 'targets' (plural) for batch edits across one or many objects. The two are mutually exclusive.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -150,11 +152,15 @@
           "description": "For patch mode: applies the patch, verifies persisted content, then automatically restores the original content and verifies the rollback.",
           "default": false
         },
-        "changes": {
+        "targets": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
+              "name": {
+                "type": "string",
+                "description": "Object name for this target."
+              },
               "part": {
                 "type": "string"
               },
@@ -196,19 +202,17 @@
               }
             },
             "required": [
+              "name",
               "content"
             ]
           },
-          "description": "Batch of changes to apply to this object."
+          "description": "Plural form: list of edit requests across one or many objects. Mutually exclusive with 'name'."
         },
         "type": {
           "type": "string",
           "description": "Optional object type to resolve name collisions."
         }
-      },
-      "required": [
-        "name"
-      ]
+      }
     }
   },
   {

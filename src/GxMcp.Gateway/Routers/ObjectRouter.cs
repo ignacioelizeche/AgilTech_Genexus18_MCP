@@ -21,24 +21,49 @@ namespace GxMcp.Gateway.Routers
                     };
 
                 case "genexus_read":
-                    return new { 
-                        module = "Read", 
-                        action = "ExtractSource", 
-                        target = target, 
+                {
+                    var targetsTokRead = args?["targets"];
+                    bool hasTargetsRead = targetsTokRead is JArray;
+                    bool hasNameRead = !string.IsNullOrEmpty(target);
+                    if (hasNameRead && hasTargetsRead)
+                        throw new UsageException("usage_error", "name and targets are mutually exclusive");
+                    if (hasTargetsRead)
+                    {
+                        return new {
+                            module = "Batch",
+                            action = "BatchRead",
+                            items = (JArray)targetsTokRead!,
+                            part = part
+                        };
+                    }
+                    return new {
+                        module = "Read",
+                        action = "ExtractSource",
+                        target = target,
                         part = part,
                         offset = args?["offset"]?.ToObject<int?>(),
                         limit = args?["limit"]?.ToObject<int?>(),
                         type = args?["type"]?.ToString()
                     };
+                }
 
                 case "genexus_edit":
+                {
                     if (args?["changes"] != null)
+                        throw new UsageException("usage_error", "argument 'changes' removed in v2.0.0; use 'targets' instead");
+
+                    var targetsTokEdit = args?["targets"];
+                    bool hasTargetsEdit = targetsTokEdit is JArray;
+                    bool hasNameEdit = !string.IsNullOrEmpty(target);
+                    if (hasNameEdit && hasTargetsEdit)
+                        throw new UsageException("usage_error", "name and targets are mutually exclusive");
+                    if (hasTargetsEdit)
                     {
-                        return new { 
-                            module = "Batch", 
-                            action = "BatchEdit", 
-                            target = target,
-                            changes = args["changes"]
+                        return new {
+                            module = "Batch",
+                            action = "MultiEdit",
+                            items = (JArray)targetsTokEdit!,
+                            dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                         };
                     }
 
@@ -69,7 +94,8 @@ namespace GxMcp.Gateway.Routers
                             dryRun = args?["dryRun"]?.ToObject<bool?>() ?? false
                         };
                     }
-                
+                }
+
                 // Aliases legados (escondidos mas funcionais para a Gateway interna se necessário)
                 case "genexus_read_source":
                     return new { module = "Read", action = "ExtractSource", target = target, part = part };

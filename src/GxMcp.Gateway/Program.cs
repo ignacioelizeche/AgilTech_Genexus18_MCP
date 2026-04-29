@@ -945,7 +945,24 @@ namespace GxMcp.Gateway
                     };
                 }
 
-                rawWorkerCmd ??= McpRouter.ConvertToolCall(request);
+                try
+                {
+                    rawWorkerCmd ??= McpRouter.ConvertToolCall(request);
+                }
+                catch (UsageException ux)
+                {
+                    return new JObject
+                    {
+                        ["jsonrpc"] = "2.0",
+                        ["id"] = idToken?.DeepClone(),
+                        ["error"] = new JObject
+                        {
+                            ["code"] = -32602,
+                            ["message"] = ux.Message,
+                            ["data"] = new JObject { ["code"] = ux.Code }
+                        }
+                    };
+                }
                 var workerCmd = rawWorkerCmd != null ? JObject.FromObject(rawWorkerCmd) : null;
                 if (workerCmd != null)
                 {
