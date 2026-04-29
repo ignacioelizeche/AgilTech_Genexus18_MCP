@@ -111,30 +111,7 @@ namespace GxMcp.Worker.Services
             string newXml = new SemanticOpsService().Apply(currentXml, kind, ops);
 
             if (dryRun)
-            {
-                var planResp = new JObject
-                {
-                    ["isError"] = false,
-                    ["meta"] = new JObject
-                    {
-                        ["dryRun"] = true,
-                        ["tool"] = "genexus_edit",
-                        ["mode"] = "ops"
-                    },
-                    ["plan"] = new JObject
-                    {
-                        ["touchedObjects"] = new JArray(new JObject
-                        {
-                            ["type"] = kind,
-                            ["name"] = target,
-                            ["part"] = partName,
-                            ["op"] = "modify"
-                        }),
-                        ["xmlDiff"] = (JValue)JValue.CreateNull()
-                    }
-                };
-                return planResp.ToString(Newtonsoft.Json.Formatting.None);
-            }
+                return DryRunPlanBuilder.BuildEnvelope(target, currentXml, newXml, "ops").ToString(Newtonsoft.Json.Formatting.None);
 
             string writeResult = WriteObject(target, partName, newXml, null, false, false, false, false);
             JObject writeJson;
@@ -229,30 +206,7 @@ namespace GxMcp.Worker.Services
             string newXml = new JsonPatchService().Apply(currentXml, kind, patchArr);
 
             if (dryRun)
-            {
-                var planResp = new JObject
-                {
-                    ["isError"] = false,
-                    ["meta"] = new JObject
-                    {
-                        ["dryRun"] = true,
-                        ["tool"] = "genexus_edit",
-                        ["mode"] = "patch"
-                    },
-                    ["plan"] = new JObject
-                    {
-                        ["touchedObjects"] = new JArray(new JObject
-                        {
-                            ["type"] = kind,
-                            ["name"] = target,
-                            ["part"] = partName,
-                            ["op"] = "modify"
-                        }),
-                        ["xmlDiff"] = (JValue)JValue.CreateNull()
-                    }
-                };
-                return planResp.ToString(Newtonsoft.Json.Formatting.None);
-            }
+                return DryRunPlanBuilder.BuildEnvelope(target, currentXml, newXml, "patch").ToString(Newtonsoft.Json.Formatting.None);
 
             string writeResult = WriteObject(target, partName, newXml, null, false, false, false, false);
             JObject writeJson;

@@ -157,6 +157,12 @@ namespace GxMcp.Worker.Services
             catch (Exception ex) { return McpResponse.Error("RestorePatternSnapshot failed", target, "PatternInstance", ex.Message); }
         }
 
+        public List<BrokenRef> AnalyzeImpact(string targetName, string afterXml)
+        {
+            // TODO Phase 3.5+: implement reference scan.
+            return new List<BrokenRef>();
+        }
+
         private List<string> ExtractMissingAttributes(string expression, HashSet<string> known)
         {
             var missing = new List<string>();
