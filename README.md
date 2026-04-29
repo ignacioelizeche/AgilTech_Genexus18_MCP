@@ -103,12 +103,16 @@ Notes:
 ## 🛠️ Tool Surface (Skills)
 *(See `GEMINI.md` for extended guidelines).* The worker natively exposes the following tools to the MCP Router:
 
-- **Search & Discovery**: `genexus_query`, `genexus_read`, `genexus_batch_read`, `genexus_inspect`, `genexus_list_objects`, `genexus_properties`
-- **Editing & Architecture**: `genexus_edit`, `genexus_batch_edit`, `genexus_create_object`, `genexus_refactor`, `genexus_forge`
+- **Search & Discovery**: `genexus_query`, `genexus_read`, `genexus_inspect`, `genexus_list_objects`, `genexus_properties`
+- **Editing & Architecture**: `genexus_edit`, `genexus_create_object`, `genexus_refactor`, `genexus_forge`
 - **Analysis:** `genexus_analyze`, `genexus_inject_context`, `genexus_doc`, `genexus_explain_code`, `genexus_summarize`
 - **File System & Assets**: `genexus_asset`, `genexus_export_object`, `genexus_import_object`
 - **History & DB**: `genexus_history`, `genexus_get_sql`, `genexus_structure`
 - **Native Layout SDK**: `genexus_layout` (`get_tree`, `find_controls`, `set_property`, `set_properties`, `rename_printblock`, `add_printblock`, `get_preview`, `scan_mutators`)
+
+> **`genexus_edit` modes:** `xml` (default — full XML replacement), `ops` (typed semantic op catalog: `set_attribute`, `add_attribute`, `remove_attribute`, `add_rule`, `remove_rule`, `set_property`), `patch` (JSON-Patch RFC 6902 array over canonical JSON object; legacy string-form patch also accepted for backward compatibility).
+>
+> **All write tools** accept `dryRun: true` (returns a preview `plan` envelope without mutating the KB) and `idempotencyKey` (safe retries — concurrent calls with same key are coalesced; results cached for 15 min by default).
 
 Layout color note:
 - For `ForeColor`, `BackColor`, `BorderColor`, send color values as palette names (`Black`, `Blue`, `Red`, `Transparent`) or RGB token (`R; G; B|`) to avoid nested SDK wrappers.
@@ -119,10 +123,14 @@ Layout color note:
 
 For `tools/call`, the gateway keeps MCP compatibility and adds lightweight response metadata:
 
-- `meta.schemaVersion` currently `mcp-axi/1`
-- `meta.tool` with the normalized tool name
+- `_meta.schemaVersion` currently `mcp-axi/2`
+- `_meta.tool` with the normalized tool name
 - collection helpers such as `returned`, `total`, `empty`, and (when inferable) `hasMore` and `nextOffset`
-- truncation signals via `meta.truncated` plus contextual `help`
+- truncation signals via `_meta.truncated` plus contextual `help`
+- `_meta.idempotent: true` on cache-hit responses
+- `_meta.batched: true` on `targets[]` multi-object responses
+- `_meta.dryRun: true` on dry-run preview responses
+- `_meta.removedTools` advertised on `initialize` for proactive agent detection of removed tools
 
 For list-heavy calls (`genexus_query`, `genexus_list_objects`), optional arguments can reduce token usage:
 
