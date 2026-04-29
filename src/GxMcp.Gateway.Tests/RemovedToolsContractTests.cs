@@ -65,11 +65,13 @@ namespace GxMcp.Gateway.Tests
             Assert.Contains("genexus_batch_read", names);
             Assert.Contains("genexus_batch_edit", names);
 
-            foreach (var entry in removed!)
-            {
-                Assert.False(string.IsNullOrWhiteSpace(entry?["replacedBy"]?.ToString()));
-                Assert.False(string.IsNullOrWhiteSpace(entry?["argHint"]?.ToString()));
-            }
+            var batchReadEntry = removed!.OfType<JObject>().Single(e => e["name"]?.ToString() == "genexus_batch_read");
+            var batchEditEntry = removed!.OfType<JObject>().Single(e => e["name"]?.ToString() == "genexus_batch_edit");
+
+            Assert.Equal(RemovedToolsRegistry.Map["genexus_batch_read"].ReplacedBy, batchReadEntry["replacedBy"]?.ToString());
+            Assert.Equal(RemovedToolsRegistry.Map["genexus_batch_read"].ArgHint, batchReadEntry["argHint"]?.ToString());
+            Assert.Equal(RemovedToolsRegistry.Map["genexus_batch_edit"].ReplacedBy, batchEditEntry["replacedBy"]?.ToString());
+            Assert.Equal(RemovedToolsRegistry.Map["genexus_batch_edit"].ArgHint, batchEditEntry["argHint"]?.ToString());
         }
 
         [Fact]
@@ -97,8 +99,8 @@ namespace GxMcp.Gateway.Tests
             Assert.Equal(-32601, (int)error!["code"]!);
             var data = error["data"] as JObject;
             Assert.NotNull(data);
-            Assert.Equal("genexus_read", data!["replacedBy"]?.ToString());
-            Assert.False(string.IsNullOrWhiteSpace(data["argHint"]?.ToString()));
+            Assert.Equal(RemovedToolsRegistry.Map["genexus_batch_read"].ReplacedBy, data!["replacedBy"]?.ToString());
+            Assert.Equal(RemovedToolsRegistry.Map["genexus_batch_read"].ArgHint, data["argHint"]?.ToString());
         }
     }
 }

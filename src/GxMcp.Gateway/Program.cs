@@ -752,7 +752,7 @@ namespace GxMcp.Gateway
             {
                 string? earlyToolName = (request["params"] as JObject)?["name"]?.ToString();
                 if (!string.IsNullOrEmpty(earlyToolName) &&
-                    McpRouter.RemovedTools.TryGetValue(earlyToolName, out var removedInfo))
+                    RemovedToolsRegistry.Map.TryGetValue(earlyToolName, out var removedInfo))
                 {
                     return new JObject
                     {
@@ -1032,10 +1032,11 @@ namespace GxMcp.Gateway
             // Explicitly return an error for unknown tools if convert failed
             if (method == "tools/call")
             {
-                return new JObject { 
-                    ["jsonrpc"] = "2.0", 
-                    ["id"] = idToken?.DeepClone(), 
-                    ["error"] = JToken.FromObject(new { code = -32601, message = "Method not found or could not be converted." }) 
+                string fallbackToolName = (request["params"] as JObject)?["name"]?.ToString() ?? "";
+                return new JObject {
+                    ["jsonrpc"] = "2.0",
+                    ["id"] = idToken?.DeepClone(),
+                    ["error"] = JToken.FromObject(new { code = -32601, message = $"Method not found: {fallbackToolName}" })
                 };
             }
             

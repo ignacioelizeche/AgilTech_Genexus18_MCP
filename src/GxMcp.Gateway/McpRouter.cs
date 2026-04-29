@@ -13,24 +13,6 @@ namespace GxMcp.Gateway
         public const string ServerVersion = "1.1.7";
         public const string SupportedProtocolVersion = "2025-06-18";
 
-        public sealed class RemovedToolInfo
-        {
-            public RemovedToolInfo(string replacedBy, string argHint)
-            {
-                ReplacedBy = replacedBy;
-                ArgHint = argHint;
-            }
-            public string ReplacedBy { get; }
-            public string ArgHint { get; }
-        }
-
-        public static readonly IReadOnlyDictionary<string, RemovedToolInfo> RemovedTools =
-            new Dictionary<string, RemovedToolInfo>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["genexus_batch_read"] = new RemovedToolInfo("genexus_read", "use targets[] (array of {name, part})"),
-                ["genexus_batch_edit"] = new RemovedToolInfo("genexus_edit", "use targets[] (array of {name, changes[]})")
-            };
-
         private static readonly string[] _objectParts = { "Source", "Rules", "Events", "Variables", "Structure", "Layout", "WebForm", "PatternInstance", "PatternVirtual" };
         private static readonly string[] _analysisIncludes = { "metadata", "variables", "signature", "structure" };
         private static readonly string[] _targetLanguages = { "CSharp", "TypeScript", "Java", "Python" };
@@ -114,7 +96,7 @@ namespace GxMcp.Gateway
         private static JObject BuildInitializeResponse()
         {
             var removed = new JArray();
-            foreach (var kvp in RemovedTools)
+            foreach (var kvp in RemovedToolsRegistry.Map)
             {
                 removed.Add(new JObject
                 {
