@@ -1,3 +1,6 @@
+# this is a Fork of the repository: https://github.com/lennix1337/Genexus18MCP# 
+
+
 # GeneXus 18 MCP Server (Genexus18MCP)
 
 [![MCP Badge](https://lobehub.com/badge/mcp/lennix1337-genexus18mcp?style=for-the-badge)](https://lobehub.com/mcp/lennix1337-genexus18mcp)
