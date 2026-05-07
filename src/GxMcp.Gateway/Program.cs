@@ -1811,6 +1811,15 @@ namespace GxMcp.Gateway
                     if (McpHttpProtocol.IsInitializeRequest(requestObj))
                     {
                         var newSession = CreateHttpSession();
+
+                        // Check for X-GX-KB-Path header to set KB path for this session
+                        string? kbPathHeader = request.Headers["X-GX-KB-Path"].FirstOrDefault();
+                        if (!string.IsNullOrWhiteSpace(kbPathHeader))
+                        {
+                            newSession.OverrideKBPath = kbPathHeader;
+                            Log($"[HTTP] Session {newSession.Id} configured with KB path override: {kbPathHeader}");
+                        }
+
                         request.HttpContext.Response.Headers["MCP-Session-Id"] = newSession.Id;
                         QueueSessionMessage(newSession, JsonConvert.SerializeObject(new
                         {

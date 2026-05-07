@@ -99,7 +99,15 @@ namespace GxMcp.Gateway
                         config.Server.McpStdio = mcpStdioOverride;
                         Program.Log($"[Gateway] MCP stdio overridden by GX_MCP_STDIO={mcpStdioOverride}");
                     }
-                        
+
+                    string? kbPathOverride = global::System.Environment.GetEnvironmentVariable("GX_KB_PATH");
+                    if (!string.IsNullOrWhiteSpace(kbPathOverride))
+                    {
+                        config.Environment ??= new EnvironmentConfig();
+                        config.Environment.KBPath = kbPathOverride;
+                        Program.Log($"[Gateway] KB Path overridden by GX_KB_PATH={kbPathOverride}");
+                    }
+
                     return config;
                 }
                 catch (IOException)

@@ -42,10 +42,49 @@ function discoverGeneXusInstallation() {
 function directoryLooksLikeKnowledgeBase(dir) {
     try {
         const files = fs.readdirSync(dir);
-        return files.some((f) => f.toLowerCase().endsWith('.gxw') || f.toLowerCase() === 'knowledgebase.connection');
+        const dirs = fs.readdirSync(dir, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name.toLowerCase());
+
+        // Check for KB file markers
+        const hasKbFiles = files.some((f) => {
+            const lower = f.toLowerCase();
+            return lower.endsWith('.gxw') ||
+                   lower === 'knowledgebase.connection' ||
+                   lower === 'genexus.ini' ||
+                   lower.endsWith('.gxclass') ||
+                   lower.endsWith('.gxproc');
+        });
+
+        if (hasKbFiles) return true;
+
+        // Check for KB folder structure
+        const hasKbFolders = dirs.some((d) =>
+            d === '.gx' ||
+            d === 'objects' ||
+            d === 'web' ||
+            d === 'procedures' ||
+            d === 'data' ||
+            d === 'images'
+        );
+
+        return hasKbFolders;
     } catch {
         return false;
     }
+}
+
+function autoDetectKbPath(startDir = process.cwd()) {
+    let current = startDir;
+
+    while (current && current !== path.dirname(current)) {
+        if (directoryLooksLikeKnowledgeBase(current)) {
+            return current;
+        }
+        current = path.dirname(current);
+    }
+
+    return null;
 }
 
 function readJsonFileSafe(filePath) {
@@ -186,6 +225,7 @@ module.exports = {
     getToolDefinitionsPath,
     discoverGeneXusInstallation,
     directoryLooksLikeKnowledgeBase,
+    autoDetectKbPath,
     readJsonFileSafe,
     resolveConfigPathNoMutate,
     createConfigFile,

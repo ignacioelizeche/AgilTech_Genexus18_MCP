@@ -43,6 +43,13 @@ namespace GxMcp.Gateway
                 return new McpHttpError(StatusCodes.Status404NotFound, "Unknown or expired MCP session.");
             }
 
+            // Read X-GX-KB-Path header if present and store in session context
+            string? kbPathHeader = request.Headers["X-GX-KB-Path"].FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(kbPathHeader))
+            {
+                session.OverrideKBPath = kbPathHeader;
+            }
+
             return null;
         }
     }

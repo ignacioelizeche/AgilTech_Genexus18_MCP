@@ -10,19 +10,125 @@ A high-performance Model Context Protocol (MCP) server for GeneXus 18. It integr
 
 You **do NOT** need to clone this repository, and you **do NOT** need to install anything globally via `npm i -g`. The standard Node.js `npx` runner will dynamically fetch and launch the compiled gateway for you.
 
-### Step 1: Configure (Non-Interactive First)
+### 🎯 Auto-Detection (Recommended)
 
-To initialize configuration in a deterministic, agent-friendly way:
+If you're in a GeneXus Knowledge Base folder, everything is automatic:
 
+**Simply run in your KB directory:**
+```bash
+cd C:\KBs\YourKB
+genexus-mcp init
+
+# Output:
+# ✓ Auto-detected KB at: C:\KBs\YourKB
+# ✓ Auto-detected GeneXus at: C:\Program Files (x86)\GeneXus\GeneXus18
+# ✓ Configuration created successfully
+```
+
+**Or open the folder in VS Code:**
+```bash
+code C:\KBs\YourKB
+# Extension auto-detects and configures MCP
+# KB objects tree shows up immediately
+```
+
+The system automatically detects:
+- `.gxw` files (GeneXus Workspace)
+- `knowledgebase.connection` file
+- `genexus.ini` file
+- KB folder structure (`.gx/`, `objects/`, `web/`, etc.)
+
+### Step 1: Configure (Manual - if needed)
+
+If auto-detection doesn't work, you can configure manually:
+
+**Non-interactive (explicit flags):**
 ```bash
 npx genexus-mcp@latest init --kb "C:\KBs\YourKB" --gx "C:\Program Files (x86)\GeneXus\GeneXus18"
 ```
 
-If you want the setup wizard prompts explicitly, run:
-
+**Interactive wizard:**
 ```bash
 npx genexus-mcp@latest init --interactive
 ```
+
+### Step 1b: Dynamic Configuration (Without Editing Files)
+
+If you prefer **not to edit `config.json` manually** or want to work with **different KBs without reinstalling**, use the `GX_KB_PATH` environment variable:
+
+If you prefer **not to edit `config.json` manually** or want to work with **different KBs without reinstalling**, use the `GX_KB_PATH` environment variable:
+
+**Windows (PowerShell):**
+```powershell
+$env:GX_KB_PATH="C:\KBs\YourKB"
+npx genexus-mcp@latest
+```
+
+**Windows (Command Prompt):**
+```cmd
+set GX_KB_PATH=C:\KBs\YourKB
+npx genexus-mcp@latest
+```
+
+**In your MCP client configuration (Claude Desktop, Cursor, etc):**
+```json
+{
+  "mcpServers": {
+    "genexus-mcp": {
+      "command": "npx",
+      "args": ["genexus-mcp@latest"],
+      "env": {
+        "GX_KB_PATH": "C:\\KBs\\YourKB",
+        "GX_PROGRAM_DIR": "C:\\Program Files (x86)\\GeneXus\\GeneXus18"
+      }
+    }
+  }
+}
+```
+
+**Configuration precedence:**
+1. `GX_KB_PATH` environment variable (if set)
+2. `GX_CONFIG_PATH` environment variable (if set)
+3. `config.json` in current directory
+4. Error if none found
+
+### Step 1c: HTTP Client Configuration (Multiple KBs)
+
+If you're connecting via HTTP (e.g., from a custom client or via reverse proxy), you can pass the KB path dynamically using the `X-GX-KB-Path` header:
+
+**Example HTTP request (cURL):**
+```bash
+# Initialize a session with a specific KB
+curl -X POST http://localhost:5000/mcp \
+  -H "MCP-Protocol-Version: 2025-06-18" \
+  -H "X-GX-KB-Path: C:\KBs\YourKB" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-06-18",
+      "capabilities": {
+        "tools": {},
+        "resources": {},
+        "prompts": {}
+      },
+      "clientInfo": {
+        "name": "my-client",
+        "version": "1.0.0"
+      }
+    }
+  }'
+```
+
+**Usage with session:**
+1. Send `initialize` request with `X-GX-KB-Path` header
+2. Receive `MCP-Session-Id` header in response
+3. Use that `MCP-Session-Id` for all subsequent requests in the session
+4. The KB path is remembered for that session
+
+**Note:** Each session maintains its own KB context, allowing multiple clients to work with different KBs simultaneously via the same gateway instance.
 
 ### Step 2: Restart your AI Assistant
 

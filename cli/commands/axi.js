@@ -8,6 +8,7 @@ const {
     resolveConfigPathNoMutate,
     readJsonFileSafe,
     directoryLooksLikeKnowledgeBase,
+    autoDetectKbPath,
     createConfigFile,
     patchClientConfig,
     discoverGeneXusInstallation
@@ -795,15 +796,39 @@ async function handleInit(options, ctx) {
         return runInteractiveInit({ ...ctx, options });
     }
 
-    if (!options.kb || !options.gx) {
+    // Auto-detection: if KB and GX not provided, try to detect them
+    let kbPath = options.kb;
+    let gxPath = options.gx;
+
+    // Auto-detect KB if not provided
+    if (!kbPath) {
+        kbPath = autoDetectKbPath();
+        if (kbPath) {
+            console.log(`✓ Auto-detected KB at: ${kbPath}`);
+        }
+    }
+
+    // Auto-detect GeneXus if not provided
+    if (!gxPath) {
+        gxPath = discoverGeneXusInstallation();
+        if (gxPath) {
+            console.log(`✓ Auto-detected GeneXus at: ${gxPath}`);
+        }
+    }
+
+    // If still missing, require interactive mode or flags
+    if (!kbPath || !gxPath) {
         return {
             exitCode: ctx.EXIT_CODES.USAGE,
-            envelope: usageEnvelope('Missing required flags for non-interactive init. Use --kb and --gx.', ctx.EXIT_CODES.USAGE)
+            envelope: usageEnvelope(
+                'Could not auto-detect KB or GeneXus. Use --kb and --gx flags, or run with --interactive.',
+                ctx.EXIT_CODES.USAGE
+            )
         };
     }
 
     try {
-        const created = createConfigFile(options.kb, options.gx);
+        const created = createConfigFile(kbPath, gxPath);
         let patchResult = { patched: [], failed: [] };
         if (options.writeClients) {
             patchResult = patchClientConfig(created.targetConfigPath);
@@ -815,13 +840,17 @@ async function handleInit(options, ctx) {
                 ok: {
                     action: 'init',
                     mode: 'non_interactive',
+                    autoDetected: {
+                        kb: options.kb ? false : true,
+                        gx: options.gx ? false : true
+                    },
                     configPath: created.targetConfigPath,
                     configFound: true,
                     noOp: !created.changed,
                     clientsPatchedCount: patchResult.patched.length
                 },
                 help: patchResult.patched.length === 0 && !options.writeClients
-                    ? ['Run `genexus-mcp init --kb "<kbPath>" --gx "<geneXusPath>" --write-clients` to patch supported clients.']
+                    ? ['Run `genexus-mcp init --write-clients` to patch supported clients (Claude Desktop, Cursor, etc).']
                     : [],
                 meta: {
                     patchedClients: patchResult.patched,

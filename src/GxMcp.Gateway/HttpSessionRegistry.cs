@@ -102,5 +102,6 @@ namespace GxMcp.Gateway
         public DateTime CreatedUtc { get; set; }
         public DateTime LastSeenUtc { get; set; }
         public Queue<string> PendingMessages { get; } = new Queue<string>();
+        public string? OverrideKBPath { get; set; }
     }
 }

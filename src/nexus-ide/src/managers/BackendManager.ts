@@ -193,31 +193,92 @@ export class BackendManager {
     const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
     let kbPath = config.get<string>(CONFIG_KB_PATH, "");
 
+    // 1. Use configured path if it exists
     if (kbPath && fs.existsSync(kbPath)) {
+      this.trace("Using configured KB path from settings");
       return kbPath;
     }
 
+    // 2. Search workspace for .gxw files
     try {
-      console.log("[BackendManager] Searching for .gxw files...");
+      console.log("[BackendManager] Searching for .gxw files in workspace...");
       const files = await vscode.workspace.findFiles(
         "*.gxw",
         "**/node_modules/**",
         1,
       );
-      console.log(
-        `[BackendManager] findFiles returned ${files.length} results.`,
-      );
       if (files.length > 0) {
         const found = path.dirname(files[0].fsPath);
+        this.trace(`Found KB via .gxw search: ${found}`);
         console.log(`[BackendManager] Found KB at: ${found}`);
         return found;
       }
     } catch (e) {
-      console.error("[BackendManager] Error in findFiles:", e);
+      console.error("[BackendManager] Error searching for .gxw files:", e);
     }
 
-    // Use configuration or empty string, no hardcoded defaults
+    // 3. Try to detect KB in workspace root or parent directories
+    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+      const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
+      const detected = this.findKbInParents(workspaceRoot);
+      if (detected) {
+        this.trace(`Found KB via parent directory search: ${detected}`);
+        console.log(`[BackendManager] Auto-detected KB at: ${detected}`);
+        return detected;
+      }
+    }
+
+    // Use configuration or empty string as fallback
     return "";
+  }
+
+  private directoryLooksLikeKnowledgeBase(dir: string): boolean {
+    try {
+      const files = fs.readdirSync(dir);
+      const dirs = fs.readdirSync(dir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name.toLowerCase());
+
+      // Check for KB file markers
+      const hasKbFiles = files.some((f) => {
+        const lower = f.toLowerCase();
+        return lower.endsWith('.gxw') ||
+               lower === 'knowledgebase.connection' ||
+               lower === 'genexus.ini' ||
+               lower.endsWith('.gxclass') ||
+               lower.endsWith('.gxproc');
+      });
+
+      if (hasKbFiles) return true;
+
+      // Check for KB folder structure
+      const hasKbFolders = dirs.some((d) =>
+        d === '.gx' ||
+        d === 'objects' ||
+        d === 'web' ||
+        d === 'procedures' ||
+        d === 'data' ||
+        d === 'images'
+      );
+
+      return hasKbFolders;
+    } catch {
+      return false;
+    }
+  }
+
+  private findKbInParents(startDir: string): string | undefined {
+    let current = startDir;
+
+    // Traverse up the directory tree
+    while (current && current !== path.dirname(current)) {
+      if (this.directoryLooksLikeKnowledgeBase(current)) {
+        return current;
+      }
+      current = path.dirname(current);
+    }
+
+    return undefined;
   }
 
   private findBestInstallationPath(): string {
